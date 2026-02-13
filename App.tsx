@@ -1511,8 +1511,8 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal relative shadow-2xl overflow-hidden text-morandi-charcoal font-sans">
-      <header className="p-6 bg-white border-b border-gray-100 flex justify-between items-center sticky top-0 z-40">
-        <div><h1 className="text-2xl font-extrabold text-morandi-charcoal tracking-tight">麵廠職人</h1><p className="text-[10px] text-morandi-pebble font-bold uppercase tracking-widest mt-0.5">專業訂單管理系統</p></div>
+      <header className="px-4 py-3 bg-white border-b border-gray-100 flex justify-between items-center sticky top-0 z-40">
+        <div><h1 className="text-xl font-extrabold text-morandi-charcoal tracking-tight">麵廠職人</h1><p className="text-[10px] text-morandi-pebble font-bold uppercase tracking-widest mt-0.5">專業訂單管理系統</p></div>
         <div className="flex gap-2 items-center">
            {/* Step 6: Visual Indicator for Background Sync */}
            <AnimatePresence>
@@ -1595,7 +1595,7 @@ const App: React.FC = () => {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 overflow-y-auto pb-24 px-4 pt-4" ref={mainRef}>
+      <main className="flex-1 overflow-y-auto pb-24 px-4" ref={mainRef}>
         {/* ... (Orders Tab - same as before) ... */}
         <AnimatePresence mode="popLayout">
         {activeTab === 'orders' && (
@@ -1608,28 +1608,17 @@ const App: React.FC = () => {
             className="space-y-6 relative"
           >
             {/* ... (Orders Tab Content) */}
-            <div className="flex items-center justify-between px-1">
-              <motion.button whileTap={buttonTap} onClick={() => setIsDatePickerOpen(true)} className="flex items-center gap-3 bg-white p-4 rounded-[20px] shadow-sm border border-slate-200 active:scale-95 transition-all">
+            <div className="sticky top-0 z-30 bg-morandi-oatmeal py-2 flex items-center justify-between px-1 mb-2">
+              <motion.button whileTap={buttonTap} onClick={() => setIsDatePickerOpen(true)} className="flex-1 mr-2 flex items-center gap-3 bg-white p-3 rounded-[20px] shadow-sm border border-slate-200 active:scale-95 transition-all">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-morandi-blue/10"><CalendarDays className="w-5 h-5 text-morandi-blue" /></div>
                 <div><p className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest">出貨日期</p><p className="font-bold text-morandi-charcoal text-lg tracking-tight">{selectedDate}</p></div>
               </motion.button>
               
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0">
                 <motion.button whileTap={buttonTap} onClick={() => setActiveTab('work')} className="w-14 h-14 rounded-[20px] bg-white text-morandi-pebble border border-slate-200 shadow-sm flex items-center justify-center hover:bg-slate-50 transition-all">
                    <FileText className="w-6 h-6" />
                 </motion.button>
-                <div className="relative">
-                  {/* NEW: Voice Input FAB */}
-                  <motion.button 
-                    whileTap={buttonTap} 
-                    whileHover={buttonHover} 
-                    onClick={() => setIsVoiceModalOpen(true)} 
-                    className="absolute bottom-[110%] right-0 w-12 h-12 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center z-10"
-                  >
-                    <Mic className="w-6 h-6" />
-                  </motion.button>
-                  <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { setEditingOrderId(null); setIsAddingOrder(true); }} className="w-14 h-14 rounded-[20px] text-white shadow-lg shadow-morandi-blue/20 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"><Plus className="w-8 h-8" /></motion.button>
-                </div>
+                <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { setEditingOrderId(null); setIsAddingOrder(true); }} className="w-14 h-14 rounded-[20px] text-white shadow-lg shadow-morandi-blue/20 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"><Plus className="w-8 h-8" /></motion.button>
               </div>
             </div>
             {/* ... (Orders List - same logic as before but using toast handlers) */}
@@ -2062,6 +2051,16 @@ const App: React.FC = () => {
          </div>
       )}
       </AnimatePresence>
+
+      {/* Voice Input FAB - Global */}
+      <motion.button 
+        whileTap={buttonTap} 
+        whileHover={buttonHover} 
+        onClick={() => setIsVoiceModalOpen(true)} 
+        className="fixed bottom-[90px] right-4 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center"
+      >
+        <Mic className="w-6 h-6" />
+      </motion.button>
 
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 flex justify-around py-3 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
         <NavItem active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} icon={<ClipboardList className="w-6 h-6" />} label="訂單" />
