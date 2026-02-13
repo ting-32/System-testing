@@ -1164,7 +1164,7 @@ const App: React.FC = () => {
     // addToast('AI 正在解析您的訂單...', 'info'); // UI overlay is enough
 
     try {
-      const todayDate = selectedDate || formatDateStr(new Date());
+      const todayDate = formatDateStr(new Date());// 正確：永遠抓取當下真實時間
       
       const simpleCustomers = customers.map(c => ({ id: c.id, name: c.name }));
       const simpleProducts = products.map(p => ({ id: p.id, name: p.name, category: p.category }));
@@ -1172,7 +1172,10 @@ const App: React.FC = () => {
       // Prompt Engineering
       const prompt = `
         你是一個專業的訂單管理 AI 助手。
-        今天是 ${todayDate} (YYYY-MM-DD)。
+        
+        系統基準資訊：
+        1. 真實今天 (Real Today): ${realTodayDate} (以此日期計算「明天」、「後天」、「下週一」等相對日期)。
+        2. 使用者當前畫面 (Current View): ${currentViewDate} (如果使用者完全沒有提到日期，請將訂單歸類到此日期)。
 
         任務：將使用者的語音文字轉換為 JSON 格式。
 
@@ -1186,7 +1189,9 @@ const App: React.FC = () => {
         "${transcript}"
 
         規則：
-        1. "明天"、"後天"、"下週一" 等請轉換為具體日期 (YYYY-MM-DD)。預設為今天。
+        1. 日期計算邏輯 (重要)：
+           - 如果使用者說了相對時間（如「明天」、「下週一」），請務必以 [真實今天 ${realTodayDate}] 為基準進行計算。
+           - 如果使用者完全沒有提到時間，請將訂單歸類到 [使用者當前畫面 ${currentViewDate}] 的日期。
         2. 客戶名稱與產品名稱請進行模糊比對，回傳對應的 ID。
         3. 如果找不到對應客戶或產品，ID 留空，將文字放入 Note。
         4. 數量請統一轉換為數字。
@@ -2057,7 +2062,7 @@ const App: React.FC = () => {
         whileTap={buttonTap} 
         whileHover={buttonHover} 
         onClick={() => setIsVoiceModalOpen(true)} 
-        className="fixed bottom-[90px] right-4 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center"
+        className="absolute bottom-[90px] right-4 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center"
       >
         <Mic className="w-6 h-6" />
       </motion.button>
