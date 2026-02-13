@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   Users, 
@@ -633,6 +634,7 @@ const App: React.FC = () => {
   // NEW: State for Voice Input
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+  const [voiceLoadingText, setVoiceLoadingText] = useState('AI 正在解析您的訂單...'); // NEW State
 
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -762,6 +764,18 @@ const App: React.FC = () => {
       setInitialProductOrder(products.map(p => p.id));
     }
   }, [products]);
+
+  // NEW: Effect for dynamic loading text
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (isProcessingVoice) {
+      setVoiceLoadingText('AI 正在解析您的訂單...');
+      timer = setTimeout(() => {
+        setVoiceLoadingText('正在思考中，請稍候...');
+      }, 3000);
+    }
+    return () => clearTimeout(timer);
+  }, [isProcessingVoice]);
 
   // ... (Computed values remain unchanged) ...
   const orderSummary = useMemo(() => { const customer = customers.find(c => c.id === orderForm.customerId); let totalPrice = 0; const details = orderForm.items.map(item => { const product = products.find(p => p.id === item.productId); const priceItem = customer?.priceList?.find(pl => pl.productId === item.productId); const unitPrice = priceItem ? priceItem.price : (product?.price || 0); let displayQty = item.quantity; let displayUnit = item.unit || '斤'; let subtotal = 0; let isCalculated = false; if (item.unit === '元') { subtotal = item.quantity; if (unitPrice > 0) { displayQty = parseFloat((item.quantity / unitPrice).toFixed(1)); displayUnit = product?.unit || '斤'; isCalculated = true; } else { displayQty = 0; } } else { subtotal = Math.round(item.quantity * unitPrice); displayQty = item.quantity; displayUnit = item.unit || '斤'; } totalPrice += subtotal; return { name: product?.name || '未選品項', rawQty: item.quantity, rawUnit: item.unit, displayQty, displayUnit, subtotal, unitPrice, isCalculated }; }); return { totalPrice, details }; }, [orderForm.items, orderForm.customerId, customers, products]);
@@ -1147,7 +1161,7 @@ const App: React.FC = () => {
   // NEW: Process Voice Order using Gemini
   const handleProcessVoiceOrder = async (transcript: string) => {
     setIsProcessingVoice(true);
-    addToast('AI 正在解析您的訂單...', 'info');
+    // addToast('AI 正在解析您的訂單...', 'info'); // UI overlay is enough
 
     try {
       const todayDate = selectedDate || formatDateStr(new Date());
@@ -1266,9 +1280,23 @@ const App: React.FC = () => {
          addToast('AI 解析成功！請確認內容', 'success');
       }
 
-    } catch (e) {
+    } catch (e: any) {
       console.error("AI Error:", e);
-      addToast('AI 解析失敗，請手動輸入', 'error');
+      let errorMessage = 'AI 解析失敗，請手動輸入';
+      
+      const errorStr = e.toString().toLowerCase();
+
+      // 詳細錯誤分類 logic
+      if (errorStr.includes('401') || errorStr.includes('403') || errorStr.includes('key')) {
+         errorMessage = '系統設定異常 (API Key)';
+      } else if (errorStr.includes('empty response')) {
+         errorMessage = '抱歉，沒聽清楚，請再試一次';
+      } else if (errorStr.includes('fetch') || errorStr.includes('network') || errorStr.includes('offline')) {
+         errorMessage = '網路連線不穩';
+      }
+
+      addToast(errorMessage, 'error');
+      
       // Still open the form but empty
       setEditingOrderId(null);
       setIsAddingOrder(true);
@@ -1562,7 +1590,7 @@ const App: React.FC = () => {
                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                className="w-16 h-16 border-4 border-white/20 border-t-white rounded-full mb-4"
              />
-             <p className="text-white font-bold text-lg tracking-widest animate-pulse">AI 正在解析訂單...</p>
+             <p className="text-white font-bold text-lg tracking-widest animate-pulse">{voiceLoadingText}</p>
           </motion.div>
         )}
       </AnimatePresence>
