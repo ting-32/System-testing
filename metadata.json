@@ -1,0 +1,7 @@
+{
+  "name": "Noodle Factory Order Management System",
+  "description": "A mobile-optimized Morandi-themed application for managing customers, products, and orders for a noodle factory, featuring a robust Google Apps Script backend bridge.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
