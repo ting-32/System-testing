@@ -1164,15 +1164,15 @@ const App: React.FC = () => {
     // addToast('AI 正在解析您的訂單...', 'info'); // UI overlay is enough
 
     try {
-      const todayDate = formatDateStr(new Date());// 正確：永遠抓取當下真實時間
-      
+      const realTodayDate = formatDateStr(new Date());
+      const currentViewDate = selectedDate || realTodayDate;
       const simpleCustomers = customers.map(c => ({ id: c.id, name: c.name }));
       const simpleProducts = products.map(p => ({ id: p.id, name: p.name, category: p.category }));
 
       // Prompt Engineering
       const prompt = `
         你是一個專業的訂單管理 AI 助手。
-        
+
         系統基準資訊：
         1. 真實今天 (Real Today): ${realTodayDate} (以此日期計算「明天」、「後天」、「下週一」等相對日期)。
         2. 使用者當前畫面 (Current View): ${currentViewDate} (如果使用者完全沒有提到日期，請將訂單歸類到此日期)。
