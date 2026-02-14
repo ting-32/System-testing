@@ -1,4 +1,3 @@
-
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -6,7 +5,8 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   // 載入環境變數 (.env 檔案)
   // 第三個參數設為 '' 表示載入所有變數，不僅限於 VITE_ 開頭的
-  const env = loadEnv(mode, process.cwd(), '');
+  // 修正 process.cwd() 型別問題
+  const env = loadEnv(mode, (process as any).cwd(), '');
 
   // 修正重點：
   // 在 Vercel 等部署平台，環境變數通常注入在 process.env 中

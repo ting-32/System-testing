@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   Users, 
@@ -1515,7 +1514,7 @@ const App: React.FC = () => {
   if (isInitialLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-morandi-oatmeal p-10 text-center"><Loader2 className="w-12 h-12 text-morandi-blue animate-spin mb-6" /><h2 className="text-xl font-bold text-morandi-charcoal tracking-wide">正在同步雲端資料...</h2></div>;
 
   return (
-    <div className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal relative shadow-2xl overflow-hidden text-morandi-charcoal font-sans">
+    <div className="h-[100dvh] flex flex-col max-w-md mx-auto bg-morandi-oatmeal relative shadow-2xl overflow-hidden text-morandi-charcoal font-sans">
       <header className="px-4 py-3 bg-white border-b border-gray-100 flex justify-between items-center sticky top-0 z-40">
         <div><h1 className="text-xl font-extrabold text-morandi-charcoal tracking-tight">麵廠職人</h1><p className="text-[10px] text-morandi-pebble font-bold uppercase tracking-widest mt-0.5">專業訂單管理系統</p></div>
         <div className="flex gap-2 items-center">
@@ -1601,7 +1600,7 @@ const App: React.FC = () => {
       </AnimatePresence>
 
       <main className="flex-1 overflow-y-auto pb-24 px-4" ref={mainRef}>
-        {/* ... (Orders Tab - same as before) ... */}
+        {/* ... (Main content remains unchanged) ... */}
         <AnimatePresence mode="popLayout">
         {activeTab === 'orders' && (
           <motion.div 
@@ -2062,11 +2061,9 @@ const App: React.FC = () => {
         whileTap={buttonTap} 
         whileHover={buttonHover} 
         onClick={() => setIsVoiceModalOpen(true)} 
-        className="absolute bottom-[90px] right-4 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center"
-      >
-        <Mic className="w-6 h-6" />
+        className="absolute bottom-[90px] right-4 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-colors flex items-center justify-center">
+          <Mic className="w-6 h-6" />
       </motion.button>
-
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 flex justify-around py-3 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
         <NavItem active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} icon={<ClipboardList className="w-6 h-6" />} label="訂單" />
         <NavItem active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} icon={<Users className="w-6 h-6" />} label="客戶" />
