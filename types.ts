@@ -61,6 +61,9 @@ export interface Order {
   status: OrderStatus;
   deliveryMethod?: string; // 新增：訂單的配送方式
   lastUpdated?: number; // 版本控制時間戳
+  syncStatus?: 'synced' | 'pending' | 'error'; // 同步狀態
+  errorMessage?: string; // 錯誤訊息
+  pendingAction?: 'create' | 'update' | 'delete' | 'statusUpdate'; // 待處理動作
 }
 
 export interface GASResponse<T> {
@@ -68,4 +71,16 @@ export interface GASResponse<T> {
   data?: T;
   error?: string;
   errorCode?: string; // 新增錯誤代碼支援
+}
+
+export type ToastType = 'success' | 'error' | 'info';
+
+export interface Toast {
+  id: string;
+  message: string;
+  type: ToastType;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
