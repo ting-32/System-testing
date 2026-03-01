@@ -50,7 +50,7 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
     <div 
       onClick={() => onClick(customerName)}
       className={`
-        relative flex flex-col p-1.5 rounded-md border text-xs cursor-pointer shadow-sm h-full overflow-hidden
+        relative flex flex-col p-1.5 rounded-xl border text-xs cursor-pointer shadow-sm h-full overflow-hidden
         transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97]
         ${allDelivered 
           ? 'border-emerald-400 bg-gradient-to-br from-emerald-50 to-emerald-100/50' 

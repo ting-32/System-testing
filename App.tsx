@@ -835,7 +835,7 @@ const App: React.FC = () => {
                   </button>
                 </div>
               </div>
-              <motion.div variants={containerVariants} initial="hidden" animate="show" className={viewMode === 'grid' ? "grid grid-cols-4 gap-1.5 p-1" : ""}>
+              <motion.div variants={containerVariants} initial="hidden" animate="show" className={viewMode === 'grid' ? "grid grid-cols-3 gap-2 p-1.5" : ""}>
               {viewMode === 'grid' ? (
                 Object.keys(groupedOrders).length > 0 ? (
                   Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => (
@@ -849,7 +849,7 @@ const App: React.FC = () => {
                     />
                   ))
                 ) : (
-                  <div className="col-span-4 text-center py-10">
+                  <div className="col-span-3 text-center py-10">
                     <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3"><Package className="w-8 h-8 text-slate-300" /></div>
                     <p className="text-slate-400 font-medium">尚無訂單</p>
                   </div>
