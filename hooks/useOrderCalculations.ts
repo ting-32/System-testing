@@ -210,7 +210,7 @@ export const useOrderCalculations = ({
   }, [settlementTarget, settlementDate, orders, customers, products]);
 
   // 8. Grouped Orders (Main Order List)
-  const groupedOrders = useMemo(() => {
+  const { groups: groupedOrders, dayOrders } = useMemo(() => {
     const groups: { [key: string]: Order[] } = {};
     let dayOrders = orders.filter(o => o.deliveryDate === selectedDate);
 
@@ -240,7 +240,7 @@ export const useOrderCalculations = ({
       }
       groups[o.customerName].push(o);
     });
-    return groups;
+    return { groups, dayOrders };
   }, [orders, selectedDate, orderSearch, orderDeliveryFilter, customers]);
 
   // 9. Filtered Customers (Customer List)
@@ -323,6 +323,7 @@ export const useOrderCalculations = ({
     financeData,
     settlementPreview,
     groupedOrders,
+    dayOrders,
     filteredCustomers,
     workSheetData
   };

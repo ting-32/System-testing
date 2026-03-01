@@ -10,16 +10,16 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "lucide-react": "^0.563.0",
-    "react-dom": "^19.2.4",
-    "@google/genai": "^1.39.0",
-    "react": "^19.2.4",
-    "framer-motion": "11.18.2",
-    "vite": "^7.3.1",
+    "@google/genai": "^1.43.0",
     "@vitejs/plugin-react": "^5.1.4",
-    "zustand": "^5.0.11",
+    "framer-motion": "11.18.2",
+    "lucide-react": "^0.563.0",
     "path": "^0.12.7",
-    "url": "^0.11.4"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "url": "^0.11.4",
+    "vite": "^7.3.1",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

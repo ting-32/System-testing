@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo, AnimatePresence } from 'framer-motion';
-import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw } from 'lucide-react';
+import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
 import { ORDERING_HABITS } from '../constants';
 import { getStatusStyles, formatTimeDisplay } from '../utils';
@@ -57,15 +57,20 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
     const offset = info.offset.x; 
     if (offset > DRAG_THRESHOLD) { 
       triggerHaptic(20); 
-      let nextStatus = OrderStatus.PENDING; 
-      if (order.status === OrderStatus.PENDING) nextStatus = OrderStatus.SHIPPED; 
-      else if (order.status === OrderStatus.SHIPPED) nextStatus = OrderStatus.PAID; 
-      if (order.status !== OrderStatus.PAID) { 
-        onStatusChange(order.id, nextStatus); 
-      } 
+      if (order.status === OrderStatus.PENDING) {
+        onStatusChange(order.id, OrderStatus.SHIPPED);
+      } else if (order.status === OrderStatus.SHIPPED) {
+        onStatusChange(order.id, OrderStatus.PAID);
+      }
     } else if (offset < -DRAG_THRESHOLD) { 
       triggerHaptic([20, 50, 20]); 
-      onDelete(order.id); 
+      if (order.status === OrderStatus.PAID) {
+        onStatusChange(order.id, OrderStatus.SHIPPED);
+      } else if (order.status === OrderStatus.SHIPPED) {
+        onStatusChange(order.id, OrderStatus.PENDING);
+      } else {
+        onDelete(order.id); 
+      }
     } 
   };
   
@@ -80,13 +85,37 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   return ( 
     <div className="relative mb-4"> 
       <div className="absolute inset-0 rounded-[32px] flex items-center justify-between px-6 pointer-events-none overflow-hidden"> 
-        <motion.div style={{ opacity: bgOpacityRight, scale: bgScaleRight }} className="flex items-center gap-2 text-emerald-500 font-bold"> 
-          <CheckCircle2 className="w-8 h-8" /> 
-          <span className="text-sm">{order.status === OrderStatus.PENDING ? '標記出貨' : '標記收款'}</span> 
+        <motion.div style={{ opacity: bgOpacityRight, scale: bgScaleRight }} className={`flex items-center gap-2 font-bold ${order.status === OrderStatus.PENDING ? 'text-blue-500' : order.status === OrderStatus.SHIPPED ? 'text-emerald-500' : 'text-transparent'}`}> 
+          {order.status === OrderStatus.PENDING && (
+            <>
+              <Truck className="w-8 h-8" /> 
+              <span className="text-sm">標記出貨</span> 
+            </>
+          )}
+          {order.status === OrderStatus.SHIPPED && (
+            <>
+              <Banknote className="w-8 h-8" /> 
+              <span className="text-sm">標記收款</span> 
+            </>
+          )}
         </motion.div> 
-        <motion.div style={{ opacity: bgOpacityLeft, scale: bgScaleLeft }} className="flex items-center gap-2 text-rose-500 font-bold"> 
-          <span className="text-sm">刪除訂單</span> 
-          <Trash2 className="w-8 h-8" /> 
+        <motion.div style={{ opacity: bgOpacityLeft, scale: bgScaleLeft }} className={`flex items-center gap-2 font-bold ${order.status === OrderStatus.PENDING ? 'text-rose-500' : 'text-amber-500'}`}> 
+          {order.status === OrderStatus.PENDING ? (
+            <>
+              <span className="text-sm">刪除訂單</span> 
+              <Trash2 className="w-8 h-8" /> 
+            </>
+          ) : order.status === OrderStatus.SHIPPED ? (
+            <>
+              <span className="text-sm">退回待處理</span> 
+              <RotateCcw className="w-8 h-8" /> 
+            </>
+          ) : (
+            <>
+              <span className="text-sm">退回出貨</span> 
+              <RotateCcw className="w-8 h-8" /> 
+            </>
+          )}
         </motion.div> 
       </div> 
       <motion.div 

@@ -134,6 +134,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                 return rest;
             };
 
+            const stableStringify = (obj: any) => {
+                if (typeof obj !== 'object' || obj === null) return JSON.stringify(obj);
+                const keys = Object.keys(obj).sort();
+                const sortedObj = keys.reduce((acc: any, key) => {
+                    acc[key] = obj[key];
+                    return acc;
+                }, {});
+                return JSON.stringify(sortedObj);
+            };
+
             const hasChanges = (local: any[], server: any[], idKey: string = 'id') => {
                 const localMap = new Map(local.map(i => [i[idKey], i]));
                 const serverMap = new Map(server.map(i => [i[idKey], i]));
@@ -145,7 +155,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                     // If local item is pending, ignore
                     if (localItem.syncStatus === 'pending' || localItem.syncStatus === 'error') continue;
                     
-                    if (JSON.stringify(omitMetadata(serverItem)) !== JSON.stringify(omitMetadata(localItem))) return true;
+                    const serverStr = stableStringify(omitMetadata(serverItem));
+                    const localStr = stableStringify(omitMetadata(localItem));
+                    
+                    if (serverStr !== localStr) return true;
                 }
                 
                 for (const localItem of local) {
@@ -267,47 +280,95 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     }
   };
 
-  // Helper for saving orders to cloud
+  // Request Queue
+  // Stores a promise that resolves to the latest lastUpdated version (number) or undefined if failed/unknown
+  const queueRef = useRef<{ [orderId: string]: Promise<number | undefined> }>({});
+
+  // Helper for saving orders to cloud with Queue
   const saveOrderToCloud = async (
     newOrder: Order, 
     actionName: string, 
     originalLastUpdated: number | undefined,
-    onSuccess: () => void,
+    onSuccess: (updatedOrder?: Order) => void,
     onConflict: (data: any) => void,
     onError: (msg: string) => void
   ) => {
-    try { 
-      if (apiEndpoint) { 
-        const uploadItems = newOrder.items.map(item => { 
-          const p = products.find(prod => prod.id === item.productId); 
-          return { productName: p?.name || item.productId, quantity: item.quantity, unit: item.unit }; 
-        }); 
-        
-        const payload = { ...newOrder, items: uploadItems };
-        if (originalLastUpdated !== undefined) {
-           (payload as any).originalLastUpdated = originalLastUpdated;
-        }
+    const orderId = newOrder.id;
+    
+    // 1. Get the previous task from the queue. 
+    // If it doesn't exist, start with a resolved promise containing the originalLastUpdated passed by the caller.
+    const previousTask = queueRef.current[orderId] || Promise.resolve(originalLastUpdated);
 
-        const res = await fetch(apiEndpoint, { 
-          method: 'POST', 
-          body: JSON.stringify({ action: actionName, data: payload }) 
-        }); 
-        const json = await res.json();
+    const currentTask = previousTask.then(async (latestVersionFromPrevTask) => {
+        // 2. Determine which version to use.
+        // If the previous task returned a version (meaning it succeeded and got a new version), use it.
+        // Otherwise, fall back to the originalLastUpdated passed to this function call.
+        const versionToUse = latestVersionFromPrevTask !== undefined ? latestVersionFromPrevTask : originalLastUpdated;
         
-        if (!json.success) {
-           if (json.errorCode === 'ERR_VERSION_CONFLICT') {
-              onConflict(payload);
-           } else {
-              onError(json.error || 'Unknown error');
-           }
-        } else {
-           onSuccess();
+        try {
+            if (apiEndpoint) {
+                const uploadItems = newOrder.items.map(item => {
+                    const p = products.find(prod => prod.id === item.productId);
+                    return { productName: p?.name || item.productId, quantity: item.quantity, unit: item.unit };
+                });
+
+                const payload = { ...newOrder, items: uploadItems };
+                
+                // CRITICAL: Use the version from the chain, NOT just what was passed in.
+                if (versionToUse !== undefined) {
+                    (payload as any).originalLastUpdated = versionToUse;
+                }
+
+                const res = await fetch(apiEndpoint, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: actionName, data: payload })
+                });
+                const json = await res.json();
+
+                if (!json.success) {
+                    if (json.errorCode === 'ERR_VERSION_CONFLICT') {
+                        onConflict(payload);
+                    } else {
+                        onError(json.error || 'Unknown error');
+                    }
+                    // If failed, return the version we tried to use, so the next task uses it (or fails too)
+                    // Or return undefined to let next task fallback to its own originalLastUpdated?
+                    // Returning versionToUse is safer to maintain the chain's state.
+                    return versionToUse;
+                } else {
+                    // Success!
+                    const updatedData = json.data;
+                    let updatedOrder = { ...newOrder };
+                    let newVersion = versionToUse;
+
+                    if (updatedData && updatedData.lastUpdated) {
+                        newVersion = updatedData.lastUpdated;
+                        updatedOrder.lastUpdated = newVersion;
+                        
+                        // Update local state for UI consistency
+                        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, lastUpdated: newVersion } : o));
+                    }
+                    
+                    onSuccess(updatedOrder);
+                    
+                    // CRITICAL: Return the NEW version for the next task in the chain
+                    return newVersion;
+                }
+            }
+            return versionToUse;
+        } catch (e) {
+            console.error("Sync Failed:", e);
+            onError(e instanceof Error ? e.message : 'Network error');
+            // On network error, return the version we had, hoping next retry might work or just to keep chain alive
+            return versionToUse;
         }
-      } 
-    } catch (e) { 
-      console.error("Sync Failed:", e); 
-      onError(e instanceof Error ? e.message : 'Network error');
-    } 
+    }).catch(e => {
+        console.error("Queue Error:", e);
+        return originalLastUpdated;
+    });
+
+    // Update Queue
+    queueRef.current[orderId] = currentTask;
   };
 
   // Initial Sync

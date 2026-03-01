@@ -57,7 +57,9 @@ import {
   RotateCcw, 
   ArrowRight,
   Mic, // New Import
-  StopCircle // New Import
+  StopCircle, // New Import
+  List,
+  Grid
 } from 'lucide-react';
 import { motion, AnimatePresence, Variants, Reorder, useDragControls, useMotionValue, useTransform, PanInfo } from 'framer-motion';
 import { Customer, Product, Order, OrderStatus, OrderItem, GASResponse, DefaultItem, CustomerPrice, Toast, ToastType } from './types';
@@ -76,6 +78,7 @@ import { ToastNotification } from './components/ToastNotification';
 import { NavItem } from './components/NavItem';
 import { SortableProductItem } from './components/SortableProductItem';
 import { SwipeableOrderCard } from './components/SwipeableOrderCard';
+import { GridCard } from './components/GridCard';
 import { ScheduleOrderCard } from './components/ScheduleOrderCard';
 import { useDataSync } from './hooks/useDataSync';
 import { useOrderCalculations } from './hooks/useOrderCalculations';
@@ -244,12 +247,103 @@ const App: React.FC = () => {
   const [productForm, setProductForm] = useState<Partial<Product>>({});
   const [customerSearch, setCustomerSearch] = useState('');
   
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+  const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
+  
   const [initialProductOrder, setInitialProductOrder] = useState<string[]>([]);
   const [hasReorderedProducts, setHasReorderedProducts] = useState(false);
 
   const [lastOrderCandidate, setLastOrderCandidate] = useState<{date: string, items: OrderItem[]} | null>(null);
 
   // ... (Callbacks and Effects remain unchanged until handleSaveOrder) ...
+
+  // NEW: History Stack Management for Android Back Button
+  useEffect(() => {
+    // 1. Push initial state to prevent immediate exit on first back press
+    window.history.pushState(null, document.title, window.location.href);
+
+    const handlePopState = (event: PopStateEvent) => {
+      // Priority 1: Close Modals
+      if (isAddingOrder) {
+        setIsAddingOrder(false);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (editingOrderId) {
+        setEditingOrderId(null);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (isEditingCustomer) {
+        setIsEditingCustomer(null);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (isEditingProduct) {
+        setIsEditingProduct(null);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (isSettingsOpen) {
+        setIsSettingsOpen(false);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (isDatePickerOpen) {
+        setIsDatePickerOpen(false);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (pickerConfig.isOpen) {
+        setPickerConfig(prev => ({ ...prev, isOpen: false }));
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (customerPickerConfig.isOpen) {
+        setCustomerPickerConfig(prev => ({ ...prev, isOpen: false }));
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (quickAddData) {
+        setQuickAddData(null);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+      if (expandedCustomer) {
+        setExpandedCustomer(null);
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+
+      // Priority 2: Navigate Tabs
+      if (activeTab !== 'orders') {
+        setActiveTab('orders');
+        window.history.pushState(null, document.title, window.location.href); // Restore stack
+        return;
+      }
+
+      // Priority 3: Allow Exit (No pushState here)
+      // If we are at 'orders' tab and no modals are open, allow the browser to go back (exit app or prev page)
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [
+    isAddingOrder, 
+    editingOrderId, 
+    isEditingCustomer, 
+    isEditingProduct, 
+    isSettingsOpen, 
+    isDatePickerOpen, 
+    pickerConfig.isOpen, 
+    customerPickerConfig.isOpen, 
+    quickAddData, 
+    expandedCustomer, 
+    activeTab
+  ]);
 
   useEffect(() => {
     setIsSelectionMode(false);
@@ -284,6 +378,7 @@ const App: React.FC = () => {
     financeData,
     settlementPreview,
     groupedOrders,
+    dayOrders,
     filteredCustomers,
     workSheetData
   } = useOrderCalculations({
@@ -409,7 +504,9 @@ const App: React.FC = () => {
     setIsVoiceModalOpen,
     isProcessingVoice,
     voiceLoadingText,
-    handleProcessVoiceOrder
+    handleProcessVoiceOrder,
+    isAiMode,
+    setIsAiMode
   } = useVoiceAssistant({
     customers,
     products,
@@ -454,7 +551,84 @@ const App: React.FC = () => {
     setConfirmConfig
   });
 
-  const handlePrint = () => { if (workSheetData.length === 0) { addToast('目前沒有資料可供匯出', 'info'); return; } const printWindow = window.open('', '_blank'); if (!printWindow) { addToast('彈跳視窗被封鎖，無法開啟列印頁面', 'error'); window.print(); return; } const sortedDates = [...workDates].sort(); const dateRangeDisplay = sortedDates.length > 1 ? `${sortedDates[0]} ~ ${sortedDates[sortedDates.length - 1]} (${sortedDates.length}天)` : sortedDates[0]; let htmlContent = `<!DOCTYPE html><html><head><title>麵廠職人 - 生產總表</title><style>body { font-family: sans-serif; padding: 20px; color: #333; } h1 { text-align: center; margin-bottom: 10px; font-size: 32px; } p.date { text-align: center; color: #666; margin-bottom: 30px; font-size: 20px; font-weight: bold; } table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 18px; } th, td { border: 1px solid #ddd; padding: 12px; text-align: left; vertical-align: top; } th { background-color: #f5f5f5; font-weight: bold; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 20px; } tr:nth-child(even) { background-color: #fafafa; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .text-right { text-align: right; } .text-center { text-align: center; } .badge { display: inline-block; background: #fff; padding: 4px 8px; border-radius: 4px; font-size: 16px; margin: 4px; border: 1px solid #ddd; color: #555; } .total-cell { font-size: 24px; font-weight: bold; } .footer { margin-top: 40px; text-align: right; font-size: 14px; color: #999; border-top: 1px solid #eee; padding-top: 10px; } </style></head><body><h1>生產總表</h1><p class="date">出貨日期: ${dateRangeDisplay}</p>`; workSheetData.forEach(group => { htmlContent += `<div style="page-break-inside: avoid;"><div class="group-header" style="background-color: ${group.color}40; border-left: 8px solid ${group.color};"> ${group.label} (共 ${group.totalWeight} 單位)</div><table><thead><tr><th width="20%">品項</th><th width="15%">總量</th><th width="10%">單位</th><th>分配明細</th></tr></thead><tbody>${group.items.map(item => `<tr><td style="font-weight: bold; font-size: 22px;">${item.name}</td><td class="text-right total-cell">${item.totalQty}</td><td class="text-center" style="font-size: 18px;">${item.unit}</td><td>${item.details.map(d => `<span class="badge">${d.customerName} <b>${d.qty}</b></span>`).join('')}</td></tr>`).join('')}</tbody></table></div>`; }); htmlContent += `<div class="footer">列印時間: ${new Date().toLocaleString()}</div><script>window.onload = function() { setTimeout(function() { window.print(); }, 500); };</script></body></html>`; printWindow.document.write(htmlContent); printWindow.document.close(); };
+  const handlePrint = () => { 
+    if (workSheetData.length === 0) { 
+      addToast('目前沒有資料可供匯出', 'info'); 
+      return; 
+    } 
+    const printWindow = window.open('', '_blank'); 
+    if (!printWindow) { 
+      addToast('彈跳視窗被封鎖，無法開啟列印頁面', 'error'); 
+      window.print(); 
+      return; 
+    } 
+    const sortedDates = [...workDates].sort(); 
+    const dateRangeDisplay = sortedDates.length > 1 ? `${sortedDates[0]} ~ ${sortedDates[sortedDates.length - 1]} (${sortedDates.length}天)` : sortedDates[0]; 
+    
+    let htmlContent = `<!DOCTYPE html>
+    <html>
+      <head>
+        <title>麵廠職人 - 生產總表</title>
+        <style>
+          body { font-family: sans-serif; padding: 20px; color: #333; } 
+          h1 { text-align: center; margin-bottom: 10px; font-size: 32px; } 
+          p.date { text-align: center; color: #666; margin-bottom: 30px; font-size: 20px; font-weight: bold; } 
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 18px; } 
+          th, td { border: 1px solid #ddd; padding: 12px; text-align: left; vertical-align: top; } 
+          th { background-color: #f5f5f5; font-weight: bold; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 20px; } 
+          tr:nth-child(even) { background-color: #fafafa; -webkit-print-color-adjust: exact; print-color-adjust: exact; } 
+          .text-right { text-align: right; } 
+          .text-center { text-align: center; } 
+          .badge { display: inline-block; background: #fff; padding: 4px 8px; border-radius: 4px; font-size: 16px; margin: 4px; border: 1px solid #ddd; color: #555; } 
+          .total-cell { font-size: 24px; font-weight: bold; } 
+          .footer { margin-top: 40px; text-align: right; font-size: 14px; color: #999; border-top: 1px solid #eee; padding-top: 10px; } 
+          
+          /* 僅在螢幕上顯示，列印時隱藏 */
+          @media screen {
+            .no-print {
+              display: block;
+            }
+            .close-btn {
+              position: fixed;
+              top: 20px;
+              right: 20px;
+              background-color: #ff4444;
+              color: white;
+              border: none;
+              padding: 15px 30px;
+              font-size: 20px;
+              border-radius: 8px;
+              box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+              z-index: 9999;
+              cursor: pointer;
+              font-weight: bold;
+            }
+          }
+          @media print {
+            .no-print {
+              display: none !important;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <!-- 新增這行 -->
+        <button class="no-print close-btn" onclick="window.close(); if(!window.closed){window.history.back();}">
+          ╳ 關閉 / 返回
+        </button>
+        
+        <h1>生產總表</h1>
+        <p class="date">出貨日期: ${dateRangeDisplay}</p>`; 
+        
+    workSheetData.forEach(group => { 
+      htmlContent += `<div style="page-break-inside: avoid;"><div class="group-header" style="background-color: ${group.color}40; border-left: 8px solid ${group.color};"> ${group.label} (共 ${group.totalWeight} 單位)</div><table><thead><tr><th width="20%">品項</th><th width="15%">總量</th><th width="10%">單位</th><th>分配明細</th></tr></thead><tbody>${group.items.map(item => `<tr><td style="font-weight: bold; font-size: 22px;">${item.name}</td><td class="text-right total-cell">${item.totalQty}</td><td class="text-center" style="font-size: 18px;">${item.unit}</td><td>${item.details.map(d => `<span class="badge">${d.customerName} <b>${d.qty}</b></span>`).join('')}</td></tr>`).join('')}</tbody></table></div>`; 
+    }); 
+    
+    htmlContent += `<div class="footer">列印時間: ${new Date().toLocaleString()}</div><script>window.onload = function() { setTimeout(function() { window.print(); }, 500); };</script></body></html>`; 
+    
+    printWindow.document.write(htmlContent); 
+    printWindow.document.close(); 
+  };
 
   if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} />;
   if (isInitialLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-morandi-oatmeal p-10 text-center"><Loader2 className="w-12 h-12 text-morandi-blue animate-spin mb-6" /><h2 className="text-xl font-bold text-morandi-charcoal tracking-wide">正在同步雲端資料...</h2></div>;
@@ -549,6 +723,8 @@ const App: React.FC = () => {
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}
         onTranscriptComplete={handleProcessVoiceOrder}
+        isAiMode={isAiMode}
+        onToggleAiMode={setIsAiMode}
       />
 
       {/* --- Global Loading Overlay for Voice Processing --- */}
@@ -636,11 +812,45 @@ const App: React.FC = () => {
                   })}
                </div>
             </div>
-            {/* ... (Orders List - same logic as before but using toast handlers) */}
+             {/* ... (Orders List - same logic as before but using toast handlers) */}
              <div className="space-y-3">
-              <h2 className="text-sm font-bold text-morandi-pebble px-2 flex items-center gap-2 uppercase tracking-widest mb-2"><Layers className="w-4 h-4" /> 配送列表 [{selectedDate}] ({Object.keys(groupedOrders).length} 家)</h2>
-              <motion.div variants={containerVariants} initial="hidden" animate="show">
-              {Object.keys(groupedOrders).length > 0 ? (
+              <div className="flex items-center justify-between px-2 mb-2">
+                <h2 className="text-sm font-bold text-morandi-pebble flex items-center gap-2 uppercase tracking-widest"><Layers className="w-4 h-4" /> 配送列表 [{selectedDate}] ({Object.keys(groupedOrders).length} 家)</h2>
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+                  <button 
+                    onClick={() => setViewMode('list')}
+                    className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    <List className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => setViewMode('grid')}
+                    className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    <Grid className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <motion.div variants={containerVariants} initial="hidden" animate="show" className={viewMode === 'grid' ? "grid grid-cols-4 gap-1.5 p-1" : ""}>
+              {viewMode === 'grid' ? (
+                Object.keys(groupedOrders).length > 0 ? (
+                  Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => (
+                    <GridCard 
+                      key={custName} 
+                      customerName={custName}
+                      orders={custOrders} 
+                      products={products}
+                      customers={customers}
+                      onClick={() => setSelectedCustomerForModal(custName)} 
+                    />
+                  ))
+                ) : (
+                  <div className="col-span-4 text-center py-10">
+                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3"><Package className="w-8 h-8 text-slate-300" /></div>
+                    <p className="text-slate-400 font-medium">尚無訂單</p>
+                  </div>
+                )
+              ) : Object.keys(groupedOrders).length > 0 ? (
                 Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => {
                   const isExpanded = expandedCustomer === custName;
                   const currentCustomer = customers.find(c => c.name === custName);
@@ -958,7 +1168,7 @@ const App: React.FC = () => {
             
             {/* ... Order Form Fields (Time, Items, Note etc.) ... */}
              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">配送設定</label><div className="flex gap-2"><div className="flex-1"><input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={orderForm.deliveryTime} onChange={(e) => setOrderForm({...orderForm, deliveryTime: e.target.value})} /></div><div className="flex-1"><select value={orderForm.deliveryMethod} onChange={(e) => setOrderForm({...orderForm, deliveryMethod: e.target.value})} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all appearance-none"><option value="">配送方式...</option>{DELIVERY_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select></div></div></div>
-             <div className="space-y-4"><div className="flex justify-between items-center"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">品項明細</label><button onClick={() => setOrderForm({...orderForm, items: [...orderForm.items, {productId: '', quantity: 10, unit: '斤'}]})} className="text-[10px] font-bold text-morandi-blue tracking-wide"><Plus className="w-3 h-3 inline mr-1" /> 增加品項</button></div>{orderForm.items.map((item, idx) => (<motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} key={idx} className="bg-white p-5 rounded-[28px] shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap"><div onClick={() => { const currentCustomer = customers.find(c => c.id === orderForm.customerId); setPickerConfig({ isOpen: true, currentProductId: item.productId, customPrices: currentCustomer?.priceList, onSelect: (pid) => { const n = [...orderForm.items]; const p = products.find(x => x.id === pid); n[idx] = { ...item, productId: pid, unit: p?.unit || '斤' }; setOrderForm({...orderForm, items: n}); } }); }} className="w-full sm:flex-1 bg-morandi-oatmeal/50 p-4 rounded-xl text-sm font-bold border border-slate-100 flex items-center justify-between cursor-pointer hover:border-morandi-blue transition-all mb-2 sm:mb-0"><span className={item.productId ? 'text-morandi-charcoal' : 'text-gray-400'}>{products.find(p => p.id === item.productId)?.name || '選擇品項...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></div><div className="flex items-center gap-2 w-full sm:w-auto justify-between"><input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} className="w-20 bg-morandi-oatmeal/50 p-4 rounded-xl text-center font-bold border border-slate-100 text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const n = [...orderForm.items]; const val = parseFloat(e.target.value); n[idx].quantity = isNaN(val) ? 0 : Math.max(0, val); setOrderForm({...orderForm, items: n}); }} /><select value={item.unit || '斤'} onChange={(e) => { const n = [...orderForm.items]; n[idx].unit = e.target.value; setOrderForm({...orderForm, items: n}); }} className="w-20 bg-morandi-oatmeal/50 p-4 rounded-xl font-bold text-morandi-charcoal border border-slate-100 outline-none focus:ring-2 focus:ring-morandi-blue transition-all">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select><motion.button whileTap={buttonTap} onClick={() => { const n = orderForm.items.filter((_, i) => i !== idx); setOrderForm({...orderForm, items: n.length ? n : [{productId:'', quantity:10, unit:'斤'}]}); }} className="p-2 text-morandi-pink hover:text-rose-300 transition-colors"><Trash2 className="w-4 h-4" /></motion.button></div></motion.div>))}</div>
+             <div className="space-y-4"><div className="flex justify-between items-center"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">品項明細</label><div className="flex gap-2">{lastOrderCandidate && (<motion.button whileTap={buttonTap} onClick={applyLastOrder} className="text-[10px] font-bold text-white bg-morandi-blue px-2 py-1 rounded-lg shadow-sm flex items-center gap-1"><History className="w-3 h-3" /> 帶入{lastOrderCandidate.sourceLabel || '上次'} ({lastOrderCandidate.date})</motion.button>)}<button onClick={() => setOrderForm({...orderForm, items: [...orderForm.items, {productId: '', quantity: 10, unit: '斤'}]})} className="text-[10px] font-bold text-morandi-blue tracking-wide"><Plus className="w-3 h-3 inline mr-1" /> 增加品項</button></div></div>{orderForm.items.map((item, idx) => (<motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} key={idx} className="bg-white p-5 rounded-[28px] shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap"><div onClick={() => { const currentCustomer = customers.find(c => c.id === orderForm.customerId); setPickerConfig({ isOpen: true, currentProductId: item.productId, customPrices: currentCustomer?.priceList, onSelect: (pid) => { const n = [...orderForm.items]; const p = products.find(x => x.id === pid); n[idx] = { ...item, productId: pid, unit: p?.unit || '斤' }; setOrderForm({...orderForm, items: n}); } }); }} className="w-full sm:flex-1 bg-morandi-oatmeal/50 p-4 rounded-xl text-sm font-bold border border-slate-100 flex items-center justify-between cursor-pointer hover:border-morandi-blue transition-all mb-2 sm:mb-0"><span className={item.productId ? 'text-morandi-charcoal' : 'text-gray-400'}>{products.find(p => p.id === item.productId)?.name || '選擇品項...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></div><div className="flex items-center gap-2 w-full sm:w-auto justify-between"><input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} className="w-20 bg-morandi-oatmeal/50 p-4 rounded-xl text-center font-bold border border-slate-100 text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const n = [...orderForm.items]; const val = parseFloat(e.target.value); n[idx].quantity = isNaN(val) ? 0 : Math.max(0, val); setOrderForm({...orderForm, items: n}); }} /><select value={item.unit || '斤'} onChange={(e) => { const n = [...orderForm.items]; n[idx].unit = e.target.value; setOrderForm({...orderForm, items: n}); }} className="w-20 bg-morandi-oatmeal/50 p-4 rounded-xl font-bold text-morandi-charcoal border border-slate-100 outline-none focus:ring-2 focus:ring-morandi-blue transition-all">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select><motion.button whileTap={buttonTap} onClick={() => { const n = orderForm.items.filter((_, i) => i !== idx); setOrderForm({...orderForm, items: n.length ? n : [{productId:'', quantity:10, unit:'斤'}]}); }} className="p-2 text-morandi-pink hover:text-rose-300 transition-colors"><Trash2 className="w-4 h-4" /></motion.button></div></motion.div>))}</div>
              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">訂單預覽</label><div className="bg-morandi-amber-bg rounded-[24px] p-5 shadow-sm border border-amber-100/50"><div className="flex justify-between items-center mb-3 border-b border-amber-100 pb-2"><div className="flex items-center gap-2 text-morandi-amber-text"><Calculator className="w-4 h-4" /><span className="text-xs font-bold tracking-wide">預估清單</span></div><div className="text-xs font-bold text-morandi-amber-text/60 tracking-wide">共 {orderSummary.details.filter(d => d.rawQty > 0).length} 項</div></div><div className="space-y-2 mb-4">{orderSummary.details.filter(d => d.rawQty > 0).map((detail, i) => (<div key={i} className="flex justify-between items-center text-sm"><div className="flex flex-col"><span className="font-bold text-slate-700 tracking-wide">{detail.name}</span>{detail.isCalculated && (<span className="text-[10px] text-gray-400">(以單價 ${detail.unitPrice} 換算: {detail.rawQty}元 &rarr; {detail.displayQty}{detail.displayUnit})</span>)}</div><div className="flex items-center gap-3"><span className="font-bold text-slate-600">{detail.displayQty} {detail.displayUnit}</span><span className="font-black text-amber-600 w-12 text-right tracking-tight">${detail.subtotal}</span></div></div>))}{orderSummary.details.filter(d => d.rawQty > 0).length === 0 && (<div className="text-center text-xs text-amber-400 italic py-2 tracking-wide">尚未加入有效品項</div>)}</div><div className="flex justify-between items-center pt-3 border-t border-amber-200"><span className="text-xs font-bold text-amber-700 tracking-wide">預估總金額</span><span className="text-xl font-black text-amber-600 tracking-tight">${orderSummary.totalPrice}</span></div></div></div>
              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">訂單備註</label><textarea className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold resize-none outline-none focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" rows={3} placeholder="備註特殊需求..." value={orderForm.note} onChange={(e) => setOrderForm({...orderForm, note: e.target.value})} /></div>
           </div>
@@ -1075,6 +1285,85 @@ const App: React.FC = () => {
            </div>
            </motion.div>
          </div>
+      )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+      {selectedCustomerForModal && groupedOrders[selectedCustomerForModal] && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setSelectedCustomerForModal(null)}>
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }} 
+            animate={{ opacity: 1, scale: 1 }} 
+            exit={{ opacity: 0, scale: 0.95 }} 
+            className="w-full max-w-sm max-h-[90vh] overflow-y-auto" 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="space-y-3">
+              {groupedOrders[selectedCustomerForModal].map(order => (
+                <SwipeableOrderCard 
+                  key={order.id}
+                  order={order} 
+                  products={products} 
+                  customers={customers}
+                  isSelectionMode={false}
+                  isSelected={false}
+                  onToggleSelection={() => {}}
+                  onStatusChange={handleSwipeStatusChange}
+                  onDelete={() => {
+                    handleDeleteOrder(order.id);
+                    if (groupedOrders[selectedCustomerForModal].length <= 1) {
+                      setSelectedCustomerForModal(null);
+                    }
+                  }}
+                  onShare={handleShareOrder}
+                  onMap={openGoogleMaps}
+                  onEdit={(orderToEdit) => {
+                    handleEditOrder(orderToEdit);
+                    setSelectedCustomerForModal(null);
+                  }}
+                  onRetry={handleRetryOrder}
+                />
+              ))}
+            </div>
+            <div className="bg-white rounded-[24px] p-4 mt-2 shadow-sm">
+              <motion.button 
+                whileTap={buttonTap} 
+                onClick={() => {
+                  setQuickAddData({ customerName: selectedCustomerForModal, items: [{productId: '', quantity: 10, unit: '斤'}] });
+                  setSelectedCustomerForModal(null);
+                }} 
+                className="w-full mb-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"
+              >
+                <Plus className="w-4 h-4" /> 追加訂單
+              </motion.button>
+              <div className="flex gap-2">
+                <motion.button 
+                  whileTap={buttonTap} 
+                  onClick={() => {
+                    handleCopyOrder(selectedCustomerForModal, groupedOrders[selectedCustomerForModal]);
+                    setSelectedCustomerForModal(null);
+                  }} 
+                  className="flex-1 py-3 px-4 rounded-[16px] bg-slate-50 text-morandi-pebble border border-slate-200 font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors shadow-sm tracking-wide"
+                >
+                  <Copy className="w-4 h-4" /> 複製
+                </motion.button>
+                <motion.button 
+                  whileTap={buttonTap} 
+                  onClick={() => {
+                    openGoogleMaps(selectedCustomerForModal);
+                    setSelectedCustomerForModal(null);
+                  }} 
+                  className="flex-1 py-3 px-4 rounded-[16px] bg-morandi-blue text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors shadow-lg shadow-morandi-blue/20 tracking-wide"
+                >
+                  <MapPin className="w-4 h-4" /> 導航
+                </motion.button>
+              </div>
+            </div>
+            <button onClick={() => setSelectedCustomerForModal(null)} className="mt-4 w-full bg-white py-3 rounded-[16px] font-bold text-slate-700 shadow-sm active:bg-slate-50 transition-colors">
+              關閉
+            </button>
+          </motion.div>
+        </div>
       )}
       </AnimatePresence>
 

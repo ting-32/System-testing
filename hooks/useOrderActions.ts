@@ -64,12 +64,44 @@ export const useOrderActions = ({
   setToasts
 }: UseOrderActionsProps) => {
 
-  const findLastOrder = (customerId: string, customerName: string) => {
+  const getLastOrderItems = (customerId: string, customerName: string) => {
     const customerOrders = orders.filter(o => o.customerName === customerName || customers.find(c => c.id === customerId)?.name === o.customerName);
+    
+    // 1. Calculate same day last week
+    const currentDay = new Date(selectedDate);
+    const lastWeekDate = new Date(currentDay);
+    lastWeekDate.setDate(currentDay.getDate() - 7);
+    const lastWeekDateStr = lastWeekDate.toISOString().split('T')[0]; 
+
+    // 2. Try to find order from same day last week
+    const sameDayLastWeekOrder = customerOrders.find(o => o.deliveryDate === lastWeekDateStr);
+
+    if (sameDayLastWeekOrder && sameDayLastWeekOrder.items.length > 0) {
+       return { 
+         date: sameDayLastWeekOrder.deliveryDate, 
+         items: sameDayLastWeekOrder.items.map(i => ({...i})),
+         sourceLabel: '上週同日' 
+       };
+    }
+
+    // 3. Fallback: Find most recent order (excluding today)
     const sorted = customerOrders.sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime());
     const last = sorted.find(o => o.deliveryDate !== selectedDate);
+    
     if (last && last.items.length > 0) {
-      setLastOrderCandidate({ date: last.deliveryDate, items: last.items.map(i => ({...i})) });
+      return { 
+        date: last.deliveryDate, 
+        items: last.items.map(i => ({...i})),
+        sourceLabel: '最近一次'
+      };
+    }
+    return null;
+  };
+
+  const findLastOrder = (customerId: string, customerName: string) => {
+    const result = getLastOrderItems(customerId, customerName);
+    if (result) {
+      setLastOrderCandidate(result);
     } else {
       setLastOrderCandidate(null);
     }
@@ -79,7 +111,7 @@ export const useOrderActions = ({
     if (!lastOrderCandidate) return;
     setOrderForm((prev: any) => ({ ...prev, items: lastOrderCandidate.items.map((i: any) => ({...i})) }));
     setLastOrderCandidate(null);
-    addToast('已帶入上次訂單內容', 'success');
+    addToast(`已帶入${lastOrderCandidate.sourceLabel || '上次'}訂單內容`, 'success');
   };
 
   const handleSelectExistingCustomer = (id: string) => {
@@ -88,16 +120,116 @@ export const useOrderActions = ({
       if (groupedOrders[cust.name] && groupedOrders[cust.name].length > 0) {
         addToast(`注意：${cust.name} 今日已建立過訂單`, 'info');
       }
+
+      // Smart Auto-fill Logic
+      let initialItems = [{ productId: '', quantity: 10, unit: '斤' }];
+      let autoFilledSource = '';
+
+      if (cust.defaultItems && cust.defaultItems.length > 0) {
+          initialItems = cust.defaultItems.map(di => ({ ...di }));
+      } else {
+          // If no default items, try to find last order immediately
+          const lastOrder = getLastOrderItems(id, cust.name);
+          if (lastOrder) {
+              initialItems = lastOrder.items;
+              autoFilledSource = lastOrder.sourceLabel;
+          }
+      }
+
       setOrderForm({
         ...orderForm,
         customerId: id,
         customerName: cust.name,
         deliveryTime: formatTimeForInput(cust.deliveryTime),
         deliveryMethod: cust.deliveryMethod || '',
-        items: cust.defaultItems && cust.defaultItems.length > 0 ? cust.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }]
+        items: initialItems
       });
+      
+      // Still call this to populate the "History" button if user wants to switch back/forth
       findLastOrder(id, cust.name);
+
+      if (autoFilledSource) {
+          addToast(`已自動帶入${autoFilledSource}訂單`, 'info');
+      }
     }
+  };
+
+  const handleQuickCreateOrder = async (c: Customer) => {
+      if (!c.defaultItems || c.defaultItems.length === 0) {
+          addToast('該客戶未設定預設品項，無法一鍵下單', 'error');
+          handleCreateOrderFromCustomer(c); // Fallback to normal flow
+          return;
+      }
+
+      if (groupedOrders[c.name] && groupedOrders[c.name].length > 0) {
+          addToast('今日已建立過訂單，請使用一般流程追加', 'error');
+          handleCreateOrderFromCustomer(c);
+          return;
+      }
+
+      setIsSaving(true);
+      const now = new Date();
+      // Use customer default time or current time
+      const deliveryTime = c.deliveryTime ? formatTimeForInput(c.deliveryTime) : `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      
+      // Process items (price calculation etc.)
+      const processedItems = c.defaultItems.map((item: any) => {
+        let finalQuantity = Math.max(0, item.quantity);
+        let finalUnit = item.unit;
+        const product = products.find(p => p.id === item.productId);
+        const targetUnit = product?.unit || '斤';
+  
+        if (item.unit === '元') {
+          const priceItem = c.priceList?.find(pl => pl.productId === item.productId);
+          const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
+          if (unitPrice > 0) {
+            finalQuantity = parseFloat((finalQuantity / unitPrice).toFixed(2));
+            finalUnit = targetUnit;
+          }
+        } else if (item.unit === '公斤' && targetUnit === '斤') {
+          finalQuantity = parseFloat((finalQuantity * (1000 / 600)).toFixed(2));
+          finalUnit = '斤';
+        }
+        return { productId: item.productId, quantity: Math.max(0, finalQuantity), unit: finalUnit };
+      });
+
+      const newOrder: Order = {
+        id: 'Q-ORD-' + Date.now(),
+        createdAt: new Date().toISOString(),
+        customerName: c.name,
+        deliveryDate: selectedDate,
+        deliveryTime: deliveryTime,
+        deliveryMethod: c.deliveryMethod || '',
+        items: processedItems,
+        note: '',
+        status: OrderStatus.PENDING,
+        syncStatus: 'pending',
+        pendingAction: 'create'
+      };
+
+      setOrders((prev: Order[]) => [newOrder, ...prev]);
+      addToast(`⚡ 已快速建立 ${c.name} 的訂單！`, 'success');
+      setIsSaving(false);
+
+      // Background Sync
+      await saveOrderToCloud(
+        newOrder,
+        'createOrder',
+        undefined,
+        () => {
+           setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+        },
+        (conflictPayload: any) => {
+           setConflictData({
+             action: 'createOrder',
+             data: conflictPayload,
+             description: `訂單客戶：${newOrder.customerName}`
+           });
+        },
+        (errMsg: string) => {
+           setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+        }
+      );
   };
 
   const handleQuickAddSubmit = async () => {
@@ -223,40 +355,75 @@ export const useOrderActions = ({
     const orderToUpdate = orders.find(o => o.id === orderId);
     if (!orderToUpdate) return;
 
+    // Optimistic update
     setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, status: newStatus, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o));
 
-    try {
-      if (apiEndpoint) {
-        const payload = {
-          id: orderId,
-          status: newStatus,
-          originalLastUpdated: orderToUpdate?.lastUpdated
-        };
-        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateOrderStatus', data: payload }) });
-        const json = await res.json();
-
-        if (!json.success) {
-           if (json.errorCode === 'ERR_VERSION_CONFLICT') {
-             setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? orderToUpdate : o));
-             setConflictData({
-               action: 'updateOrderStatus',
-               data: payload,
-               description: `更新狀態: ${orderToUpdate?.customerName}`
-             });
-           } else {
-             setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: json.error || 'Status update failed' } : o));
-             if (showDefaultToast) addToast("狀態更新失敗，已標記為錯誤", 'error');
-           }
-        } else {
-           setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
-        }
-      }
-    } catch (e) {
-      console.error("狀態更新失敗", e);
-      setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error' } : o));
-      if (showDefaultToast) addToast("狀態更新失敗，已標記為錯誤", 'error');
+    // Debounce logic handled by saveOrderToCloud queue? 
+    // No, debounce is for UI actions. Queue is for serializing requests.
+    // If we want to debounce the actual API call, we should do it here.
+    // However, the user asked for debounce in updateOrderStatus.
+    // But since we are using a queue now, do we still need debounce?
+    // Yes, to avoid filling the queue with intermediate states if the user clicks fast.
+    
+    // But implementing debounce inside a callback that might be called with different arguments is tricky.
+    // Usually we debounce the function itself.
+    // Let's use a ref to store timeouts for each orderId.
+    
+    if (updateTimeoutRef.current[orderId]) {
+        clearTimeout(updateTimeoutRef.current[orderId]);
     }
-  }, [orders, apiEndpoint, addToast, setOrders, setConflictData]);
+
+    updateTimeoutRef.current[orderId] = setTimeout(async () => {
+        // This runs after 500ms of inactivity for this orderId
+        // We need to get the LATEST status from the state, because 'newStatus' in the closure might be stale if multiple clicks happened.
+        // But wait, 'orders' dependency in useCallback might make this function recreate.
+        // If we use a ref for orders (like in useDataSync), we can get the latest.
+        // Or we just trust that the last call to updateOrderStatus has the correct final status.
+        // Yes, the last call sets the timeout with the 'newStatus' of that call.
+        
+        // Actually, we should call saveOrderToCloud here.
+        
+        // We need to pass the latest order object to saveOrderToCloud.
+        // Since we optimistically updated 'orders', the 'orders' in state has the new status.
+        // But 'orders' in this closure is from the render cycle where updateOrderStatus was created.
+        // If we use functional state update, we are good for UI.
+        // For API, we need the latest data.
+        
+        // Let's use the orderToUpdate (which is from the closure) but override status with newStatus.
+        // And we need the latest lastUpdated... which is handled by the queue!
+        
+        const payloadOrder = { ...orderToUpdate, status: newStatus };
+        
+        await saveOrderToCloud(
+            payloadOrder,
+            'updateOrderStatus',
+            orderToUpdate.lastUpdated, // The queue will override this with the latest version if needed
+            (updatedOrder) => {
+                 setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined, ...(updatedOrder ? { lastUpdated: updatedOrder.lastUpdated } : {}) } : o));
+            },
+            (conflictPayload: any) => {
+                 setConflictData({
+                   action: 'updateOrderStatus',
+                   data: conflictPayload,
+                   description: `更新狀態: ${orderToUpdate?.customerName}`
+                 });
+                 // Revert optimistic update on conflict? Or let the user resolve?
+                 // Usually conflict modal handles it.
+                 // But we should probably revert the syncStatus to 'error' or keep it pending until resolved.
+                 // The current logic sets conflictData.
+            },
+            (errMsg: string) => {
+                 setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+                 if (showDefaultToast) addToast("狀態更新失敗，已標記為錯誤", 'error');
+            }
+        );
+        
+        delete updateTimeoutRef.current[orderId];
+    }, 500);
+    
+  }, [orders, apiEndpoint, addToast, setOrders, setConflictData, saveOrderToCloud]);
+
+  const updateTimeoutRef = React.useRef<{ [key: string]: NodeJS.Timeout }>({});
 
   const handleSwipeStatusChange = useCallback((orderId: string, newStatus: OrderStatus) => {
     const order = orders.find(o => o.id === orderId);
