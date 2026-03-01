@@ -368,6 +368,10 @@ const App: React.FC = () => {
   // NEW: Effect for dynamic loading text
   // (Moved to useVoiceAssistant)
 
+  const handleGridCardClick = useCallback((custName: string) => {
+    setSelectedCustomerForModal(custName);
+  }, []);
+
   // ... (Computed values moved to useOrderCalculations) ...
   const {
     orderSummary,
@@ -841,7 +845,7 @@ const App: React.FC = () => {
                       orders={custOrders} 
                       products={products}
                       customers={customers}
-                      onClick={() => setSelectedCustomerForModal(custName)} 
+                      onClick={handleGridCardClick} 
                     />
                   ))
                 ) : (

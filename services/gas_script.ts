@@ -54,6 +54,9 @@ function doPost(e) {
       case "updateOrderStatus":
         result = updateOrderStatus(params.data);
         break;
+      case "batchUpdateOrders":
+        result = batchUpdateOrders(params.data);
+        break;
       case "batchUpdatePaymentStatus":
         result = batchUpdatePaymentStatus(params.data);
         break;
@@ -341,6 +344,37 @@ function updateOrderStatus(data) {
   
   if (!updated) throw new Error("Order not found: " + targetId);
   return true;
+}
+
+function batchUpdateOrders(data) {
+  const sheet = getSheets().ORDERS;
+  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const values = sheet.getDataRange().getValues();
+  const updates = data.updates; // Array of { id: string, status: string, originalLastUpdated: number }
+  const newLastUpdatedTs = new Date().getTime();
+  let updatedCount = 0;
+  
+  // Create a map for fast lookup
+  const updateMap = new Map();
+  updates.forEach(u => updateMap.set(String(u.id).trim(), u));
+
+  for (let i = 1; i < values.length; i++) {
+    const rowId = String(values[i][1]).trim();
+    if (updateMap.has(rowId)) {
+      const updateData = updateMap.get(rowId);
+      
+      // Conflict check if provided and not forced
+      if (updateData.originalLastUpdated !== undefined && !updateData.force) {
+         checkVersionConflict(values[i][lastUpdatedColIdx], updateData.originalLastUpdated);
+      }
+      
+      sheet.getRange(i + 1, 9).setValue(updateData.status); // Status column
+      sheet.getRange(i + 1, lastUpdatedColIdx + 1).setValue(newLastUpdatedTs);
+      updatedCount++;
+    }
+  }
+  
+  return { updatedCount, newLastUpdatedTs };
 }
 
 function batchUpdatePaymentStatus(data) {
