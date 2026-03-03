@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { X, Check, Trash2, Plus, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Customer, Product, OrderItem, Order, OrderStatus } from '../../types';
+import { Customer, Product, Order } from '../../types';
 import { PRODUCT_CATEGORIES } from '../../constants';
 
 interface MatrixGridProps {
@@ -9,7 +9,6 @@ interface MatrixGridProps {
   customers: Customer[];
   products: Product[];
   onUpdateOrder: (customerId: string, productId: string, quantity: number, unit: string, note: string) => void;
-  selectedDate: string;
 }
 
 interface CellData {
@@ -23,8 +22,7 @@ export const MatrixGrid: React.FC<MatrixGridProps> = ({
   orders, 
   customers, 
   products, 
-  onUpdateOrder,
-  selectedDate
+  onUpdateOrder
 }) => {
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [showOnlyOrdered, setShowOnlyOrdered] = useState(false);
@@ -221,7 +219,6 @@ export const MatrixGrid: React.FC<MatrixGridProps> = ({
       <AnimatePresence>
         {editingCell && (
           <QuickEditModal 
-            isOpen={!!editingCell}
             onClose={() => setEditingCell(null)}
             data={editingCell}
             onSave={(qty, unit, note) => {
@@ -237,11 +234,10 @@ export const MatrixGrid: React.FC<MatrixGridProps> = ({
 
 // --- Quick Edit Modal Component ---
 const QuickEditModal: React.FC<{
-  isOpen: boolean;
   onClose: () => void;
   data: { customerName: string; productName: string; currentData: CellData | null };
   onSave: (qty: number, unit: string, note: string) => void;
-}> = ({ isOpen, onClose, data, onSave }) => {
+}> = ({ onClose, data, onSave }) => {
   const [quantity, setQuantity] = useState<string>(data.currentData?.quantity.toString() || '');
   const [unit, setUnit] = useState(data.currentData?.unit || '斤');
   const [note, setNote] = useState(data.currentData?.note || '');

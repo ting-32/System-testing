@@ -232,13 +232,6 @@ export const useOrderActions = ({
         setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
         addToast('重試同步成功', 'success');
       },
-      (conflictPayload: any) => {
-        setConflictData({
-          action: realActionName,
-          data: conflictPayload,
-          description: `訂單客戶：${order.customerName}`
-        });
-      },
       (errMsg: string) => {
         setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
         addToast("重試失敗", 'error');
@@ -247,7 +240,7 @@ export const useOrderActions = ({
   };
 
   const batchTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const pendingUpdatesRef = React.useRef<Map<string, { id: string, status: OrderStatus, originalLastUpdated: number }>>(new Map());
+  const pendingUpdatesRef = React.useRef<Map<string, { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }>>(new Map());
 
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus, showDefaultToast: boolean = true) => {
     const orderToUpdate = orders.find(o => o.id === orderId);
@@ -260,7 +253,8 @@ export const useOrderActions = ({
     pendingUpdatesRef.current.set(orderId, {
       id: orderId,
       status: newStatus,
-      originalLastUpdated: orderToUpdate.lastUpdated || 0
+      originalLastUpdated: orderToUpdate.lastUpdated || 0,
+      force: true // Force update for status changes to avoid conflicts
     });
 
     if (batchTimeoutRef.current) {
@@ -268,7 +262,7 @@ export const useOrderActions = ({
     }
 
     batchTimeoutRef.current = setTimeout(async () => {
-        const updatesToProcess: { id: string, status: OrderStatus, originalLastUpdated: number }[] = Array.from(pendingUpdatesRef.current.values());
+        const updatesToProcess: { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
         pendingUpdatesRef.current.clear(); // Clear the map for future updates
         batchTimeoutRef.current = null;
 
@@ -561,13 +555,6 @@ export const useOrderActions = ({
       () => {
          setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
          addToast('同步成功', 'success');
-      },
-      (conflictPayload: any) => {
-         setConflictData({
-           action: editingOrderId ? 'updateOrderContent' : 'createOrder',
-           data: conflictPayload,
-           description: `訂單客戶：${newOrder.customerName}`
-         });
       },
       (errMsg: string) => {
          setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));

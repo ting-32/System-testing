@@ -18,14 +18,8 @@ interface UseOrderCalculationsProps {
   customerSearch: string;
   settlementTarget: { name: string; allOrderIds: string[] } | null;
   settlementDate: string;
-  orderForm: {
-    customerId: string;
-    items: { productId: string; quantity: number; unit: string }[];
-  };
-  quickAddData: {
-    customerName: string;
-    items: { productId: string; quantity: number; unit: string }[];
-  } | null;
+  orderForm?: { items: { productId: string; quantity: number; unit: string }[] };
+  quickAddData?: { customerName: string; items: { productId: string; quantity: number; unit: string }[] } | null;
 }
 
 export const useOrderCalculations = ({
@@ -48,51 +42,41 @@ export const useOrderCalculations = ({
   quickAddData
 }: UseOrderCalculationsProps) => {
 
-  // 1. Order Summary (for Add/Edit Order Modal)
+  // 0. Order Summary (for Order Form)
   const orderSummary = useMemo(() => {
-    const customer = customers.find(c => c.id === orderForm.customerId);
-    let totalPrice = 0;
+    if (!orderForm) return { totalPrice: 0, details: [] };
+    let total = 0;
     const details = orderForm.items.map(item => {
-      const product = products.find(p => p.id === item.productId);
-      const priceItem = customer?.priceList?.find(pl => pl.productId === item.productId);
-      const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
-
-      let displayQty = item.quantity;
-      let displayUnit = item.unit || '斤';
+      const p = products.find(prod => prod.id === item.productId);
+      if (!p) return { name: '未知', rawQty: 0, displayQty: 0, displayUnit: item.unit, subtotal: 0, isCalculated: false, unitPrice: 0 };
+      
       let subtotal = 0;
+      let displayQty = item.quantity;
       let isCalculated = false;
-
+      
       if (item.unit === '元') {
-        subtotal = item.quantity;
-        if (unitPrice > 0) {
-          displayQty = parseFloat((item.quantity / unitPrice).toFixed(1));
-          displayUnit = product?.unit || '斤';
-          isCalculated = true;
-        } else {
-          displayQty = 0;
-        }
+         subtotal = item.quantity;
+         displayQty = parseFloat((item.quantity / p.price).toFixed(2));
+         isCalculated = true;
       } else {
-        subtotal = Math.round(item.quantity * unitPrice);
-        displayQty = item.quantity;
-        displayUnit = item.unit || '斤';
+         subtotal = item.quantity * p.price;
       }
-
-      totalPrice += subtotal;
+      
+      total += subtotal;
       return {
-        name: product?.name || '未選品項',
-        rawQty: item.quantity,
-        rawUnit: item.unit,
-        displayQty,
-        displayUnit,
-        subtotal,
-        unitPrice,
-        isCalculated
+         name: p.name,
+         rawQty: item.quantity,
+         displayQty,
+         displayUnit: item.unit === '元' ? '斤' : item.unit,
+         subtotal,
+         isCalculated,
+         unitPrice: p.price
       };
     });
-    return { totalPrice, details };
-  }, [orderForm.items, orderForm.customerId, customers, products]);
+    return { totalPrice: total, details };
+  }, [orderForm?.items, products]);
 
-  // 2. Helper: Calculate Total Amount for a single Order
+  // 1. Helper: Calculate Total Amount for a single Order
   const calculateOrderTotalAmount = (order: Order) => {
     const customer = customers.find(c => c.name === order.customerName);
     let total = 0;

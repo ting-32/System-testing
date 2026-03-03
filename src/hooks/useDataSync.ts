@@ -290,7 +290,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     actionName: string, 
     originalLastUpdated: number | undefined,
     onSuccess: (updatedOrder?: Order) => void,
-    onConflict: (data: any) => void,
     onError: (msg: string) => void
   ) => {
     const orderId = newOrder.id;
@@ -327,13 +326,42 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
                 if (!json.success) {
                     if (json.errorCode === 'ERR_VERSION_CONFLICT') {
-                        onConflict(payload);
+                        console.log("Auto-resolving conflict for order:", orderId);
+                        try {
+                            // Fetch latest data silently
+                            const latestRes = await fetch(apiEndpoint, {
+                                method: 'POST',
+                                body: JSON.stringify({ action: 'getOrder', data: { id: orderId } })
+                            });
+                            const latestJson = await latestRes.json();
+                            if (latestJson.success && latestJson.data) {
+                                const latestOrder = latestJson.data;
+                                if (latestOrder && latestOrder.lastUpdated) {
+                                    // Retry with the new lastUpdated
+                                    const retryPayload = { ...payload, originalLastUpdated: latestOrder.lastUpdated };
+                                    const retryRes = await fetch(apiEndpoint, {
+                                        method: 'POST',
+                                        body: JSON.stringify({ action: actionName, data: retryPayload })
+                                    });
+                                    const retryJson = await retryRes.json();
+                                    if (retryJson.success) {
+                                        const newVersion = retryJson.data?.lastUpdated || latestOrder.lastUpdated;
+                                        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, lastUpdated: newVersion } : o));
+                                        onSuccess({ ...newOrder, lastUpdated: newVersion });
+                                        return newVersion;
+                                    }
+                                }
+                            }
+                            // If auto-retry fails, fallback to error
+                            onError('自動合併失敗，請重新整理畫面');
+                        } catch (e) {
+                            console.error("Auto-retry failed:", e);
+                            onError('自動合併發生錯誤，請檢查網路');
+                        }
                     } else {
                         onError(json.error || 'Unknown error');
                     }
                     // If failed, return the version we tried to use, so the next task uses it (or fails too)
-                    // Or return undefined to let next task fallback to its own originalLastUpdated?
-                    // Returning versionToUse is safer to maintain the chain's state.
                     return versionToUse;
                 } else {
                     // Success!
@@ -377,6 +405,35 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       syncData(false); 
     } 
   }, [isAuthenticated, syncData]);
+
+  // Silent Background Polling
+  const lastGlobalUpdateRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isAuthenticated || !apiEndpoint) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(apiEndpoint, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'checkUpdates', data: {} })
+        });
+        const json = await res.json();
+        if (json.success && json.data) {
+          const serverGlobalTs = json.data.globalLastUpdated;
+          if (lastGlobalUpdateRef.current > 0 && serverGlobalTs > lastGlobalUpdateRef.current) {
+            console.log("Background updates detected, syncing silently...");
+            syncData(true);
+          }
+          lastGlobalUpdateRef.current = serverGlobalTs;
+        }
+      } catch (e) {
+        console.error("Polling error:", e);
+      }
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [isAuthenticated, apiEndpoint, syncData]);
 
   return {
     isAuthenticated, setIsAuthenticated,

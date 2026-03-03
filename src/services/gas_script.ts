@@ -78,6 +78,12 @@ function doPost(e) {
       case "deleteProduct":
         result = deleteProduct(params.data);
         break;
+      case "checkUpdates":
+        result = checkUpdates();
+        break;
+      case "getOrder":
+        result = getOrder(params.data);
+        break;
       default:
         throw new Error("Unknown action: " + action);
     }
@@ -97,6 +103,73 @@ function doPost(e) {
 }
 
 // --- Logic Functions ---
+
+function checkUpdates() {
+  const sheets = getSheets();
+  let maxTs = 0;
+  
+  ['ORDERS', 'CUSTOMERS', 'PRODUCTS'].forEach(sheetName => {
+    const sheet = sheets[sheetName];
+    if (!sheet) return;
+    const lastCol = sheet.getLastColumn();
+    if (lastCol === 0) return;
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const lastUpdatedColIdx = headers.indexOf("LastUpdated");
+    if (lastUpdatedColIdx !== -1 && sheet.getLastRow() > 1) {
+      const values = sheet.getRange(2, lastUpdatedColIdx + 1, sheet.getLastRow() - 1, 1).getValues();
+      for (let i = 0; i < values.length; i++) {
+        const ts = new Date(values[i][0]).getTime();
+        if (ts && ts > maxTs) maxTs = ts;
+      }
+    }
+  });
+  
+  return { globalLastUpdated: maxTs };
+}
+
+function getOrder(data) {
+  const orderId = data.id;
+  if (!orderId) throw new Error("Missing order ID");
+  
+  const sheets = getSheets();
+  const sheet = sheets.ORDERS;
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  
+  let orderRows = [];
+  for (let i = 1; i < values.length; i++) {
+    const rowId = String(values[i][1]).trim();
+    if (rowId === String(orderId).trim()) {
+      let obj = {};
+      for (let j = 0; j < headers.length; j++) {
+        obj[headers[j]] = values[i][j];
+      }
+      orderRows.push(obj);
+    }
+  }
+  
+  if (orderRows.length === 0) return null;
+  
+  const firstRow = orderRows[0];
+  const order = {
+    id: firstRow.ID || firstRow.id || firstRow["Order ID"] || firstRow.訂單ID,
+    createdAt: firstRow.CreatedAt || firstRow.createdAt || firstRow.建立時間,
+    customerName: firstRow.CustomerName || firstRow.customerName || firstRow.客戶名,
+    deliveryDate: firstRow.DeliveryDate || firstRow.deliveryDate || firstRow.配送日期,
+    deliveryTime: firstRow.DeliveryTime || firstRow.deliveryTime || firstRow.配送時間,
+    note: firstRow.Note || firstRow.note || firstRow.備註,
+    status: firstRow.Status || firstRow.status || firstRow.狀態,
+    deliveryMethod: firstRow.DeliveryMethod || firstRow.deliveryMethod || firstRow.配送方式,
+    lastUpdated: firstRow.LastUpdated ? new Date(firstRow.LastUpdated).getTime() : 0,
+    items: orderRows.map(r => ({
+      productId: r.ProductName || r.productName || r.品項,
+      quantity: r.Quantity || r.quantity || r.數量,
+      unit: r.Unit || r.unit || r.單位
+    }))
+  };
+  
+  return order;
+}
 
 function login(data) {
   const sheet = getConfigSheet();
