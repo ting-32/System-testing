@@ -150,31 +150,60 @@ export const useOrderCalculations = ({
     return { totalReceivable, totalCollected };
   }, [scheduleOrders, customers, products]);
 
-  // 6. Finance Data (Outstanding Debts)
+  // 6. Finance Data (Outstanding Debts & Revenue)
   const financeData = useMemo(() => {
-    const outstandingMap = new Map<string, { totalDebt: number, count: number, orderIds: string[] }>();
+    const outstandingMap = new Map<string, { totalDebt: number, count: number, orderIds: string[], orders: Order[], oldestDate: string }>();
     let grandTotalDebt = 0;
+    
+    let thisMonthRevenue = 0;
+    let thisMonthCollected = 0;
+    
+    const now = new Date();
+    const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
     orders.forEach(order => {
+      const amount = calculateOrderTotalAmount(order);
+      
+      // Calculate this month's revenue
+      if (order.deliveryDate.startsWith(currentMonthPrefix) && order.status !== OrderStatus.CANCELLED) {
+        thisMonthRevenue += amount;
+        if (order.status === OrderStatus.PAID) {
+          thisMonthCollected += amount;
+        }
+      }
+
       if (order.status !== OrderStatus.PAID && order.status !== OrderStatus.CANCELLED) {
-        const amount = calculateOrderTotalAmount(order);
         grandTotalDebt += amount;
 
         if (!outstandingMap.has(order.customerName)) {
-          outstandingMap.set(order.customerName, { totalDebt: 0, count: 0, orderIds: [] });
+          outstandingMap.set(order.customerName, { totalDebt: 0, count: 0, orderIds: [], orders: [], oldestDate: order.deliveryDate });
         }
         const entry = outstandingMap.get(order.customerName)!;
         entry.totalDebt += amount;
         entry.count += 1;
         entry.orderIds.push(order.id);
+        entry.orders.push(order);
+        if (order.deliveryDate < entry.oldestDate) {
+          entry.oldestDate = order.deliveryDate;
+        }
       }
     });
 
     const sortedOutstanding = Array.from(outstandingMap.entries())
-      .map(([name, data]) => ({ name, ...data }))
+      .map(([name, data]) => {
+        // Sort orders by date ascending
+        data.orders.sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
+        
+        // Calculate aging
+        const oldestDateObj = new Date(data.oldestDate);
+        const diffTime = Math.abs(now.getTime() - oldestDateObj.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        return { name, ...data, agingDays: diffDays };
+      })
       .sort((a, b) => b.totalDebt - a.totalDebt);
 
-    return { grandTotalDebt, outstanding: sortedOutstanding };
+    return { grandTotalDebt, outstanding: sortedOutstanding, thisMonthRevenue, thisMonthCollected };
   }, [orders, customers, products]);
 
   // 7. Settlement Preview

@@ -429,9 +429,41 @@ export const useOrderActions = ({
     }
   };
 
-  const handleCopyStatement = (customerName: string, totalDebt: number) => {
-    const text = `【${customerName} 對帳單】\n截至目前未結款項: $${totalDebt.toLocaleString()}\n請核對，謝謝！`;
+  const handleCopyStatement = (customerName: string, totalDebt: number, orders: Order[]) => {
+    let text = `【對帳單】${customerName} 老闆 您好：\n目前未結清款項共計：$${totalDebt.toLocaleString()}\n\n明細如下：\n`;
+    orders.forEach(o => {
+      const amount = o.items.reduce((sum, item) => {
+        if (item.unit === '元') return sum + item.quantity;
+        const cust = customers.find(c => c.name === customerName);
+        const priceInfo = cust?.priceList?.find(pl => pl.productId === item.productId);
+        const price = priceInfo ? priceInfo.price : 0;
+        return sum + Math.round(item.quantity * price);
+      }, 0);
+      const dateStr = o.deliveryDate.substring(5).replace('-', '/'); // MM/DD
+      text += `- ${dateStr}: $${amount.toLocaleString()}\n`;
+    });
+    text += `\n再麻煩您確認，謝謝！`;
+    
     navigator.clipboard.writeText(text).then(() => addToast('對帳單文字已複製', 'success'));
+  };
+
+  const handleShareStatementToLine = (customerName: string, totalDebt: number, orders: Order[]) => {
+    let text = `【對帳單】${customerName} 老闆 您好：\n目前未結清款項共計：$${totalDebt.toLocaleString()}\n\n明細如下：\n`;
+    orders.forEach(o => {
+      const amount = o.items.reduce((sum, item) => {
+        if (item.unit === '元') return sum + item.quantity;
+        const cust = customers.find(c => c.name === customerName);
+        const priceInfo = cust?.priceList?.find(pl => pl.productId === item.productId);
+        const price = priceInfo ? priceInfo.price : 0;
+        return sum + Math.round(item.quantity * price);
+      }, 0);
+      const dateStr = o.deliveryDate.substring(5).replace('-', '/'); // MM/DD
+      text += `- ${dateStr}: $${amount.toLocaleString()}\n`;
+    });
+    text += `\n再麻煩您確認，謝謝！`;
+    
+    const encodedText = encodeURIComponent(text);
+    window.open(`https://line.me/R/msg/text/?${encodedText}`, '_blank');
   };
 
   const openGoogleMaps = (name: string) => {
@@ -473,18 +505,40 @@ export const useOrderActions = ({
       setIsAddingOrder(true);
     };
 
-    if (groupedOrders[c.name] && groupedOrders[c.name].length > 0) {
+    const dateObj = new Date(selectedDate);
+    const dayOfWeek = dateObj.getDay();
+    const isWeeklyOff = (c.offDays || []).includes(dayOfWeek);
+    const isHoliday = (c.holidayDates || []).includes(selectedDate);
+    const isRestingToday = isWeeklyOff || isHoliday;
+
+    const checkExistingOrder = () => {
+      if (groupedOrders[c.name] && groupedOrders[c.name].length > 0) {
+        setConfirmConfig({
+          isOpen: true,
+          title: '重複訂單提醒',
+          message: `「${c.name}」在今日 (${selectedDate}) 已經有訂單了！\n\n確定要「追加」一筆新訂單嗎？`,
+          onConfirm: () => {
+            setConfirmConfig((prev: any) => ({ ...prev, isOpen: false }));
+            proceedWithCreation();
+          }
+        });
+      } else {
+        proceedWithCreation();
+      }
+    };
+
+    if (isRestingToday) {
       setConfirmConfig({
         isOpen: true,
-        title: '重複訂單提醒',
-        message: `「${c.name}」在今日 (${selectedDate}) 已經有訂單了！\n\n確定要「追加」一筆新訂單嗎？`,
+        title: '公休提醒',
+        message: `「${c.name}」今日公休，確定要強制建立訂單嗎？`,
         onConfirm: () => {
           setConfirmConfig((prev: any) => ({ ...prev, isOpen: false }));
-          proceedWithCreation();
+          checkExistingOrder();
         }
       });
     } else {
-      proceedWithCreation();
+      checkExistingOrder();
     }
   };
 
@@ -614,6 +668,7 @@ export const useOrderActions = ({
     handleCopyOrder,
     handleShareOrder,
     handleCopyStatement,
+    handleShareStatementToLine,
     handleEditOrder,
     handleCreateOrderFromCustomer,
     handleSaveOrder,

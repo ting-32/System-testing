@@ -428,7 +428,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
           lastGlobalUpdateRef.current = serverGlobalTs;
         }
       } catch (e) {
-        console.error("Polling error:", e);
+        // Suppress polling error log to avoid console spam when offline or endpoint is invalid
+        // console.error("Polling error:", e);
       }
     }, 30000); // 30 seconds
 

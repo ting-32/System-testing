@@ -198,6 +198,9 @@ const App: React.FC = () => {
 
   const [settlementTarget, setSettlementTarget] = useState<{name: string, allOrderIds: string[]} | null>(null);
   const [settlementDate, setSettlementDate] = useState<string>(getLastMonthEndDate());
+  const [financeFilter, setFinanceFilter] = useState<'all' | 'thisMonth' | 'over30' | 'over60'>('all');
+  const [partialSettlementTarget, setPartialSettlementTarget] = useState<{name: string, orders: Order[]} | null>(null);
+  const [selectedPartialOrderIds, setSelectedPartialOrderIds] = useState<Set<string>>(new Set());
 
   const [orderForm, setOrderForm] = useState<{
     customerType: 'existing' | 'retail';
@@ -369,7 +372,8 @@ const App: React.FC = () => {
     settlementPreview,
     groupedOrders,
     filteredCustomers,
-    workSheetData
+    workSheetData,
+    calculateOrderTotalAmount
   } = useOrderCalculations({
     orders,
     customers,
@@ -397,6 +401,7 @@ const App: React.FC = () => {
     handleCopyOrder,
     handleShareOrder,
     handleCopyStatement,
+    handleShareStatementToLine,
     handleEditOrder,
     handleCreateOrderFromCustomer,
     handleSaveOrder,
@@ -977,7 +982,90 @@ const App: React.FC = () => {
         {/* ... (Finance and Work Tabs remain unchanged - they are inside ActiveTab blocks already provided in context, just ensuring closing structure) ... */}
         {activeTab === 'finance' && (
            <motion.div key="finance" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
-             <div className="px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 mb-4 tracking-tight"><Wallet className="w-5 h-5 text-morandi-blue" /> 帳務總覽</h2><div className="bg-morandi-charcoal rounded-[28px] p-6 shadow-lg text-white mb-6 relative overflow-hidden"><div className="absolute right-[-20px] top-[-20px] opacity-10"><DollarSign className="w-40 h-40" /></div><p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">未結總金額</p><h3 className="text-4xl font-black text-white tracking-tight">${financeData.grandTotalDebt.toLocaleString()}</h3><p className="text-[10px] text-gray-500 mt-2 font-medium tracking-wide">包含所有已出貨但未收款的訂單</p></div><div className="space-y-4"><h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest px-2 flex items-center gap-2"><ListChecks className="w-4 h-4" /> 欠款客戶列表 ({financeData.outstanding.length})</h3><motion.div variants={containerVariants} initial="hidden" animate="show">{financeData.outstanding.length > 0 ? (financeData.outstanding.map((item, idx) => (<motion.div variants={itemVariants} key={idx} className="bg-white rounded-[24px] p-5 shadow-sm border border-slate-200 mb-3 relative overflow-hidden"><div className="flex justify-between items-start mb-4 relative z-10"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-[16px] bg-rose-50 flex items-center justify-center text-rose-400 font-extrabold text-xl">{item.name.charAt(0)}</div><div><h4 className="font-bold text-slate-800 text-lg">{item.name}</h4><p className="text-xs text-rose-400 font-bold bg-rose-50 inline-block px-1.5 rounded mt-0.5">{item.count} 筆未結</p></div></div><div className="text-right"><p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">應收金額</p><p className="text-2xl font-black text-morandi-charcoal tracking-tight">${item.totalDebt.toLocaleString()}</p></div></div><div className="flex gap-2 relative z-10 pt-2 border-t border-gray-100"><button onClick={() => handleCopyStatement(item.name, item.totalDebt)} className="flex-1 py-3 rounded-xl bg-gray-50 text-slate-500 font-bold text-xs flex items-center justify-center gap-1 hover:bg-gray-100 transition-colors"><Copy className="w-3.5 h-3.5" /> 複製對帳單</button><button onClick={() => { setSettlementDate(getLastMonthEndDate()); setSettlementTarget({name: item.name, allOrderIds: item.orderIds}); }} className="flex-1 py-3 rounded-xl bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-emerald-600 shadow-md shadow-emerald-200 transition-all active:scale-95"><CheckCircle2 className="w-3.5 h-3.5" /> 結帳</button></div></motion.div>))) : (<div className="text-center py-10"><div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-8 h-8 text-emerald-400" /></div><p className="text-gray-400 font-bold text-sm">目前沒有未結款項</p><p className="text-xs text-gray-300 mt-1">所有配送單皆已完成收款</p></div>)}</motion.div></div></div>
+             <div className="px-1">
+               <h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 mb-4 tracking-tight"><Wallet className="w-5 h-5 text-morandi-blue" /> 帳務總覽</h2>
+               
+               {/* Revenue Overview Cards */}
+               <div className="grid grid-cols-2 gap-3 mb-6">
+                 <div className="bg-morandi-charcoal rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                   <div className="absolute right-[-10px] top-[-10px] opacity-10"><DollarSign className="w-24 h-24" /></div>
+                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">未結總金額</p>
+                   <h3 className="text-2xl font-black text-white tracking-tight">${financeData.grandTotalDebt.toLocaleString()}</h3>
+                 </div>
+                 <div className="bg-emerald-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                   <div className="absolute right-[-10px] top-[-10px] opacity-10"><CheckCircle2 className="w-24 h-24" /></div>
+                   <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-widest mb-1">本月已收帳款</p>
+                   <h3 className="text-2xl font-black text-white tracking-tight">${financeData.thisMonthCollected.toLocaleString()}</h3>
+                   <p className="text-[9px] text-emerald-100 mt-1 font-medium tracking-wide">佔本月營收 {financeData.thisMonthRevenue > 0 ? Math.round((financeData.thisMonthCollected / financeData.thisMonthRevenue) * 100) : 0}%</p>
+                 </div>
+               </div>
+
+               <div className="space-y-4">
+                 <div className="flex justify-between items-center px-2">
+                   <h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2"><ListChecks className="w-4 h-4" /> 欠款客戶列表</h3>
+                 </div>
+                 
+                 {/* Aging Filters */}
+                 <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar px-2 -mx-2">
+                   <button onClick={() => setFinanceFilter('all')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'all' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部</button>
+                   <button onClick={() => setFinanceFilter('thisMonth')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'thisMonth' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>本月新增</button>
+                   <button onClick={() => setFinanceFilter('over30')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'over30' ? 'bg-rose-500 text-white border-rose-500' : 'bg-white text-gray-400 border-gray-200'}`}>逾期 30 天</button>
+                   <button onClick={() => setFinanceFilter('over60')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'over60' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-gray-400 border-gray-200'}`}>逾期 60 天</button>
+                 </div>
+
+                 <motion.div variants={containerVariants} initial="hidden" animate="show">
+                   {financeData.outstanding.length > 0 ? (
+                     financeData.outstanding
+                       .filter(item => {
+                         if (financeFilter === 'all') return true;
+                         if (financeFilter === 'thisMonth') return item.agingDays <= 30;
+                         if (financeFilter === 'over30') return item.agingDays > 30;
+                         if (financeFilter === 'over60') return item.agingDays > 60;
+                         return true;
+                       })
+                       .map((item, idx) => (
+                       <motion.div variants={itemVariants} key={idx} className="bg-white rounded-[24px] p-5 shadow-sm border border-slate-200 mb-3 relative overflow-hidden">
+                         <div className="flex justify-between items-start mb-4 relative z-10">
+                           <div className="flex items-center gap-3">
+                             <div className="w-12 h-12 rounded-[16px] bg-rose-50 flex items-center justify-center text-rose-400 font-extrabold text-xl">{item.name.charAt(0)}</div>
+                             <div>
+                               <h4 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                                 {item.name}
+                                 {item.agingDays > 60 ? (
+                                   <span className="text-[9px] bg-rose-600 text-white px-1.5 py-0.5 rounded-md font-bold">⚠️ 逾期 60 天</span>
+                                 ) : item.agingDays > 30 ? (
+                                   <span className="text-[9px] bg-rose-500 text-white px-1.5 py-0.5 rounded-md font-bold">⚠️ 逾期 30 天</span>
+                                 ) : null}
+                               </h4>
+                               <p className="text-xs text-rose-400 font-bold bg-rose-50 inline-block px-1.5 rounded mt-0.5">{item.count} 筆未結</p>
+                             </div>
+                           </div>
+                           <div className="text-right">
+                             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">應收金額</p>
+                             <p className="text-2xl font-black text-morandi-charcoal tracking-tight">${item.totalDebt.toLocaleString()}</p>
+                           </div>
+                         </div>
+                         <div className="grid grid-cols-2 gap-2 relative z-10 pt-2 border-t border-gray-100">
+                           <button onClick={() => handleCopyStatement(item.name, item.totalDebt, item.orders)} className="py-3 rounded-xl bg-gray-50 text-slate-500 font-bold text-xs flex items-center justify-center gap-1 hover:bg-gray-100 transition-colors"><Copy className="w-3.5 h-3.5" /> 複製對帳單</button>
+                           <button onClick={() => handleShareStatementToLine(item.name, item.totalDebt, item.orders)} className="py-3 rounded-xl bg-[#06C755]/10 text-[#06C755] font-bold text-xs flex items-center justify-center gap-1 hover:bg-[#06C755]/20 transition-colors"><MapPin className="w-3.5 h-3.5" /> Line 傳送</button>
+                           <button onClick={() => {
+                             setPartialSettlementTarget({ name: item.name, orders: item.orders });
+                             setSelectedPartialOrderIds(new Set(item.orders.map(o => o.id)));
+                           }} className="py-3 rounded-xl bg-blue-50 text-blue-500 font-bold text-xs flex items-center justify-center gap-1 hover:bg-blue-100 transition-colors"><ListChecks className="w-3.5 h-3.5" /> 查看明細 / 部分結帳</button>
+                           <button onClick={() => { setSettlementDate(getLastMonthEndDate()); setSettlementTarget({name: item.name, allOrderIds: item.orderIds}); }} className="py-3 rounded-xl bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-emerald-600 shadow-md shadow-emerald-200 transition-all active:scale-95"><CheckCircle2 className="w-3.5 h-3.5" /> 全部結清</button>
+                         </div>
+                       </motion.div>
+                     ))
+                   ) : (
+                     <div className="text-center py-10">
+                       <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-8 h-8 text-emerald-400" /></div>
+                       <p className="text-gray-400 font-bold text-sm">目前沒有未結款項</p>
+                       <p className="text-xs text-gray-300 mt-1">所有配送單皆已完成收款</p>
+                     </div>
+                   )}
+                 </motion.div>
+               </div>
+             </div>
            </motion.div>
         )}
         
@@ -1357,6 +1445,79 @@ const App: React.FC = () => {
           </motion.div>
         </div>
       )}
+      </AnimatePresence>
+
+      {/* Partial Settlement Modal */}
+      <AnimatePresence>
+        {partialSettlementTarget && (
+          <div className="fixed inset-0 bg-black/60 z-[150] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setPartialSettlementTarget(null)}>
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[24px] p-6 w-full max-w-sm shadow-2xl max-h-[80vh] flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-extrabold text-slate-800">部分結帳 - {partialSettlementTarget.name}</h3>
+                <button onClick={() => setPartialSettlementTarget(null)} className="p-2 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200"><X className="w-4 h-4" /></button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto mb-4 space-y-2 custom-scrollbar pr-2">
+                {partialSettlementTarget.orders.map(order => {
+                  const isSelected = selectedPartialOrderIds.has(order.id);
+                  const amount = calculateOrderTotalAmount(order);
+                  return (
+                    <div 
+                      key={order.id} 
+                      onClick={() => {
+                        const newSet = new Set(selectedPartialOrderIds);
+                        if (isSelected) newSet.delete(order.id);
+                        else newSet.add(order.id);
+                        setSelectedPartialOrderIds(newSet);
+                      }}
+                      className={`p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                    >
+                      <div className={`w-5 h-5 rounded flex items-center justify-center border ${isSelected ? 'bg-blue-500 border-blue-500' : 'bg-white border-gray-300'}`}>
+                        {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-slate-700">{order.deliveryDate}</p>
+                        <p className="text-[10px] text-gray-500">{order.items.length} 項商品</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-black text-slate-800">${amount.toLocaleString()}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div className="pt-4 border-t border-gray-100">
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-sm font-bold text-slate-600">已選 {selectedPartialOrderIds.size} 筆</span>
+                  <span className="text-xl font-black text-blue-600">
+                    ${partialSettlementTarget.orders.filter(o => selectedPartialOrderIds.has(o.id)).reduce((sum, o) => sum + calculateOrderTotalAmount(o), 0).toLocaleString()}
+                  </span>
+                </div>
+                <button 
+                  disabled={selectedPartialOrderIds.size === 0}
+                  onClick={() => {
+                    setSettlementDate(getLastMonthEndDate());
+                    setSettlementTarget({
+                      name: partialSettlementTarget.name,
+                      allOrderIds: Array.from(selectedPartialOrderIds)
+                    });
+                    setPartialSettlementTarget(null);
+                  }}
+                  className="w-full py-3 rounded-xl bg-blue-500 text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  <CheckCircle2 className="w-4 h-4" /> 確認結帳
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
 
       {/* Voice Input FAB - Global */}
