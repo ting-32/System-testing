@@ -196,6 +196,7 @@ const App: React.FC = () => {
     onConfirm: () => {}
   });
 
+  const [isSettling, setIsSettling] = useState(false);
   const [settlementTarget, setSettlementTarget] = useState<{name: string, allOrderIds: string[]} | null>(null);
   const [settlementDate, setSettlementDate] = useState<string>(getLastMonthEndDate());
   const [financeFilter, setFinanceFilter] = useState<'all' | 'thisMonth' | 'over30' | 'over60'>('all');
@@ -397,6 +398,7 @@ const App: React.FC = () => {
   // ... (Other handlers remain unchanged until handleCreateOrderFromCustomer) ...
   const {
     handleQuickAddSubmit,
+    handleBatchSettleOrders,
     handleSwipeStatusChange,
     handleCopyOrder,
     handleShareOrder,
@@ -1513,6 +1515,68 @@ const App: React.FC = () => {
                   className="w-full py-3 rounded-xl bg-blue-500 text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
                 >
                   <CheckCircle2 className="w-4 h-4" /> 確認結帳
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Settlement Confirmation Modal */}
+      <AnimatePresence>
+        {settlementTarget && settlementPreview && (
+          <div className="fixed inset-0 bg-black/60 z-[160] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => !isSettling && setSettlementTarget(null)}>
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[24px] p-6 w-full max-w-sm shadow-2xl flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-extrabold text-slate-800">結帳確認</h3>
+                <button disabled={isSettling} onClick={() => setSettlementTarget(null)} className="p-2 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50"><X className="w-4 h-4" /></button>
+              </div>
+              
+              <div className="flex flex-col items-center justify-center p-6 bg-emerald-50 rounded-2xl border border-emerald-100 mb-6">
+                <span className="text-sm font-bold text-emerald-600 mb-1">{settlementTarget.name}</span>
+                <span className="text-4xl font-black text-emerald-600 tracking-tight">
+                  ${settlementPreview.totalAmount.toLocaleString()}
+                </span>
+                <span className="text-xs font-medium text-emerald-600/70 mt-2">
+                  預計結清筆數：{settlementPreview.count} 筆
+                </span>
+              </div>
+              
+              <div className="flex gap-3">
+                <button 
+                  disabled={isSettling}
+                  onClick={() => setSettlementTarget(null)}
+                  className="flex-1 py-3.5 rounded-xl bg-gray-100 text-gray-600 font-bold text-sm hover:bg-gray-200 transition-colors disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button 
+                  disabled={isSettling}
+                  onClick={async () => {
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+                    } else if (navigator.vibrate) {
+                      navigator.vibrate(50);
+                    }
+                    setIsSettling(true);
+                    await handleBatchSettleOrders(settlementTarget.allOrderIds);
+                    setIsSettling(false);
+                    setSettlementTarget(null);
+                  }}
+                  className="flex-1 py-3.5 rounded-xl bg-emerald-500 text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-emerald-600 shadow-lg shadow-emerald-200 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSettling ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5" />
+                  )}
+                  {isSettling ? '處理中...' : '確認收款'}
                 </button>
               </div>
             </motion.div>

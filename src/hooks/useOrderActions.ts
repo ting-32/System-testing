@@ -317,6 +317,96 @@ export const useOrderActions = ({
     
   }, [orders, apiEndpoint, addToast, setOrders, setConflictData]);
 
+  const handleBatchSettleOrders = useCallback(async (orderIds: string[]) => {
+    if (!orderIds.length) return;
+
+    // Optimistic update
+    setOrders((prev: Order[]) => prev.map(o => 
+      orderIds.includes(o.id) ? { ...o, status: OrderStatus.PAID, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o
+    ));
+
+    // Add to pending updates map
+    orderIds.forEach(orderId => {
+      const orderToUpdate = orders.find(o => o.id === orderId);
+      if (orderToUpdate) {
+        pendingUpdatesRef.current.set(orderId, {
+          id: orderId,
+          status: OrderStatus.PAID,
+          originalLastUpdated: orderToUpdate.lastUpdated || 0,
+          force: true
+        });
+      }
+    });
+
+    if (batchTimeoutRef.current) {
+        clearTimeout(batchTimeoutRef.current);
+    }
+
+    // Trigger batch update immediately and return a promise
+    return new Promise<void>((resolve) => {
+      batchTimeoutRef.current = setTimeout(async () => {
+          const updatesToProcess = Array.from(pendingUpdatesRef.current.values());
+          pendingUpdatesRef.current.clear();
+          batchTimeoutRef.current = null;
+
+          if (updatesToProcess.length === 0) {
+            resolve();
+            return;
+          }
+
+          try {
+              if (apiEndpoint) {
+                  const res = await fetch(apiEndpoint, {
+                      method: 'POST',
+                      body: JSON.stringify({ 
+                          action: 'batchUpdateOrders', 
+                          data: { updates: updatesToProcess } 
+                      })
+                  });
+                  const json = await res.json();
+
+                  if (!json.success) {
+                      if (json.errorCode === 'ERR_VERSION_CONFLICT') {
+                           setConflictData({
+                             action: 'batchUpdateOrders',
+                             data: { updates: updatesToProcess },
+                             description: `批量結帳更新發生版本衝突`
+                           });
+                      } else {
+                           throw new Error(json.error || 'Unknown error');
+                      }
+                  } else {
+                      // Success!
+                      const newVersion = json.data.newLastUpdatedTs;
+                      const updatedIds = updatesToProcess.map(u => u.id);
+                      
+                      setOrders((prev: Order[]) => prev.map(o => {
+                          if (updatedIds.includes(o.id)) {
+                              return { ...o, syncStatus: 'synced', pendingAction: undefined, lastUpdated: newVersion };
+                          }
+                          return o;
+                      }));
+                      addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
+                  }
+              }
+          } catch (e) {
+              console.error("Batch Sync Failed:", e);
+              const updatedIds = updatesToProcess.map(u => u.id);
+              setOrders((prev: Order[]) => prev.map(o => {
+                  if (updatedIds.includes(o.id)) {
+                      return { ...o, syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error' };
+                  }
+                  return o;
+              }));
+              addToast("結帳更新失敗，已標記為錯誤", 'error');
+          } finally {
+              resolve();
+          }
+      }, 100);
+    });
+
+  }, [orders, apiEndpoint, addToast, setOrders, setConflictData]);
+
   const handleSwipeStatusChange = useCallback((orderId: string, newStatus: OrderStatus) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.status === newStatus) return;
@@ -664,6 +754,7 @@ export const useOrderActions = ({
   return {
     handleQuickAddSubmit,
     updateOrderStatus,
+    handleBatchSettleOrders,
     handleSwipeStatusChange,
     handleCopyOrder,
     handleShareOrder,
