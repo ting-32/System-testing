@@ -63,15 +63,8 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
       {hasPending && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-amber-400 rounded-full animate-pulse shadow-[0_0_6px_rgba(251,191,36,0.8)]"></span>}
 
       {/* 1. 店家名稱 (允許換行) */}
-      <div className="flex justify-between items-start mb-1">
-        <div className="font-bold leading-3 break-words text-gray-800 pr-1">
-          {customerName}
-        </div>
-        {currentCustomer?.deliveryTime && (
-          <span className="text-[9px] font-mono bg-slate-100 text-slate-500 px-1 rounded">
-            {currentCustomer.deliveryTime}
-          </span>
-        )}
+      <div className="font-bold leading-3 mb-1 break-words text-gray-800 pr-3">
+        {customerName}
       </div>
 
       {/* 2. 品項列表 (極簡化) */}
@@ -80,7 +73,7 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
           const itemsArray = Object.entries(itemTotals);
           const displayItems = itemsArray.slice(0, 2);
           const remainingCount = itemsArray.length - 2;
-          
+
           return (
             <>
               {displayItems.map(([key, data]) => {
@@ -95,7 +88,7 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
                 );
               })}
               {remainingCount > 0 && (
-                <div className="text-[9px] text-gray-400 font-bold text-center mt-1 bg-gray-50 rounded-sm">
+                <div className="text-[9px] text-gray-400 font-bold text-center mt-1 bg-gray-50 rounded-sm py-0.5">
                   還有 {remainingCount} 項...
                 </div>
               )}
