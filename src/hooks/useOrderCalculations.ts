@@ -45,10 +45,18 @@ export const useOrderCalculations = ({
   // 0. Order Summary (for Order Form)
   const orderSummary = useMemo(() => {
     if (!orderForm) return { totalPrice: 0, details: [] };
+    
+    // 1. 取得目前選擇的客戶
+    const customer = customers.find(c => c.id === orderForm.customerId);
+    
     let total = 0;
     const details = orderForm.items.map(item => {
       const p = products.find(prod => prod.id === item.productId);
       if (!p) return { name: '未知', rawQty: 0, displayQty: 0, displayUnit: item.unit, subtotal: 0, isCalculated: false, unitPrice: 0 };
+      
+      // 2. 判斷是否有專屬價格
+      const priceItem = customer?.priceList?.find(pl => pl.productId === item.productId);
+      const unitPrice = priceItem ? priceItem.price : p.price;
       
       let subtotal = 0;
       let displayQty = item.quantity;
@@ -56,10 +64,12 @@ export const useOrderCalculations = ({
       
       if (item.unit === '元') {
          subtotal = item.quantity;
-         displayQty = parseFloat((item.quantity / p.price).toFixed(2));
+         // 3. 使用正確的 unitPrice 換算數量
+         displayQty = parseFloat((item.quantity / unitPrice).toFixed(2));
          isCalculated = true;
       } else {
-         subtotal = item.quantity * p.price;
+         // 4. 使用正確的 unitPrice 計算小計
+         subtotal = item.quantity * unitPrice;
       }
       
       total += subtotal;
@@ -70,11 +80,12 @@ export const useOrderCalculations = ({
          displayUnit: item.unit === '元' ? '斤' : item.unit,
          subtotal,
          isCalculated,
-         unitPrice: p.price
+         unitPrice: unitPrice // 回傳實際使用的單價
       };
     });
     return { totalPrice: total, details };
-  }, [orderForm?.items, products]);
+  // ⚠️ 重要：依賴陣列必須加入 customers，這樣專屬價格變動時才會重新計算
+  }, [orderForm?.items, products, customers, orderForm?.customerId]);
 
   // 1. Helper: Calculate Total Amount for a single Order
   const calculateOrderTotalAmount = (order: Order) => {

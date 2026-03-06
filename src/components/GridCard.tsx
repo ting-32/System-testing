@@ -53,46 +53,61 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
         relative flex flex-col p-1.5 rounded-xl border text-xs cursor-pointer shadow-sm h-full overflow-hidden
         transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.97]
         ${allDelivered 
-          ? 'border-emerald-400 bg-gradient-to-br from-emerald-50 to-emerald-100/50' 
-          : 'border-slate-200 bg-gradient-to-br from-white to-slate-50 hover:border-blue-300'
+          ? 'bg-emerald-50 border-emerald-200' 
+          : hasPending && progressPercent > 0
+            ? 'bg-amber-50 border-amber-200'
+            : 'bg-white border-blue-200'
         }
       `}
     >
       {hasPending && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-amber-400 rounded-full animate-pulse shadow-[0_0_6px_rgba(251,191,36,0.8)]"></span>}
 
       {/* 1. 店家名稱 (允許換行) */}
-      <div className="font-bold leading-3 mb-1 break-words text-gray-800 pr-3">
-        {customerName}
+      <div className="flex justify-between items-start mb-1">
+        <div className="font-bold leading-3 break-words text-gray-800 pr-1">
+          {customerName}
+        </div>
+        {currentCustomer?.deliveryTime && (
+          <span className="text-[9px] font-mono bg-slate-100 text-slate-500 px-1 rounded">
+            {currentCustomer.deliveryTime}
+          </span>
+        )}
       </div>
 
       {/* 2. 品項列表 (極簡化) */}
       <div className="flex-1 space-y-0.5 mb-1">
-        {Object.entries(itemTotals).map(([key, data]) => {
-          const productId = key.split('-')[0];
-          const product = products.find(p => p.id === productId);
-          const productName = product?.name || productId;
+        {(() => {
+          const itemsArray = Object.entries(itemTotals);
+          const displayItems = itemsArray.slice(0, 2);
+          const remainingCount = itemsArray.length - 2;
+          
           return (
-            <div key={key} className="flex justify-between text-[10px] text-gray-500 leading-tight">
-              <span className="truncate w-full">{productName}</span>
-              <span className="font-mono ml-0.5">x{data.quantity}</span>
-            </div>
+            <>
+              {displayItems.map(([key, data]) => {
+                const productId = key.split('-')[0];
+                const product = products.find(p => p.id === productId);
+                const productName = product?.name || productId;
+                return (
+                  <div key={key} className="flex justify-between text-[10px] text-gray-500 leading-tight">
+                    <span className="truncate w-full">{productName}</span>
+                    <span className="font-mono ml-0.5">x{data.quantity}</span>
+                  </div>
+                );
+              })}
+              {remainingCount > 0 && (
+                <div className="text-[9px] text-gray-400 font-bold text-center mt-1 bg-gray-50 rounded-sm">
+                  還有 {remainingCount} 項...
+                </div>
+              )}
+            </>
           );
-        })}
+        })()}
       </div>
 
       {/* 3. 金額 */}
       <div className="mt-auto pt-1 border-t border-dashed border-gray-200 text-right font-bold text-gray-900 z-10 relative">
         ${totalAmount.toLocaleString()}
       </div>
-
-      {/* --- 新增：底部極簡進度條 --- */}
-      <div className="absolute bottom-0 left-0 h-[3px] bg-slate-100 w-full">
-        <div 
-          className={`h-full transition-all duration-500 ease-out ${allDelivered ? 'bg-emerald-500' : 'bg-blue-500'}`}
-          style={{ width: `${progressPercent}%` }}
-        />
-      </div>
-      {/* --------------------------- */}
     </div>
   );
 }, (prevProps, nextProps) => {

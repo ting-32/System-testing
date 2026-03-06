@@ -141,7 +141,24 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                      <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-slate-100">
                        <span className="text-sm font-bold text-slate-700 tracking-wide">{p?.name || pl.productId}</span>
                        <div className="flex items-center gap-3">
-                         <span className="font-black text-amber-500 tracking-tight">${pl.price} <span className="text-xs text-gray-400 font-bold">/ {pl.unit || '斤'}</span></span>
+                         <div className="flex items-center gap-1">
+                           <span className="font-black text-amber-500">$</span>
+                           <input 
+                             type="number" 
+                             min="0"
+                             className="w-16 bg-transparent font-black text-amber-500 tracking-tight outline-none border-b border-transparent hover:border-amber-200 focus:border-amber-500 text-right"
+                             value={pl.price}
+                             onChange={(e) => {
+                               const val = e.target.value;
+                               if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) {
+                                 const newPriceList = [...(customerForm.priceList || [])];
+                                 newPriceList[idx].price = Number(val);
+                                 setCustomerForm({...customerForm, priceList: newPriceList});
+                               }
+                             }}
+                           />
+                           <span className="text-xs text-gray-400 font-bold">/ {pl.unit || '斤'}</span>
+                         </div>
                          <button onClick={() => setCustomerForm({...customerForm, priceList: customerForm.priceList?.filter((_, i) => i !== idx)})} className="text-gray-300 hover:text-rose-400"><X className="w-4 h-4" /></button>
                        </div>
                      </div>

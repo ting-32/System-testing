@@ -44,15 +44,32 @@ export const CustomerPicker: React.FC<{ isOpen: boolean; onClose: () => void; on
       list = list.filter(c => c.category === activeTab);
     }
 
-    // Sort: resting today at the bottom
+    // 排序規則 (權重計分法)：
+    // 0分: 未建立訂單的店家 (排最上面)
+    // 1分: 已建立訂單的店家 (排中間)
+    // 2分: 當天公休的店家 (排最底下)
     list.sort((a, b) => {
-      if (a.isRestingToday && !b.isRestingToday) return 1;
-      if (!a.isRestingToday && b.isRestingToday) return -1;
-      return 0;
+      const getScore = (c: any) => {
+        // 規則 3：當天公休的店家
+        if (c.isRestingToday) return 2;
+        
+        // 判斷是否已建立訂單
+        const hasOrder = orderedCustomerNames.has(c.name);
+        // 判斷是否為「預定店家(固定)」(regular) 或「非每日預訂」(occasional)
+        const isTargetCategory = c.category === 'regular' || c.category === 'occasional';
+        
+        // 規則 2：建立過訂單的店家 (且符合指定標籤)
+        if (hasOrder && isTargetCategory) return 1;
+        
+        // 規則 1：未建立訂單的店家 (或其他不符合上述條件的店家)
+        return 0;
+      };
+
+      return getScore(a) - getScore(b);
     });
 
     return list;
-  }, [customers, search, activeTab, selectedDate]);
+  }, [customers, search, activeTab, selectedDate, orderedCustomerNames]);
 
   useEffect(() => {
     if (isOpen) setSearch('');

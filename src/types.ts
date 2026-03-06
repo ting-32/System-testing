@@ -60,6 +60,7 @@ export interface Order {
   note: string;
   status: OrderStatus;
   deliveryMethod?: string; // 新增：訂單的配送方式
+  trip?: string; // 新增：趟次標籤
   lastUpdated?: number; // 版本控制時間戳
   syncStatus?: 'synced' | 'pending' | 'error'; // 同步狀態
   errorMessage?: string; // 錯誤訊息

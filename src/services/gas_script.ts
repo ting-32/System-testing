@@ -304,35 +304,39 @@ function checkVersionConflict(currentLastUpdated, originalLastUpdated) {
 function createOrder(orderData) {
   const sheet = getSheets().ORDERS;
   
-  // Ensure we have enough columns and LastUpdated header
-  ensureHeader(sheet, "LastUpdated");
+  // Ensure we have enough columns and headers
+  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const tripColIdx = ensureHeader(sheet, "Trip");
   
-  // 檢查是否需要擴充欄位 (基本11欄 + LastUpdated 1欄 = 12)
-  if (sheet.getMaxColumns() < 12) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), 12 - sheet.getMaxColumns());
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx) + 1;
+  if (sheet.getMaxColumns() < maxCol) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
   }
 
   const timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
   const lastUpdatedTs = new Date().getTime(); // Unix timestamp for robust syncing
   
-  const rows = orderData.items.map(item => [
-    timestamp,
-    orderData.id,
-    orderData.customerName,
-    orderData.deliveryDate,
-    orderData.deliveryTime,
-    item.productName || item.productId,
-    item.quantity,
-    orderData.note || "",
-    orderData.status || "PENDING",
-    orderData.deliveryMethod || "",
-    item.unit || "斤",
-    lastUpdatedTs // New Field
-  ]);
+  const rows = orderData.items.map(item => {
+    const row = new Array(maxCol).fill("");
+    row[0] = timestamp;
+    row[1] = orderData.id;
+    row[2] = orderData.customerName;
+    row[3] = orderData.deliveryDate;
+    row[4] = orderData.deliveryTime;
+    row[5] = item.productName || item.productId;
+    row[6] = item.quantity;
+    row[7] = orderData.note || "";
+    row[8] = orderData.status || "PENDING";
+    row[9] = orderData.deliveryMethod || "";
+    row[10] = item.unit || "斤";
+    row[lastUpdatedColIdx] = lastUpdatedTs;
+    row[tripColIdx] = orderData.trip || "";
+    return row;
+  });
   
   if (rows.length > 0) {
     const lastRow = sheet.getLastRow();
-    sheet.getRange(lastRow + 1, 1, rows.length, 12).setValues(rows);
+    sheet.getRange(lastRow + 1, 1, rows.length, maxCol).setValues(rows);
   }
   return true;
 }
@@ -340,8 +344,14 @@ function createOrder(orderData) {
 function updateOrderContent(orderData) {
   const sheet = getSheets().ORDERS;
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated"); // 0-based index
+  const tripColIdx = ensureHeader(sheet, "Trip");
   const values = sheet.getDataRange().getValues();
   
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx) + 1;
+  if (sheet.getMaxColumns() < maxCol) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
+  }
+
   const targetId = String(orderData.id).trim();
   let originalCreatedAt = "";
   
@@ -373,23 +383,26 @@ function updateOrderContent(orderData) {
   const timestamp = originalCreatedAt || Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
   const newLastUpdatedTs = new Date().getTime();
 
-  const rows = orderData.items.map(item => [
-    timestamp,
-    orderData.id,
-    orderData.customerName,
-    orderData.deliveryDate,
-    orderData.deliveryTime,
-    item.productName || item.productId,
-    item.quantity,
-    orderData.note || "",
-    orderData.status || "PENDING",
-    orderData.deliveryMethod || "",
-    item.unit || "斤",
-    newLastUpdatedTs
-  ]);
+  const rows = orderData.items.map(item => {
+    const row = new Array(maxCol).fill("");
+    row[0] = timestamp;
+    row[1] = orderData.id;
+    row[2] = orderData.customerName;
+    row[3] = orderData.deliveryDate;
+    row[4] = orderData.deliveryTime;
+    row[5] = item.productName || item.productId;
+    row[6] = item.quantity;
+    row[7] = orderData.note || "";
+    row[8] = orderData.status || "PENDING";
+    row[9] = orderData.deliveryMethod || "";
+    row[10] = item.unit || "斤";
+    row[lastUpdatedColIdx] = newLastUpdatedTs;
+    row[tripColIdx] = orderData.trip || "";
+    return row;
+  });
 
   if (rows.length > 0) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 12).setValues(rows);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, maxCol).setValues(rows);
   }
   return true;
 }

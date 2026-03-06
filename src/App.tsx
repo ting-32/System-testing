@@ -38,7 +38,7 @@ import {
   Grid
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
-import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType } from './types';
+import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
 import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES } from './constants';
 import { ConfirmModal } from './components/ConfirmModal';
 import { VoiceInputModal } from './components/VoiceInputModal';
@@ -147,6 +147,38 @@ const App: React.FC = () => {
   const [scheduleDate, setScheduleDate] = useState<string>(getTomorrowDate());
   const [scheduleDeliveryMethodFilter, setScheduleDeliveryMethodFilter] = useState<string[]>([]);
   
+  const [availableTrips, setAvailableTrips] = useState<string[]>(() => {
+    const saved = localStorage.getItem('availableTrips');
+    if (saved) return JSON.parse(saved);
+    return ['第一趟', '第二趟', '未分配'];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('availableTrips', JSON.stringify(availableTrips));
+  }, [availableTrips]);
+
+  useEffect(() => {
+    const tripsFromOrders = new Set(orders.map(o => o.trip).filter(Boolean) as string[]);
+    setAvailableTrips(prev => {
+      const newTrips = [...prev];
+      let changed = false;
+      tripsFromOrders.forEach(t => {
+        if (!newTrips.includes(t) && t !== '未分配') {
+          newTrips.push(t);
+          changed = true;
+        }
+      });
+      if (!newTrips.includes('未分配')) {
+        newTrips.push('未分配');
+        changed = true;
+      }
+      return changed ? newTrips : prev;
+    });
+  }, [orders]);
+
+  const [isAddingTrip, setIsAddingTrip] = useState(false);
+  const [newTripName, setNewTripName] = useState('');
+
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
 
@@ -394,6 +426,93 @@ const App: React.FC = () => {
     orderForm,
     quickAddData
   });
+
+  const handleSetTrip = async (tripName: string) => {
+    if (selectedOrderIds.size === 0) return;
+
+    const ids = Array.from(selectedOrderIds);
+    
+    // Optimistic update
+    setOrders((prev: Order[]) => prev.map(o => {
+      if (ids.includes(o.id)) {
+        return { ...o, trip: tripName, syncStatus: 'pending', pendingAction: 'update' };
+      }
+      return o;
+    }));
+
+    // Sync each order
+    for (const id of ids) {
+      const order = orders.find(o => o.id === id);
+      if (order) {
+        const updatedOrder = { ...order, trip: tripName };
+        saveOrderToCloud(
+          updatedOrder,
+          'updateOrderContent',
+          order.lastUpdated,
+          () => {
+            setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+          },
+          (errMsg: string) => {
+            setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+          }
+        );
+      }
+    }
+
+    setSelectedOrderIds(new Set());
+    setIsSelectionMode(false);
+  };
+
+  const handleDeleteTrip = (tripToDelete: string) => {
+    if (window.confirm(`確定要刪除「${tripToDelete}」嗎？\n該趟次的訂單將會被移至「未分配」。`)) {
+      // Update orders
+      const idsToUpdate = orders.filter(o => o.trip === tripToDelete).map(o => o.id);
+      if (idsToUpdate.length > 0) {
+        setOrders((prev: Order[]) => prev.map(o => o.trip === tripToDelete ? { ...o, trip: '未分配', syncStatus: 'pending', pendingAction: 'update' } : o));
+        idsToUpdate.forEach(id => {
+          const order = orders.find(o => o.id === id);
+          if (order) {
+            saveOrderToCloud({ ...order, trip: '未分配' }, 'updateOrderContent', order.lastUpdated, () => {
+              setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+            }, (errMsg: string) => {
+              setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+            });
+          }
+        });
+      }
+      // Remove from availableTrips
+      setAvailableTrips(prev => prev.filter(t => t !== tripToDelete));
+    }
+  };
+
+  const getTripSummary = (tripOrders: Order[]) => {
+    let totalWeight = 0;
+    let totalAmount = 0;
+    let totalQuantity = 0;
+    
+    tripOrders.forEach(order => {
+      const customer = customers.find(c => c.name === order.customerName);
+      
+      order.items.forEach(item => {
+        const product = products.find(p => p.id === item.productId || p.name === item.productId);
+        const priceItem = customer?.priceList?.find(pl => pl.productId === (product?.id || item.productId));
+        const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
+        
+        if (item.unit === '元') {
+          totalAmount += item.quantity;
+        } else {
+          totalAmount += Math.round(item.quantity * unitPrice);
+          if (item.unit === '斤' || item.unit === '公斤') {
+            totalWeight += item.quantity;
+          } else {
+            totalQuantity += item.quantity;
+          }
+        }
+      });
+    });
+    
+    return { totalWeight, totalQuantity, totalAmount };
+  };
 
   // ... (Other handlers remain unchanged until handleCreateOrderFromCustomer) ...
   const {
@@ -853,10 +972,45 @@ const App: React.FC = () => {
                 Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => {
                   const isExpanded = expandedCustomer === custName;
                   const currentCustomer = customers.find(c => c.name === custName);
+                  
+                  // 1. 計算商品總和與總價格
                   let totalAmount = 0;
-                  const itemSummaries: string[] = [];
-                  custOrders.forEach(o => { o.items.forEach(item => { const p = products.find(prod => prod.id === item.productId); const pName = p?.name || item.productId; const unit = item.unit || p?.unit || '斤'; itemSummaries.push(`${pName} ${item.quantity}${unit}`); if (unit === '元') { totalAmount += item.quantity; } else { const priceInfo = currentCustomer?.priceList?.find(pl => pl.productId === item.productId); const price = priceInfo ? priceInfo.price : 0; totalAmount += Math.round(item.quantity * price); } }); });
+                  const itemTotals = new Map<string, number>();
+
+                  custOrders.forEach(o => { 
+                    o.items.forEach(item => { 
+                      const p = products.find(prod => prod.id === item.productId); 
+                      const pName = p?.name || item.productId; 
+                      const unit = item.unit || p?.unit || '斤'; 
+                      
+                      // 加總相同品項與單位
+                      const key = `${pName}::${unit}`;
+                      itemTotals.set(key, (itemTotals.get(key) || 0) + item.quantity);
+
+                      // 計算總價格
+                      if (unit === '元') { 
+                        totalAmount += item.quantity; 
+                      } else { 
+                        const priceInfo = currentCustomer?.priceList?.find(pl => pl.productId === item.productId); 
+                        const price = priceInfo ? priceInfo.price : (p?.price || 0); 
+                        totalAmount += Math.round(item.quantity * price); 
+                      } 
+                    }); 
+                  });
+
+                  // 轉換為字串陣列 (例如: 油麵 3斤)
+                  const itemSummaries = Array.from(itemTotals.entries()).map(([key, qty]) => {
+                    const [name, unit] = key.split('::');
+                    return `${name} ${qty}${unit}`;
+                  });
                   const summaryText = itemSummaries.join('、');
+
+                  // 2. 判斷綜合狀態
+                  const allPaid = custOrders.every(o => o.status === OrderStatus.PAID);
+                  const allShipped = custOrders.every(o => o.status === OrderStatus.SHIPPED || o.status === OrderStatus.PAID);
+                  let statusTag = { label: '待處理', color: 'bg-blue-50 text-blue-600 border-blue-100' };
+                  if (allPaid) statusTag = { label: '已收款', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
+                  else if (allShipped) statusTag = { label: '已配送', color: 'bg-amber-50 text-amber-600 border-amber-100' };
 
                   return (
                     <motion.div variants={itemVariants} key={custName} className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden mb-3 hover:shadow-md transition-shadow duration-300">
@@ -864,7 +1018,13 @@ const App: React.FC = () => {
                         <div className="flex items-center gap-4 overflow-hidden">
                           <div className={`w-12 h-12 rounded-[16px] flex-shrink-0 flex items-center justify-center text-xl font-extrabold transition-colors ${isExpanded ? 'bg-morandi-blue text-white' : 'bg-morandi-oatmeal text-morandi-pebble'}`}>{custName.charAt(0)}</div>
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1"><h3 className={`font-bold text-lg truncate tracking-tight ${isExpanded ? 'text-morandi-charcoal' : 'text-slate-700'}`}>{custName}</h3>{totalAmount > 0 && (<span className="bg-morandi-amber-bg text-morandi-amber-text text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 tracking-wide">${totalAmount.toLocaleString()}</span>)}</div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <h3 className={`font-bold text-lg truncate tracking-tight ${isExpanded ? 'text-morandi-charcoal' : 'text-slate-700'}`}>{custName}</h3>
+                              {/* 新增狀態標籤 */}
+                              <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold flex-shrink-0 border ${statusTag.color}`}>{statusTag.label}</span>
+                              {/* 原本的總價格 */}
+                              {totalAmount > 0 && (<span className="bg-morandi-amber-bg text-morandi-amber-text text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 tracking-wide">${totalAmount.toLocaleString()}</span>)}
+                            </div>
                             {!isExpanded && (<p className="text-xs text-morandi-pebble font-medium truncate leading-relaxed tracking-wide">{summaryText || `${custOrders.reduce((sum, o) => sum + o.items.length, 0)} 個品項`}</p>)}
                           </div>
                         </div>
@@ -960,25 +1120,152 @@ const App: React.FC = () => {
            <motion.div key="schedule" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
               <div className="px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 mb-4 tracking-tight"><CalendarCheck className="w-5 h-5 text-morandi-blue" /> 配送行程</h2><div className="mb-6"><WorkCalendar selectedDate={scheduleDate} onSelect={setScheduleDate} orders={orders} /></div>
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4, delay: 0.2 }} className="bg-slate-700 rounded-[28px] p-5 shadow-lg text-white mb-6 relative overflow-hidden"><div className="absolute right-[-10px] bottom-[-20px] text-slate-600 opacity-20 rotate-12"><Banknote className="w-32 h-32" /></div><div className="flex justify-between items-start mb-2 relative z-10"><div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">本日應收總額</p><h3 className="text-3xl font-black mt-1 text-white tracking-tight">${scheduleMoneySummary.totalReceivable.toLocaleString()}</h3></div><div className="text-right"><p className="text-[10px] font-bold text-morandi-green-text uppercase tracking-widest">已收款</p><h3 className="text-xl font-bold text-emerald-300 mt-1 tracking-tight">${scheduleMoneySummary.totalCollected.toLocaleString()}</h3></div></div><div className="w-full bg-slate-600 rounded-full h-1.5 mt-2 relative z-10"><motion.div className="bg-emerald-400 h-1.5 rounded-full" initial={{ width: 0 }} animate={{ width: `${scheduleMoneySummary.totalReceivable > 0 ? (scheduleMoneySummary.totalCollected / scheduleMoneySummary.totalReceivable) * 100 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} /></div><p className="text-[9px] text-slate-400 mt-2 text-right relative z-10 tracking-wide">尚有 ${(scheduleMoneySummary.totalReceivable - scheduleMoneySummary.totalCollected).toLocaleString()} 未收</p></motion.div>
-              <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar mb-4 items-center"><button onClick={() => setIsSelectionMode(!isSelectionMode)} className={`flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border flex items-center gap-1 ${isSelectionMode ? 'bg-rose-500 text-white border-rose-500' : 'bg-white text-morandi-blue border-morandi-blue'}`}>{isSelectionMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5" />}{isSelectionMode ? '取消選取' : '批量操作'}</button><div className="w-[1px] h-6 bg-gray-300 mx-1"></div><button onClick={() => setScheduleDeliveryMethodFilter([])} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${scheduleDeliveryMethodFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部方式</button>{DELIVERY_METHODS.map(m => { const isSelected = scheduleDeliveryMethodFilter.includes(m); return (<button key={m} onClick={() => { if (isSelected) { setScheduleDeliveryMethodFilter(scheduleDeliveryMethodFilter.filter(x => x !== m)); } else { setScheduleDeliveryMethodFilter([...scheduleDeliveryMethodFilter, m]); } }} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: isSelected ? COLORS.primary : '' }}>{m}</button>); })}</div>
-              <div className="space-y-4 pb-20"><div className="flex justify-between items-center px-2"><h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2"><Clock className="w-4 h-4" /> 配送明細 [{scheduleDate}]</h3><div className="text-xs font-bold text-gray-300 tracking-wide">共 {scheduleOrders.length} 筆訂單</div></div>
-              <motion.div variants={containerVariants} initial="hidden" animate="show">{scheduleOrders.length > 0 ? (scheduleOrders.map((order) => { 
-                 return (
-                    <motion.div variants={itemVariants} key={order.id}>
-                       <ScheduleOrderCard 
-                          order={order}
-                          products={products}
-                          customers={customers}
-                          isSelectionMode={isSelectionMode}
-                          isSelected={selectedOrderIds.has(order.id)}
-                          onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
-                          onStatusChange={handleSwipeStatusChange}
-                          onShare={handleShareOrder}
-                          onMap={openGoogleMaps}
-                       />
-                    </motion.div>
-                 ); 
-              })) : (<div className="text-center py-10"><p className="text-gray-300 font-bold text-sm tracking-wide">本日無配送行程</p></div>)}</motion.div></div></div>
+              <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar mb-4 items-center">
+                <button onClick={() => setIsSelectionMode(!isSelectionMode)} className={`flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border flex items-center gap-1 ${isSelectionMode ? 'bg-rose-500 text-white border-rose-500' : 'bg-white text-morandi-blue border-morandi-blue'}`}>{isSelectionMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5" />}{isSelectionMode ? '取消選取' : '批量操作'}</button>
+                
+                {isSelectionMode && selectedOrderIds.size > 0 && (
+                  <>
+                    <div className="w-[1px] h-6 bg-gray-300 mx-1"></div>
+                    {availableTrips.map((trip, idx) => {
+                      const colorClasses = [
+                        'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100',
+                        'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100',
+                        'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100',
+                        'bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100',
+                        'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100',
+                        'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100',
+                      ];
+                      const colorClass = trip === '未分配' ? 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100' : colorClasses[idx % colorClasses.length];
+                      
+                      return (
+                        <button key={trip} onClick={() => handleSetTrip(trip)} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${colorClass}`}>
+                          設為{trip}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+                
+                <div className="w-[1px] h-6 bg-gray-300 mx-1"></div>
+                <button onClick={() => setScheduleDeliveryMethodFilter([])} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${scheduleDeliveryMethodFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部方式</button>
+                {DELIVERY_METHODS.map(m => { const isSelected = scheduleDeliveryMethodFilter.includes(m); return (<button key={m} onClick={() => { if (isSelected) { setScheduleDeliveryMethodFilter(scheduleDeliveryMethodFilter.filter(x => x !== m)); } else { setScheduleDeliveryMethodFilter([...scheduleDeliveryMethodFilter, m]); } }} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: isSelected ? COLORS.primary : '' }}>{m}</button>); })}
+              </div>
+              <div className="space-y-6 pb-20">
+                <div className="flex justify-between items-center px-2">
+                  <h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2"><Clock className="w-4 h-4" /> 配送明細 [{scheduleDate}]</h3>
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-bold text-gray-300 tracking-wide">共 {scheduleOrders.length} 筆</div>
+                    <button 
+                      onClick={() => setIsAddingTrip(true)}
+                      className="px-3 py-1 bg-white text-morandi-blue border border-morandi-blue text-xs font-bold rounded-full shadow-sm flex items-center gap-1 hover:bg-blue-50"
+                    >
+                      <Plus className="w-3 h-3" /> 新增趟次
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setSelectedDate(scheduleDate);
+                        setOrderForm({
+                          customerType: 'existing',
+                          customerId: '',
+                          customerName: '',
+                          deliveryTime: '',
+                          deliveryMethod: '',
+                          items: [{ productId: '', quantity: 10, unit: '斤' }],
+                          note: ''
+                        });
+                        setEditingOrderId(null);
+                        setIsAddingOrder(true);
+                      }}
+                      className="px-3 py-1 bg-morandi-blue text-white text-xs font-bold rounded-full shadow-sm flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" /> 臨時加單
+                    </button>
+                  </div>
+                </div>
+                
+                {(() => {
+                  const groupedByTrip = availableTrips.reduce((acc, trip) => {
+                    acc[trip] = [];
+                    return acc;
+                  }, {} as Record<string, Order[]>);
+
+                  scheduleOrders.forEach(order => {
+                    const trip = order.trip || '未分配';
+                    if (!groupedByTrip[trip]) groupedByTrip[trip] = [];
+                    groupedByTrip[trip].push(order);
+                  });
+
+                  const sortedTrips = Object.keys(groupedByTrip).sort((a, b) => {
+                    const indexA = availableTrips.indexOf(a);
+                    const indexB = availableTrips.indexOf(b);
+                    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                    if (indexA !== -1) return -1;
+                    if (indexB !== -1) return 1;
+                    return a.localeCompare(b);
+                  });
+
+                  return sortedTrips.map(trip => {
+                    const tripOrders = groupedByTrip[trip];
+                    const summary = getTripSummary(tripOrders);
+                    
+                    const colorClasses = [
+                      'bg-blue-50 text-blue-600 border-blue-100',
+                      'bg-indigo-50 text-indigo-600 border-indigo-100',
+                      'bg-emerald-50 text-emerald-600 border-emerald-100',
+                      'bg-amber-50 text-amber-600 border-amber-100',
+                      'bg-rose-50 text-rose-600 border-rose-100',
+                      'bg-purple-50 text-purple-600 border-purple-100',
+                    ];
+                    
+                    let headerColor = trip === '未分配' ? 'bg-gray-100 text-gray-600 border-gray-200' : colorClasses[availableTrips.indexOf(trip) % colorClasses.length];
+
+                    return (
+                      <div key={trip} className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
+                        <div className={`flex justify-between items-center mb-3 px-3 py-2 rounded-xl border ${headerColor}`}>
+                          <h4 className="text-sm font-bold flex items-center gap-2">
+                            {trip}
+                            <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded-full">{tripOrders.length}</span>
+                            {trip !== '未分配' && (
+                              <button onClick={() => handleDeleteTrip(trip)} className="ml-1 p-1 text-current opacity-50 hover:opacity-100 hover:bg-white/50 rounded-full transition-all">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </h4>
+                          {trip !== '未分配' && (
+                            <div className="text-right">
+                              <div className="text-[10px] font-bold opacity-70">總重: {summary.totalWeight}斤 / 數量: {summary.totalQuantity}</div>
+                              <div className="text-xs font-bold">金額: ${summary.totalAmount.toLocaleString()}</div>
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="space-y-3">
+                          {tripOrders.map((order) => (
+                            <div key={order.id} className="relative">
+                              <ScheduleOrderCard 
+                                order={order}
+                                products={products}
+                                customers={customers}
+                                isSelectionMode={isSelectionMode}
+                                isSelected={selectedOrderIds.has(order.id)}
+                                onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
+                                onStatusChange={handleSwipeStatusChange}
+                                onShare={handleShareOrder}
+                                onMap={openGoogleMaps}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+                
+                {scheduleOrders.length === 0 && (
+                  <div className="text-center py-10"><p className="text-gray-300 font-bold text-sm tracking-wide">本日無配送行程</p></div>
+                )}
+              </div>
+              </div>
            </motion.div>
         )}
         {/* ... (Finance and Work Tabs remain unchanged - they are inside ActiveTab blocks already provided in context, just ensuring closing structure) ... */}
@@ -1260,6 +1547,43 @@ const App: React.FC = () => {
       </AnimatePresence>
 
       <AnimatePresence>
+        {isAddingTrip && (
+          <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[24px] p-6 w-full max-w-sm shadow-xl">
+              <h3 className="text-lg font-extrabold text-morandi-charcoal mb-4 tracking-tight">新增趟次</h3>
+              <input 
+                type="text" 
+                value={newTripName} 
+                onChange={e => setNewTripName(e.target.value)} 
+                placeholder="輸入趟次名稱 (例: 下午趟)" 
+                className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 mb-6 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" 
+                autoFocus 
+              />
+              <div className="flex gap-3">
+                <button onClick={() => { setIsAddingTrip(false); setNewTripName(''); }} className="flex-1 py-3 rounded-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">取消</button>
+                <button 
+                  onClick={() => {
+                    const trimmedName = newTripName.trim();
+                    if (trimmedName && !availableTrips.includes(trimmedName)) {
+                      setAvailableTrips(prev => {
+                        const newTrips = [...prev.filter(t => t !== '未分配'), trimmedName, '未分配'];
+                        return newTrips;
+                      });
+                    }
+                    setIsAddingTrip(false);
+                    setNewTripName('');
+                  }} 
+                  className="flex-1 py-3 rounded-xl font-bold text-white bg-morandi-blue hover:bg-slate-600 transition-colors shadow-md"
+                >
+                  確認新增
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
        {isEditingCustomer && (
         <div className="fixed inset-0 bg-morandi-oatmeal z-[60] flex flex-col">
           <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="flex flex-col h-full">
@@ -1345,7 +1669,7 @@ const App: React.FC = () => {
                       <select value={tempPriceUnit} onChange={(e) => setTempPriceUnit(e.target.value)} className="w-20 p-3 bg-white rounded-xl font-bold text-slate-700 outline-none border border-slate-100">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select>
                       <button onClick={() => { if(tempPriceProdId && tempPriceValue) { const newPriceList = [...(customerForm.priceList || [])]; const existingIdx = newPriceList.findIndex(x => x.productId === tempPriceProdId); if(existingIdx >= 0) { newPriceList[existingIdx].price = Number(tempPriceValue); newPriceList[existingIdx].unit = tempPriceUnit; } else { newPriceList.push({productId: tempPriceProdId, price: Number(tempPriceValue), unit: tempPriceUnit}); } setCustomerForm({...customerForm, priceList: newPriceList}); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); } }} className="p-3 bg-amber-400 text-white rounded-xl shadow-sm"><Plus className="w-4 h-4" /></button>
                    </div>
-                   <div className="space-y-2">{(customerForm.priceList || []).map((pl, idx) => { const p = products.find(prod => prod.id === pl.productId); return (<div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-slate-100"><span className="text-sm font-bold text-slate-700 tracking-wide">{p?.name || pl.productId}</span><div className="flex items-center gap-3"><span className="font-black text-amber-500 tracking-tight">${pl.price} <span className="text-xs text-gray-400 font-bold">/ {pl.unit || '斤'}</span></span><button onClick={() => setCustomerForm({...customerForm, priceList: customerForm.priceList?.filter((_, i) => i !== idx)})} className="text-gray-300 hover:text-rose-400"><X className="w-4 h-4" /></button></div></div>); })}</div>
+                   <div className="space-y-2">{(customerForm.priceList || []).map((pl, idx) => { const p = products.find(prod => prod.id === pl.productId); return (<div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-slate-100"><span className="text-sm font-bold text-slate-700 tracking-wide">{p?.name || pl.productId}</span><div className="flex items-center gap-3"><div className="flex items-center gap-1"><span className="font-black text-amber-500">$</span><input type="number" min="0" className="w-16 bg-transparent font-black text-amber-500 tracking-tight outline-none border-b border-transparent hover:border-amber-200 focus:border-amber-500 text-right" value={pl.price} onChange={(e) => { const val = e.target.value; if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) { const newPriceList = [...(customerForm.priceList || [])]; newPriceList[idx].price = Number(val); setCustomerForm({...customerForm, priceList: newPriceList}); } }} /><span className="text-xs text-gray-400 font-bold">/ {pl.unit || '斤'}</span></div><button onClick={() => setCustomerForm({...customerForm, priceList: customerForm.priceList?.filter((_, i) => i !== idx)})} className="text-gray-300 hover:text-rose-400"><X className="w-4 h-4" /></button></div></div>); })}</div>
                 </div>
              </div>
           </div>
@@ -1485,7 +1809,31 @@ const App: React.FC = () => {
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-bold text-slate-700">{order.deliveryDate}</p>
-                        <p className="text-[10px] text-gray-500">{order.items.length} 項商品</p>
+                        <div className="mt-1 space-y-1">
+                          {order.items.map((item, idx) => {
+                            // 找出商品名稱
+                            const p = products.find(x => x.id === item.productId);
+                            const productName = p?.name || '未知商品';
+                            
+                            // 計算單項金額
+                            let itemTotal = 0;
+                            if (item.unit === '元') {
+                              itemTotal = item.quantity;
+                            } else {
+                              const cust = customers.find(c => c.name === partialSettlementTarget.name);
+                              const priceInfo = cust?.priceList?.find(pl => pl.productId === item.productId);
+                              const price = priceInfo ? priceInfo.price : 0;
+                              itemTotal = Math.round(item.quantity * price);
+                            }
+
+                            return (
+                              <div key={idx} className="text-xs text-gray-500 flex justify-between pr-4">
+                                <span>• {productName} {item.quantity}{item.unit}</span>
+                                <span>${itemTotal.toLocaleString()}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div className="text-right">
                         <p className="font-black text-slate-800">${amount.toLocaleString()}</p>

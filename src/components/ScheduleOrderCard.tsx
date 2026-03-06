@@ -19,7 +19,7 @@ interface ScheduleOrderCardProps {
 
 export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({ 
   order, products, customers, isSelectionMode, isSelected, onToggleSelection, 
-  onStatusChange, onShare, onMap 
+  onStatusChange, onShare, onMap
 }) => {
   const x = useMotionValue(0);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -99,7 +99,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
         onDragEnd={handleDragEnd} 
         style={{ x }} 
         initial={false} 
-        animate={{ backgroundColor: '#FFFFFF', borderColor: statusConfig.cardBorder, x: isSelectionMode ? 10 : 0 }} 
+        animate={{ backgroundColor: statusConfig.cardBg, borderColor: statusConfig.cardBorder, x: isSelectionMode ? 10 : 0 }} 
         className={`rounded-[20px] overflow-hidden shadow-sm border border-slate-200 relative z-10 touch-pan-y transition-shadow ${isSelectionMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`} 
         onClick={() => { if (isSelectionMode) onToggleSelection(); }} 
       > 

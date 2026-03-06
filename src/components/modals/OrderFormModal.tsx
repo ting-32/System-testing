@@ -121,11 +121,16 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
       if (groupedOrders[cust.name] && groupedOrders[cust.name].length > 0) {
         addToast(`注意：${cust.name} 今日已建立過訂單`, 'info');
       }
+      
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const isAdhoc = cust.category === 'adhoc';
+
       setOrderForm({
         ...orderForm,
         customerId: id,
         customerName: cust.name,
-        deliveryTime: formatTimeForInput(cust.deliveryTime),
+        deliveryTime: isAdhoc ? currentTime : formatTimeForInput(cust.deliveryTime),
         deliveryMethod: cust.deliveryMethod || '',
         items: cust.defaultItems && cust.defaultItems.length > 0 ? cust.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }]
       });

@@ -115,11 +115,16 @@ export const useOrderActions = ({
       if (groupedOrders[cust.name] && groupedOrders[cust.name].length > 0) {
         addToast(`注意：${cust.name} 今日已建立過訂單`, 'info');
       }
+      
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const isAdhoc = cust.category === 'adhoc';
+
       setOrderForm({
         ...orderForm,
         customerId: id,
         customerName: cust.name,
-        deliveryTime: formatTimeForInput(cust.deliveryTime),
+        deliveryTime: isAdhoc ? currentTime : formatTimeForInput(cust.deliveryTime),
         deliveryMethod: cust.deliveryMethod || '',
         items: cust.defaultItems && cust.defaultItems.length > 0 ? cust.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }]
       });
@@ -522,15 +527,32 @@ export const useOrderActions = ({
   const handleCopyStatement = (customerName: string, totalDebt: number, orders: Order[]) => {
     let text = `【對帳單】${customerName} 老闆 您好：\n目前未結清款項共計：$${totalDebt.toLocaleString()}\n\n明細如下：\n`;
     orders.forEach(o => {
-      const amount = o.items.reduce((sum, item) => {
-        if (item.unit === '元') return sum + item.quantity;
-        const cust = customers.find(c => c.name === customerName);
-        const priceInfo = cust?.priceList?.find(pl => pl.productId === item.productId);
-        const price = priceInfo ? priceInfo.price : 0;
-        return sum + Math.round(item.quantity * price);
-      }, 0);
-      const dateStr = o.deliveryDate.substring(5).replace('-', '/'); // MM/DD
-      text += `- ${dateStr}: $${amount.toLocaleString()}\n`;
+      let dailyTotal = 0;
+      let itemDetails = '';
+      
+      // 逐筆列出商品明細
+      o.items.forEach(item => {
+        const p = products.find(x => x.id === item.productId);
+        const productName = p?.name || '未知商品';
+        
+        let itemTotal = 0;
+        if (item.unit === '元') {
+          itemTotal = item.quantity;
+        } else {
+          const cust = customers.find(c => c.name === customerName);
+          const priceInfo = cust?.priceList?.find(pl => pl.productId === item.productId);
+          const price = priceInfo ? priceInfo.price : 0;
+          itemTotal = Math.round(item.quantity * price);
+        }
+        
+        dailyTotal += itemTotal;
+        // 組合單項商品字串，例如： • 豬肉 10斤 ($500)
+        itemDetails += `  • ${productName} ${item.quantity}${item.unit} ($${itemTotal.toLocaleString()})\n`;
+      });
+
+      const dateStr = o.deliveryDate.substring(5).replace('-', '/'); // 轉為 MM/DD
+      // 將日期、小計與商品明細組合
+      text += `- ${dateStr} 小計: $${dailyTotal.toLocaleString()}\n${itemDetails}`;
     });
     text += `\n再麻煩您確認，謝謝！`;
     
@@ -540,15 +562,32 @@ export const useOrderActions = ({
   const handleShareStatementToLine = (customerName: string, totalDebt: number, orders: Order[]) => {
     let text = `【對帳單】${customerName} 老闆 您好：\n目前未結清款項共計：$${totalDebt.toLocaleString()}\n\n明細如下：\n`;
     orders.forEach(o => {
-      const amount = o.items.reduce((sum, item) => {
-        if (item.unit === '元') return sum + item.quantity;
-        const cust = customers.find(c => c.name === customerName);
-        const priceInfo = cust?.priceList?.find(pl => pl.productId === item.productId);
-        const price = priceInfo ? priceInfo.price : 0;
-        return sum + Math.round(item.quantity * price);
-      }, 0);
-      const dateStr = o.deliveryDate.substring(5).replace('-', '/'); // MM/DD
-      text += `- ${dateStr}: $${amount.toLocaleString()}\n`;
+      let dailyTotal = 0;
+      let itemDetails = '';
+      
+      // 逐筆列出商品明細
+      o.items.forEach(item => {
+        const p = products.find(x => x.id === item.productId);
+        const productName = p?.name || '未知商品';
+        
+        let itemTotal = 0;
+        if (item.unit === '元') {
+          itemTotal = item.quantity;
+        } else {
+          const cust = customers.find(c => c.name === customerName);
+          const priceInfo = cust?.priceList?.find(pl => pl.productId === item.productId);
+          const price = priceInfo ? priceInfo.price : 0;
+          itemTotal = Math.round(item.quantity * price);
+        }
+        
+        dailyTotal += itemTotal;
+        // 組合單項商品字串，例如： • 豬肉 10斤 ($500)
+        itemDetails += `  • ${productName} ${item.quantity}${item.unit} ($${itemTotal.toLocaleString()})\n`;
+      });
+
+      const dateStr = o.deliveryDate.substring(5).replace('-', '/'); // 轉為 MM/DD
+      // 將日期、小計與商品明細組合
+      text += `- ${dateStr} 小計: $${dailyTotal.toLocaleString()}\n${itemDetails}`;
     });
     text += `\n再麻煩您確認，謝謝！`;
     
@@ -749,6 +788,43 @@ export const useOrderActions = ({
     } 
   };
 
+  const handleBatchUpdateTrip = async (tripName: string, selectedOrderIds: Set<string>, setSelectedOrderIds: (s: Set<string>) => void, setIsSelectionMode: (b: boolean) => void) => {
+    if (selectedOrderIds.size === 0) return;
+    setIsSaving(true);
+    
+    const ids = Array.from(selectedOrderIds);
+    const updatedOrders = orders.map(o => {
+      if (ids.includes(o.id)) {
+        return { ...o, trip: tripName, syncStatus: 'pending' as const, pendingAction: 'update' as const };
+      }
+      return o;
+    });
+    setOrders(updatedOrders);
+    
+    // Process one by one
+    for (const id of ids) {
+      const order = updatedOrders.find(o => o.id === id);
+      if (order) {
+        await saveOrderToCloud(
+          order,
+          'updateOrderContent',
+          order.lastUpdated,
+          () => {
+             setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+          },
+          (errMsg: string) => {
+             setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+          }
+        );
+      }
+    }
+    
+    setSelectedOrderIds(new Set());
+    setIsSelectionMode(false);
+    setIsSaving(false);
+    addToast(`已將 ${ids.length} 筆訂單設為 ${tripName}`, 'success');
+  };
+
   const handleDeleteOrder = (orderId: string) => { setConfirmConfig({ isOpen: true, title: '刪除訂單', message: '確定要刪除此訂單嗎？\n此動作將會同步刪除雲端資料。', onConfirm: () => executeDeleteOrder(orderId) }); };
 
   return {
@@ -769,6 +845,7 @@ export const useOrderActions = ({
     handleSelectExistingCustomer,
     openGoogleMaps,
     handleDeleteOrder,
-    handleRetryOrder
+    handleRetryOrder,
+    handleBatchUpdateTrip
   };
 };
