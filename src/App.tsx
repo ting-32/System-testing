@@ -1717,9 +1717,6 @@ const App: React.FC = () => {
                   onStatusChange={handleSwipeStatusChange}
                   onDelete={() => {
                     handleDeleteOrder(order.id);
-                    if (groupedOrders[selectedCustomerForModal].length <= 1) {
-                      setSelectedCustomerForModal(null);
-                    }
                   }}
                   onShare={handleShareOrder}
                   onMap={openGoogleMaps}
@@ -1853,7 +1850,7 @@ const App: React.FC = () => {
                 <button 
                   disabled={selectedPartialOrderIds.size === 0}
                   onClick={() => {
-                    setSettlementDate(getLastMonthEndDate());
+                    setSettlementDate('9999-12-31'); // 改為未來日期，確保包含所有手動選取的訂單
                     setSettlementTarget({
                       name: partialSettlementTarget.name,
                       allOrderIds: Array.from(selectedPartialOrderIds)
@@ -1913,7 +1910,8 @@ const App: React.FC = () => {
                       navigator.vibrate(50);
                     }
                     setIsSettling(true);
-                    await handleBatchSettleOrders(settlementTarget.allOrderIds);
+                    // 改為使用 settlementPreview 中的訂單 ID，確保所見即所得
+                    await handleBatchSettleOrders(settlementPreview.orders.map(o => o.id));
                     setIsSettling(false);
                     setSettlementTarget(null);
                   }}
