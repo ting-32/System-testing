@@ -14,6 +14,12 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   
+  // 👇 新增這段：用 useRef 隨時追蹤最新的資料狀態，避開閉包陷阱
+  const latestDataRef = useRef({ customers: [] as Customer[], products: [] as Product[], orders: [] as Order[] });
+  useEffect(() => {
+    latestDataRef.current = { customers, products, orders };
+  }, [customers, products, orders]);
+  
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -169,9 +175,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                 return false;
             };
             
-            const customersChanged = hasChanges(customers, mappedCustomers);
-            const productsChanged = hasChanges(products, mappedProducts);
-            const ordersChanged = hasChanges(orders, newOrders);
+            // 👇 修改這段：改用 latestDataRef.current 裡面的最新資料來做比對
+            const { customers: currentCustomers, products: currentProducts, orders: currentOrders } = latestDataRef.current;
+            const customersChanged = hasChanges(currentCustomers, mappedCustomers);
+            const productsChanged = hasChanges(currentProducts, mappedProducts);
+            const ordersChanged = hasChanges(currentOrders, newOrders);
             
             if (customersChanged || productsChanged || ordersChanged) {
                  setPendingData({

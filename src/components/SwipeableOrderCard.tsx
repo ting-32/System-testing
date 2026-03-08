@@ -29,6 +29,13 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   
   useEffect(() => { x.set(0); }, [order.status, x]);
   
+  // 👇 新增這段：確保元件被卸載時，強制清除 body 上的 pointer-events 鎖定
+  useEffect(() => {
+    return () => {
+      document.body.style.pointerEvents = '';
+    };
+  }, []);
+  
   const statusConfig = getStatusStyles(order.status || OrderStatus.PENDING);
   
   const totalAmount = (() => { 

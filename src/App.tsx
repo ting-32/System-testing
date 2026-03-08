@@ -35,7 +35,8 @@ import {
   Wallet,
   Mic, // New Import
   List,
-  Grid
+  Grid,
+  Filter
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
@@ -146,6 +147,7 @@ const App: React.FC = () => {
   
   const [scheduleDate, setScheduleDate] = useState<string>(getTomorrowDate());
   const [scheduleDeliveryMethodFilter, setScheduleDeliveryMethodFilter] = useState<string[]>([]);
+  const [showScheduleDeliveryFilters, setShowScheduleDeliveryFilters] = useState(false);
   
   const [availableTrips, setAvailableTrips] = useState<string[]>(() => {
     const saved = localStorage.getItem('availableTrips');
@@ -190,6 +192,7 @@ const App: React.FC = () => {
   // NEW: Order Search & Filter
   const [orderSearch, setOrderSearch] = useState('');
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<string[]>([]);
+  const [showOrderDeliveryFilters, setShowOrderDeliveryFilters] = useState(false);
 
   const [holidayEditorId, setHolidayEditorId] = useState<string | null>(null);
 
@@ -426,6 +429,13 @@ const App: React.FC = () => {
     orderForm,
     quickAddData
   });
+
+  // 👇 新增這段：當展開的客戶訂單被刪光時，自動關閉 Modal
+  useEffect(() => {
+    if (selectedCustomerForModal && !groupedOrders[selectedCustomerForModal]) {
+      setSelectedCustomerForModal(null);
+    }
+  }, [groupedOrders, selectedCustomerForModal]);
 
   const handleSetTrip = async (tripName: string) => {
     if (selectedOrderIds.size === 0) return;
@@ -887,48 +897,76 @@ const App: React.FC = () => {
                   </div>
                </div>
 
-               {/* NEW: Sticky Search Bar */}
-               <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input 
-                    type="text" 
-                    placeholder="搜尋客戶名稱或電話..." 
-                    className="w-full pl-10 pr-10 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" 
-                    value={orderSearch} 
-                    onChange={(e) => setOrderSearch(e.target.value)} 
-                  />
-                  {orderSearch && (
-                    <button onClick={() => setOrderSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full bg-gray-100 text-gray-400 hover:bg-gray-200">
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
+               {/* NEW: Sticky Search Bar & Filter Button */}
+               <div className="flex gap-2 items-center">
+                 <div className="relative flex-1">
+                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                   <input 
+                     type="text" 
+                     placeholder="搜尋客戶名稱或電話..." 
+                     className="w-full pl-10 pr-10 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" 
+                     value={orderSearch} 
+                     onChange={(e) => setOrderSearch(e.target.value)} 
+                   />
+                   {orderSearch && (
+                     <button onClick={() => setOrderSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full bg-gray-100 text-gray-400 hover:bg-gray-200">
+                       <X className="w-3 h-3" />
+                     </button>
+                   )}
+                 </div>
+                 
+                 {/* 新增的漏斗篩選按鈕 */}
+                 <button 
+                   onClick={() => setShowOrderDeliveryFilters(!showOrderDeliveryFilters)}
+                   className={`relative flex-shrink-0 w-12 h-12 rounded-[20px] border flex items-center justify-center transition-all shadow-sm ${showOrderDeliveryFilters || orderDeliveryFilter.length > 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-slate-200 hover:bg-slate-50'}`}
+                 >
+                   <Filter className="w-5 h-5" />
+                   {/* 如果有選取條件，顯示一個小紅點提示 */}
+                   {orderDeliveryFilter.length > 0 && (
+                     <span className="absolute -top-1 -right-1 bg-rose-500 border-2 border-white text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
+                       {orderDeliveryFilter.length}
+                     </span>
+                   )}
+                 </button>
                </div>
 
-               {/* NEW: Filter Chips */}
-               <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                  <button 
-                    onClick={() => setOrderDeliveryFilter([])} 
-                    className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${orderDeliveryFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}
-                  >
-                    全部
-                  </button>
-                  {DELIVERY_METHODS.map(m => {
-                    const isSelected = orderDeliveryFilter.includes(m);
-                    return (
-                      <button 
-                        key={m} 
-                        onClick={() => {
-                           if (isSelected) setOrderDeliveryFilter(orderDeliveryFilter.filter(x => x !== m));
-                           else setOrderDeliveryFilter([...orderDeliveryFilter, m]);
-                        }} 
-                        className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
-                        style={{ backgroundColor: isSelected ? COLORS.primary : '' }}
-                      >
-                        {m}
-                      </button>
-                    );
-                  })}
-               </div>
+               {/* 展開的篩選選項區塊 */}
+               <AnimatePresence>
+                 {showOrderDeliveryFilters && (
+                   <motion.div 
+                     initial={{ height: 0, opacity: 0, marginTop: 0 }} 
+                     animate={{ height: 'auto', opacity: 1, marginTop: 8 }} 
+                     exit={{ height: 0, opacity: 0, marginTop: 0 }} 
+                     transition={{ duration: 0.2 }}
+                     className="overflow-hidden"
+                   >
+                     <div className="flex gap-2 overflow-x-auto pb-2 pt-1 custom-scrollbar">
+                       <button 
+                         onClick={() => setOrderDeliveryFilter([])} 
+                         className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${orderDeliveryFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}
+                       >
+                         全部
+                       </button>
+                       {DELIVERY_METHODS.map(m => {
+                         const isSelected = orderDeliveryFilter.includes(m);
+                         return (
+                           <button 
+                             key={m} 
+                             onClick={() => {
+                                if (isSelected) setOrderDeliveryFilter(orderDeliveryFilter.filter(x => x !== m));
+                                else setOrderDeliveryFilter([...orderDeliveryFilter, m]);
+                             }} 
+                             className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
+                             style={{ backgroundColor: isSelected ? COLORS.primary : '' }}
+                           >
+                             {m}
+                           </button>
+                         );
+                       })}
+                     </div>
+                   </motion.div>
+                 )}
+               </AnimatePresence>
             </div>
              {/* ... (Orders List - same logic as before but using toast handlers) */}
              <div className="space-y-3">
@@ -1084,10 +1122,12 @@ const App: React.FC = () => {
         
         {/* ... (Other Tabs remain unchanged) ... */}
         {activeTab === 'customers' && (
-           <motion.div key="customers" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
-            <div className="flex justify-between items-center px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2><motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { setCustomerForm({ name: '', phone: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div>
-            <div className="relative mb-2"><Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" /><input type="text" placeholder="搜尋店家名稱..." className="w-full pl-14 pr-6 py-4 bg-white rounded-[24px] border border-slate-100 shadow-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} /></div>
-            <motion.div variants={containerVariants} initial="hidden" animate="show">
+           <motion.div key="customers" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="relative">
+            <div className="sticky top-0 z-20 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
+              <div className="flex justify-between items-center mb-3"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2><motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { setCustomerForm({ name: '', phone: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div>
+              <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="搜尋店家名稱..." className="w-full pl-10 pr-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} /></div>
+            </div>
+            <motion.div variants={containerVariants} initial="hidden" animate="show" className="pt-4">
             {filteredCustomers.map(c => {
                const hasOrderToday = groupedOrders[c.name] && groupedOrders[c.name].length > 0;
                return (
@@ -1147,8 +1187,43 @@ const App: React.FC = () => {
                 )}
                 
                 <div className="w-[1px] h-6 bg-gray-300 mx-1"></div>
-                <button onClick={() => setScheduleDeliveryMethodFilter([])} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${scheduleDeliveryMethodFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部方式</button>
-                {DELIVERY_METHODS.map(m => { const isSelected = scheduleDeliveryMethodFilter.includes(m); return (<button key={m} onClick={() => { if (isSelected) { setScheduleDeliveryMethodFilter(scheduleDeliveryMethodFilter.filter(x => x !== m)); } else { setScheduleDeliveryMethodFilter([...scheduleDeliveryMethodFilter, m]); } }} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: isSelected ? COLORS.primary : '' }}>{m}</button>); })}
+                <button 
+                  onClick={() => setShowScheduleDeliveryFilters(!showScheduleDeliveryFilters)} 
+                  className={`flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border flex items-center gap-1 ${showScheduleDeliveryFilters || scheduleDeliveryMethodFilter.length > 0 ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-white text-gray-400 border-gray-200'}`}
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  篩選配送方式
+                  {scheduleDeliveryMethodFilter.length > 0 && (
+                    <span className="ml-1 bg-slate-700 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
+                      {scheduleDeliveryMethodFilter.length}
+                    </span>
+                  )}
+                </button>
+
+                {showScheduleDeliveryFilters && (
+                  <>
+                    <button onClick={() => setScheduleDeliveryMethodFilter([])} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${scheduleDeliveryMethodFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部方式</button>
+                    {DELIVERY_METHODS.map(m => { 
+                      const isSelected = scheduleDeliveryMethodFilter.includes(m); 
+                      return (
+                        <button 
+                          key={m} 
+                          onClick={() => { 
+                            if (isSelected) { 
+                              setScheduleDeliveryMethodFilter(scheduleDeliveryMethodFilter.filter(x => x !== m)); 
+                            } else { 
+                              setScheduleDeliveryMethodFilter([...scheduleDeliveryMethodFilter, m]); 
+                            } 
+                          }} 
+                          className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`} 
+                          style={{ backgroundColor: isSelected ? COLORS.primary : '' }}
+                        >
+                          {m}
+                        </button>
+                      ); 
+                    })}
+                  </>
+                )}
               </div>
               <div className="space-y-6 pb-20">
                 <div className="flex justify-between items-center px-2">
@@ -1696,11 +1771,17 @@ const App: React.FC = () => {
 
       <AnimatePresence>
       {selectedCustomerForModal && groupedOrders[selectedCustomerForModal] && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setSelectedCustomerForModal(null)}>
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" 
+          onClick={() => setSelectedCustomerForModal(null)}
+        >
           <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }} 
-            animate={{ opacity: 1, scale: 1 }} 
-            exit={{ opacity: 0, scale: 0.95 }} 
+            initial={{ scale: 0.95 }} 
+            animate={{ scale: 1 }} 
+            exit={{ scale: 0.95 }} 
             className="w-full max-w-sm max-h-[90vh] overflow-y-auto" 
             onClick={e => e.stopPropagation()}
           >
@@ -1766,7 +1847,7 @@ const App: React.FC = () => {
               關閉
             </button>
           </motion.div>
-        </div>
+        </motion.div>
       )}
       </AnimatePresence>
 
