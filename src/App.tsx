@@ -36,7 +36,8 @@ import {
   Mic, // New Import
   List,
   Grid,
-  Filter
+  Filter,
+  GripVertical
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
@@ -155,33 +156,11 @@ const App: React.FC = () => {
   const availableTrips = trips;
   const setAvailableTrips = setTrips;
 
-  useEffect(() => {
-    const tripsFromOrders = new Set(orders.map(o => o.trip).filter(Boolean) as string[]);
-    setAvailableTrips(prev => {
-      const newTrips = [...prev];
-      let changed = false;
-      tripsFromOrders.forEach(t => {
-        if (!newTrips.includes(t) && t !== '未分配') {
-          newTrips.push(t);
-          changed = true;
-        }
-      });
-      if (!newTrips.includes('未分配')) {
-        newTrips.push('未分配');
-        changed = true;
-      }
-      if (changed) {
-        // ✅ 移除 saveTripsToCloud(newTrips); 以防止無窮迴圈
-        return newTrips;
-      }
-      return prev;
-    });
-  // ✅ 依賴陣列中也移除 saveTripsToCloud
-  }, [orders, setAvailableTrips]);
-
   const [isTripManagerOpen, setIsTripManagerOpen] = useState(false);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [isOrderReorderMode, setIsOrderReorderMode] = useState(false);
+  const [reorderedOrderIds, setReorderedOrderIds] = useState<Set<string>>(new Set());
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
 
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
@@ -189,6 +168,13 @@ const App: React.FC = () => {
   // NEW: State for editing order
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   
+  // 新增在 App.tsx 的狀態宣告區
+  const [drawerConfig, setDrawerConfig] = useState<{
+    isOpen: boolean;
+    type: 'deliveryMethod' | 'trip' | null;
+    target: 'order' | 'customer'; // 用來區分是「訂單表單」還是「客戶表單」在呼叫
+  }>({ isOpen: false, type: null, target: 'order' });
+
   // NEW: Order Search & Filter
   const [orderSearch, setOrderSearch] = useState('');
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<string[]>([]);
@@ -298,6 +284,26 @@ const App: React.FC = () => {
     setOrderForm(prev => ({ ...prev, [field]: value }));
     setHasChanges(true);
   }, []);
+
+  // 新增在 App.tsx 元件內部
+  const handleDrawerSelect = (value: string) => {
+    if (drawerConfig.target === 'order') {
+      handleOrderFormChange(drawerConfig.type as any, value);
+    } else if (drawerConfig.target === 'customer') {
+      if (drawerConfig.type === 'trip') {
+        setCustomerForm(prev => ({ ...prev, defaultTrip: value }));
+      } else {
+        setCustomerForm(prev => ({ ...prev, deliveryMethod: value }));
+      }
+    }
+    setDrawerConfig({ ...drawerConfig, isOpen: false });
+  };
+
+  const getDrawerOptions = () => {
+    if (drawerConfig.type === 'deliveryMethod') return DELIVERY_METHODS;
+    if (drawerConfig.type === 'trip') return availableTrips.filter(t => t !== '未分配');
+    return [];
+  };
 
   // NEW: History Stack Management for Android Back Button
   useEffect(() => {
@@ -1258,6 +1264,30 @@ const App: React.FC = () => {
                     >
                       <Plus className="w-3 h-3" /> 臨時加單
                     </button>
+                    <button 
+                      onClick={async () => {
+                        if (isOrderReorderMode) {
+                          // Save reordered orders to cloud
+                          if (reorderedOrderIds.size > 0) {
+                            const ordersToSync = orders.filter(o => reorderedOrderIds.has(o.id));
+                            ordersToSync.forEach(order => {
+                              saveOrderToCloud(order, 'updateOrderContent', order.lastUpdated, () => {
+                                setOrders((prev: Order[]) => prev.map(o => o.id === order.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+                              }, (errMsg: string) => {
+                                setOrders((prev: Order[]) => prev.map(o => o.id === order.id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+                              });
+                            });
+                            setReorderedOrderIds(new Set());
+                            addToast('排序已儲存', 'success');
+                          }
+                        }
+                        setIsOrderReorderMode(!isOrderReorderMode);
+                      }}
+                      className={`px-3 py-1 text-xs font-bold rounded-full shadow-sm flex items-center gap-1 transition-colors ${isOrderReorderMode ? 'bg-rose-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
+                    >
+                      {isOrderReorderMode ? <CheckSquare className="w-3 h-3" /> : <GripVertical className="w-3 h-3" />}
+                      {isOrderReorderMode ? '完成排序' : '調整排序'}
+                    </button>
                   </div>
                 </div>
                 
@@ -1283,7 +1313,7 @@ const App: React.FC = () => {
                   });
 
                   return sortedTrips.map(trip => {
-                    const tripOrders = groupedByTrip[trip];
+                    const tripOrders = groupedByTrip[trip].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
                     const summary = getTripSummary(tripOrders);
                     
                     const colorClasses = [
@@ -1317,23 +1347,70 @@ const App: React.FC = () => {
                           )}
                         </div>
                         
-                        <div className="space-y-3">
-                          {tripOrders.map((order) => (
-                            <div key={order.id} className="relative">
-                              <ScheduleOrderCard 
-                                order={order}
-                                products={products}
-                                customers={customers}
-                                isSelectionMode={isSelectionMode}
-                                isSelected={selectedOrderIds.has(order.id)}
-                                onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
-                                onStatusChange={handleSwipeStatusChange}
-                                onShare={handleShareOrder}
-                                onMap={openGoogleMaps}
-                              />
-                            </div>
-                          ))}
-                        </div>
+                        {isOrderReorderMode ? (
+                          <Reorder.Group 
+                            axis="y" 
+                            values={tripOrders} 
+                            onReorder={(newOrderList) => {
+                              const newSet = new Set(reorderedOrderIds);
+                              const updatedOrders = orders.map(o => {
+                                const index = newOrderList.findIndex(no => no.id === o.id);
+                                if (index !== -1) {
+                                  const newSortOrder = index * 10;
+                                  if (o.sortOrder !== newSortOrder) {
+                                    newSet.add(o.id);
+                                    return { ...o, sortOrder: newSortOrder, syncStatus: 'pending' as const, pendingAction: 'update' as const };
+                                  }
+                                }
+                                return o;
+                              });
+                              setReorderedOrderIds(newSet);
+                              setOrders(updatedOrders);
+                            }}
+                            className="space-y-3"
+                          >
+                            {tripOrders.map((order) => (
+                              <Reorder.Item key={order.id} value={order} className="relative">
+                                <div className="flex items-center gap-2">
+                                  <div className="cursor-grab active:cursor-grabbing p-2">
+                                    <GripVertical className="w-5 h-5 text-gray-400" />
+                                  </div>
+                                  <div className="flex-1 pointer-events-none">
+                                    <ScheduleOrderCard 
+                                      order={order}
+                                      products={products}
+                                      customers={customers}
+                                      isSelectionMode={isSelectionMode}
+                                      isSelected={selectedOrderIds.has(order.id)}
+                                      onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
+                                      onStatusChange={handleSwipeStatusChange}
+                                      onShare={handleShareOrder}
+                                      onMap={openGoogleMaps}
+                                    />
+                                  </div>
+                                </div>
+                              </Reorder.Item>
+                            ))}
+                          </Reorder.Group>
+                        ) : (
+                          <div className="space-y-3">
+                            {tripOrders.map((order) => (
+                              <div key={order.id} className="relative">
+                                <ScheduleOrderCard 
+                                  order={order}
+                                  products={products}
+                                  customers={customers}
+                                  isSelectionMode={isSelectionMode}
+                                  isSelected={selectedOrderIds.has(order.id)}
+                                  onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
+                                  onStatusChange={handleSwipeStatusChange}
+                                  onShare={handleShareOrder}
+                                  onMap={openGoogleMaps}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   });
@@ -1614,7 +1691,7 @@ const App: React.FC = () => {
             ) : (<div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">客戶名稱</label><input type="text" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="輸入零售名稱..." value={orderForm.customerName} onChange={(e) => handleOrderFormChange('customerName', e.target.value)} /></div>)}
             
             {/* ... Order Form Fields (Time, Items, Note etc.) ... */}
-             <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">配送設定</label><div className="flex gap-2"><div className="flex-1"><input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={orderForm.deliveryTime} onChange={(e) => handleOrderFormChange('deliveryTime', e.target.value)} /></div><div className="flex-1"><select value={orderForm.deliveryMethod} onChange={(e) => handleOrderFormChange('deliveryMethod', e.target.value)} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all appearance-none"><option value="">配送方式...</option>{DELIVERY_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select></div><div className="flex-1"><select value={orderForm.trip || ''} onChange={(e) => handleOrderFormChange('trip', e.target.value)} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all appearance-none"><option value="">選擇趟數...</option>{availableTrips.filter(t => t !== '未分配').map(trip => <option key={trip} value={trip}>{trip}</option>)}</select></div></div></div>
+             <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">配送設定</label><div className="flex gap-2"><div className="flex-1"><input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={orderForm.deliveryTime} onChange={(e) => handleOrderFormChange('deliveryTime', e.target.value)} /></div><div className="flex-1"><button type="button" onClick={() => setDrawerConfig({ isOpen: true, type: 'deliveryMethod', target: 'order' })} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all flex justify-between items-center"><span className={orderForm.deliveryMethod ? 'text-morandi-charcoal' : 'text-gray-400'}>{orderForm.deliveryMethod || '配送方式...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></button></div><div className="flex-1"><button type="button" onClick={() => setDrawerConfig({ isOpen: true, type: 'trip', target: 'order' })} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all flex justify-between items-center"><span className={orderForm.trip ? 'text-morandi-charcoal' : 'text-gray-400'}>{orderForm.trip || '選擇趟數...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></button></div></div></div>
              <div className="space-y-4"><div className="flex justify-between items-center"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">品項明細</label><div className="flex gap-2">{lastOrderCandidate && (<motion.button whileTap={buttonTap} onClick={applyLastOrder} className="text-[10px] font-bold text-white bg-morandi-blue px-2 py-1 rounded-lg shadow-sm flex items-center gap-1"><History className="w-3 h-3" /> 帶入{lastOrderCandidate.sourceLabel || '上次'} ({lastOrderCandidate.date})</motion.button>)}<button onClick={() => handleOrderFormChange('items', [...orderForm.items, {productId: '', quantity: 10, unit: '斤'}])} className="text-[10px] font-bold text-morandi-blue tracking-wide"><Plus className="w-3 h-3 inline mr-1" /> 增加品項</button></div></div>{orderForm.items.map((item, idx) => (<motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} key={idx} className="bg-white p-5 rounded-[28px] shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap"><div onClick={() => { const currentCustomer = customers.find(c => c.id === orderForm.customerId); setPickerConfig({ isOpen: true, currentProductId: item.productId, customPrices: currentCustomer?.priceList, onSelect: (pid) => { const n = [...orderForm.items]; const p = products.find(x => x.id === pid); n[idx] = { ...item, productId: pid, unit: p?.unit || '斤' }; handleOrderFormChange('items', n); } }); }} className="w-full sm:flex-1 bg-morandi-oatmeal/50 p-4 rounded-xl text-sm font-bold border border-slate-100 flex items-center justify-between cursor-pointer hover:border-morandi-blue transition-all mb-2 sm:mb-0"><span className={item.productId ? 'text-morandi-charcoal' : 'text-gray-400'}>{products.find(p => p.id === item.productId)?.name || '選擇品項...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></div><div className="flex items-center gap-2 w-full sm:w-auto justify-between"><input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} className="w-20 bg-morandi-oatmeal/50 p-4 rounded-xl text-center font-bold border border-slate-100 text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const n = [...orderForm.items]; const val = parseFloat(e.target.value); n[idx].quantity = isNaN(val) ? 0 : Math.max(0, val); handleOrderFormChange('items', n); }} /><select value={item.unit || '斤'} onChange={(e) => { const n = [...orderForm.items]; n[idx].unit = e.target.value; handleOrderFormChange('items', n); }} className="w-20 bg-morandi-oatmeal/50 p-4 rounded-xl font-bold text-morandi-charcoal border border-slate-100 outline-none focus:ring-2 focus:ring-morandi-blue transition-all">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select><motion.button whileTap={buttonTap} onClick={() => { const n = orderForm.items.filter((_, i) => i !== idx); handleOrderFormChange('items', n.length ? n : [{productId:'', quantity:10, unit:'斤'}]); }} className="p-2 text-morandi-pink hover:text-rose-300 transition-colors"><Trash2 className="w-4 h-4" /></motion.button></div></motion.div>))}</div>
              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">訂單預覽</label><div className="bg-morandi-amber-bg rounded-[24px] p-5 shadow-sm border border-amber-100/50"><div className="flex justify-between items-center mb-3 border-b border-amber-100 pb-2"><div className="flex items-center gap-2 text-morandi-amber-text"><Calculator className="w-4 h-4" /><span className="text-xs font-bold tracking-wide">預估清單</span></div><div className="text-xs font-bold text-morandi-amber-text/60 tracking-wide">共 {orderSummary.details.filter(d => d.rawQty > 0).length} 項</div></div><div className="space-y-2 mb-4">{orderSummary.details.filter(d => d.rawQty > 0).map((detail, i) => (<div key={i} className="flex justify-between items-center text-sm"><div className="flex flex-col"><span className="font-bold text-slate-700 tracking-wide">{detail.name}</span>{detail.isCalculated && (<span className="text-[10px] text-gray-400">(以單價 ${detail.unitPrice} 換算: {detail.rawQty}元 &rarr; {detail.displayQty}{detail.displayUnit})</span>)}</div><div className="flex items-center gap-3"><span className="font-bold text-slate-600">{detail.displayQty} {detail.displayUnit}</span><span className="font-black text-amber-600 w-12 text-right tracking-tight">${detail.subtotal}</span></div></div>))}{orderSummary.details.filter(d => d.rawQty > 0).length === 0 && (<div className="text-center text-xs text-amber-400 italic py-2 tracking-wide">尚未加入有效品項</div>)}</div><div className="flex justify-between items-center pt-3 border-t border-amber-200"><span className="text-xs font-bold text-amber-700 tracking-wide">預估總金額</span><span className="text-xl font-black text-amber-600 tracking-tight">${orderSummary.totalPrice}</span></div></div></div>
              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">訂單備註</label><textarea className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold resize-none outline-none focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" rows={3} placeholder="備註特殊需求..." value={orderForm.note} onChange={(e) => handleOrderFormChange('note', e.target.value)} /></div>
@@ -1663,16 +1740,7 @@ const App: React.FC = () => {
                   <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 pl-1">配送時間</label><input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all" value={customerForm.deliveryTime || '08:00'} onChange={(e) => setCustomerForm({...customerForm, deliveryTime: e.target.value})} /></div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-gray-400 pl-1">預設趟數</label>
-                    <select 
-                      value={customerForm.defaultTrip || ''} 
-                      onChange={(e) => setCustomerForm({...customerForm, defaultTrip: e.target.value})} 
-                      className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all appearance-none"
-                    >
-                      <option value="">無預設趟數</option>
-                      {availableTrips.filter(t => t !== '未分配').map(trip => (
-                        <option key={trip} value={trip}>{trip}</option>
-                      ))}
-                    </select>
+                    <button type="button" onClick={() => setDrawerConfig({ isOpen: true, type: 'trip', target: 'customer' })} className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all flex justify-between items-center"><span className={customerForm.defaultTrip ? 'text-slate-800' : 'text-gray-400'}>{customerForm.defaultTrip || '選擇預設趟數...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></button>
                   </div>
                   <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 pl-1">每週公休</label><div className="flex gap-2">{WEEKDAYS.map(d => { const isOff = (customerForm.offDays || []).includes(d.value); return (<button key={d.value} onClick={() => { const current = customerForm.offDays || []; const newOff = isOff ? current.filter(x => x !== d.value) : [...current, d.value]; setCustomerForm({...customerForm, offDays: newOff}); }} className={`w-10 h-10 rounded-xl font-bold text-xs transition-all ${isOff ? 'bg-rose-500 text-white shadow-md' : 'bg-white text-gray-400 border border-slate-200'}`}>{d.label}</button>); })}</div></div><div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 pl-1">特定公休</label><div className="flex flex-wrap gap-2">{(customerForm.holidayDates || []).map(date => (<span key={date} className="bg-rose-50 text-rose-500 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 border border-rose-100">{date} <button onClick={() => setCustomerForm({...customerForm, holidayDates: customerForm.holidayDates?.filter(d => d !== date)})}><X className="w-3 h-3" /></button></span>))}<button onClick={() => setHolidayEditorId('new')} className="bg-gray-50 text-gray-400 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-gray-100 border border-slate-200"><Plus className="w-3 h-3" /> 新增日期</button></div></div>
               </div></div>
@@ -2012,6 +2080,65 @@ const App: React.FC = () => {
         className="absolute bottom-[90px] right-4 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-colors flex items-center justify-center">
           <Mic className="w-6 h-6" />
       </motion.button>
+
+      {/* 底部抽屜選單 (Bottom Sheet) */}
+      <AnimatePresence>
+        {drawerConfig.isOpen && (
+          <div className="fixed inset-0 z-[100] flex flex-col justify-end">
+            {/* 黑色半透明遮罩 */}
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              onClick={() => setDrawerConfig({ ...drawerConfig, isOpen: false })}
+            />
+            
+            {/* 抽屜本體 */}
+            <motion.div 
+              initial={{ y: "100%" }} 
+              animate={{ y: 0 }} 
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="relative bg-gray-50 rounded-t-[32px] p-6 pb-12 shadow-2xl flex flex-col max-h-[70vh]"
+            >
+              {/* 頂部小灰條 (視覺提示) */}
+              <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6" />
+              
+              <h3 className="text-lg font-extrabold text-morandi-charcoal mb-4 text-center tracking-tight">
+                {drawerConfig.type === 'trip' ? '選擇趟數' : '選擇配送方式'}
+              </h3>
+              
+              {/* 選項列表 */}
+              <div className="space-y-2 overflow-y-auto custom-scrollbar">
+                {getDrawerOptions().map((option) => {
+                  // 判斷當前是否選中
+                  const isSelected = drawerConfig.target === 'order' 
+                    ? orderForm[drawerConfig.type as keyof typeof orderForm] === option
+                    : (drawerConfig.type === 'trip' ? customerForm.defaultTrip === option : customerForm.deliveryMethod === option);
+
+                  return (
+                    <motion.button
+                      key={option}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => handleDrawerSelect(option)}
+                      className={`w-full p-4 rounded-2xl text-left font-bold transition-all flex justify-between items-center ${
+                        isSelected 
+                          ? 'bg-morandi-blue text-white shadow-md' 
+                          : 'bg-white text-slate-700 border border-slate-200 hover:border-morandi-blue'
+                      }`}
+                    >
+                      <span>{option}</span>
+                      {isSelected && <Check className="w-5 h-5" />}
+                    </motion.button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 flex justify-around py-3 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
         <NavItem active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} icon={<ClipboardList className="w-6 h-6" />} label="訂單" />
         <NavItem active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} icon={<Users className="w-6 h-6" />} label="客戶" />

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, Reorder } from 'framer-motion';
-import { X, Plus, Edit2, Trash2, Check, GripVertical } from 'lucide-react';
+import { X, Plus, Edit2, Trash2, Check, GripVertical, ArrowUpDown } from 'lucide-react';
 import { Order } from '../types';
 
 interface TripManagerModalProps {
@@ -26,14 +26,14 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
   const [editingTrip, setEditingTrip] = useState<string | null>(null);
   const [editTripName, setEditTripName] = useState('');
   const [tripToDelete, setTripToDelete] = useState<string | null>(null);
+  const [isReorderMode, setIsReorderMode] = useState(false);
 
   // 加上 React.useMemo 確保陣列參考穩定，防止 Reorder.Group 誤判資料變更
   const trips = React.useMemo(() => availableTrips.filter(t => t !== '未分配'), [availableTrips]);
 
   const handleReorder = (newOrder: string[]) => {
     const newTrips = [...newOrder, '未分配'];
-    setAvailableTrips(newTrips);
-    saveTripsToCloud(newTrips);
+    setAvailableTrips(newTrips); // 拖曳時只更新本地畫面，保持 60fps 滑順度
   };
 
   const handleAddTrip = () => {
@@ -169,6 +169,27 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar mb-6">
+          {trips.length > 1 && (
+            <div className="flex justify-end mb-3">
+              <button
+                onClick={() => {
+                  if (isReorderMode) {
+                    // 當使用者點擊「完成排序」退出模式時，才一次性儲存到雲端
+                    saveTripsToCloud([...trips, '未分配']);
+                  }
+                  setIsReorderMode(!isReorderMode);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                  isReorderMode 
+                    ? 'bg-morandi-blue text-white shadow-sm' 
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <ArrowUpDown className="w-3.5 h-3.5" />
+                {isReorderMode ? '完成排序' : '調整順序'}
+              </button>
+            </div>
+          )}
           {trips.length === 0 ? (
             <div className="text-center text-gray-400 py-4 text-sm font-bold">目前沒有自訂趟數</div>
           ) : (
@@ -177,7 +198,10 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
                 <Reorder.Item 
                   key={trip} 
                   value={trip} 
-                  className="flex items-center justify-between bg-gray-50 p-3 rounded-xl border border-gray-100 shadow-sm"
+                  dragListener={isReorderMode}
+                  className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl border shadow-sm transition-all ${
+                    isReorderMode ? 'border-morandi-blue/30 cursor-grab active:cursor-grabbing' : 'border-gray-100'
+                  }`}
                 >
                   {editingTrip === trip ? (
                     <div className="flex items-center gap-2 flex-1">
@@ -201,29 +225,31 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
                     </div>
                   ) : (
                     <>
-                      <div className="flex items-center gap-2">
-                        <div className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600">
-                          <GripVertical className="w-4 h-4" />
-                        </div>
+                      <div className="flex items-center gap-3 flex-1">
+                        {isReorderMode && (
+                          <GripVertical className="w-4 h-4 text-gray-400" />
+                        )}
                         <span className="font-bold text-morandi-charcoal text-sm">{trip}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button 
-                          onClick={() => {
-                            setEditingTrip(trip);
-                            setEditTripName(trip);
-                          }} 
-                          className="p-1.5 text-gray-400 hover:text-morandi-blue hover:bg-blue-50 rounded-lg transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => setTripToDelete(trip)} 
-                          className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                      {!isReorderMode && (
+                        <div className="flex items-center gap-1">
+                          <button 
+                            onClick={() => {
+                              setEditingTrip(trip);
+                              setEditTripName(trip);
+                            }} 
+                            className="p-1.5 text-gray-400 hover:text-morandi-blue hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => setTripToDelete(trip)} 
+                            className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </Reorder.Item>

@@ -15,11 +15,12 @@ interface ScheduleOrderCardProps {
   onStatusChange: (id: string, status: OrderStatus) => void;
   onShare: (order: Order) => void;
   onMap: (name: string) => void;
+  hideActions?: boolean;
 }
 
 export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({ 
   order, products, customers, isSelectionMode, isSelected, onToggleSelection, 
-  onStatusChange, onShare, onMap
+  onStatusChange, onShare, onMap, hideActions
 }) => {
   const x = useMotionValue(0);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -91,8 +92,8 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
         </motion.div> 
       </div> 
       <motion.div 
-        drag={isSelectionMode ? false : "x"} 
-        dragConstraints={isSelectionMode ? {left:0, right:0} : {left: 0, right: 0}} 
+        drag={isSelectionMode || hideActions ? false : "x"} 
+        dragConstraints={isSelectionMode || hideActions ? {left:0, right:0} : {left: 0, right: 0}} 
         dragElastic={{ left: order.status === OrderStatus.PENDING ? 0.1 : 0.7, right: order.status === OrderStatus.PAID ? 0.1 : 0.7 }} 
         dragDirectionLock={true} 
         onDragStart={() => setIsDragging(true)} 
@@ -100,7 +101,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
         style={{ x }} 
         initial={false} 
         animate={{ backgroundColor: statusConfig.cardBg, borderColor: statusConfig.cardBorder, x: isSelectionMode ? 10 : 0 }} 
-        className={`rounded-[20px] overflow-hidden shadow-sm border border-slate-200 relative z-10 touch-pan-y transition-shadow ${isSelectionMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`} 
+        className={`rounded-[20px] overflow-hidden shadow-sm border border-slate-200 relative z-10 touch-pan-y transition-shadow ${isSelectionMode ? 'cursor-pointer' : (hideActions ? '' : 'cursor-grab active:cursor-grabbing')}`} 
         onClick={() => { if (isSelectionMode) onToggleSelection(); }} 
       > 
         {isSelectionMode && ( 
