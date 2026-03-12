@@ -120,13 +120,23 @@ export const useOrderActions = ({
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       const isAdhoc = cust.category === 'adhoc';
 
-      setOrderForm({
-        ...orderForm,
-        customerId: id,
-        customerName: cust.name,
-        deliveryTime: isAdhoc ? currentTime : formatTimeForInput(cust.deliveryTime),
-        deliveryMethod: cust.deliveryMethod || '',
-        items: cust.defaultItems && cust.defaultItems.length > 0 ? cust.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }]
+      setOrderForm(prev => {
+        // 判斷目前的 items 是否為乾淨的預設狀態
+        const isDefaultItems = prev.items.length === 1 && prev.items[0].productId === '' && prev.items[0].quantity === 10;
+        // 如果是乾淨狀態，才帶入客戶的預設品項；否則保留目前的品項（例如語音解析出來的結果）
+        const newItems = isDefaultItems 
+          ? (cust.defaultItems && cust.defaultItems.length > 0 ? cust.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }])
+          : prev.items;
+
+        return {
+          ...prev,
+          customerId: id,
+          customerName: cust.name,
+          deliveryTime: isAdhoc ? currentTime : formatTimeForInput(cust.deliveryTime),
+          deliveryMethod: cust.deliveryMethod || '',
+          trip: cust.defaultTrip || '', // 👈 這裡會正確帶入預設趟數
+          items: newItems
+        };
       });
       findLastOrder(id, cust.name);
     }
@@ -611,6 +621,7 @@ export const useOrderActions = ({
       customerName: order.customerName,
       deliveryTime: formatTimeForInput(order.deliveryTime),
       deliveryMethod: order.deliveryMethod || cust?.deliveryMethod || '',
+      trip: order.trip || cust?.defaultTrip || '', // 👈 新增這行：優先使用訂單原本的趟數，否則使用客戶預設
       items: order.items.map(i => ({ ...i })),
       note: order.note
     });
@@ -627,6 +638,7 @@ export const useOrderActions = ({
         customerName: c.name,
         deliveryTime: formatTimeForInput(c.deliveryTime),
         deliveryMethod: c.deliveryMethod || '',
+        trip: c.defaultTrip || '',
         items: c.defaultItems && c.defaultItems.length > 0 ? c.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }],
         note: ''
       });
@@ -709,6 +721,7 @@ export const useOrderActions = ({
       deliveryDate: selectedDate,
       deliveryTime: deliveryTime,
       deliveryMethod: orderForm.deliveryMethod,
+      trip: orderForm.trip || '未分配',
       items: processedItems,
       note: orderForm.note,
       status: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.status || OrderStatus.PENDING) : OrderStatus.PENDING,
@@ -726,7 +739,7 @@ export const useOrderActions = ({
 
     setIsAddingOrder(false);
     setEditingOrderId(null);
-    setOrderForm({ customerType: 'existing', customerId: '', customerName: '', deliveryTime: '', deliveryMethod: '', items: [{ productId: '', quantity: 10, unit: '斤' }], note: '' });
+    setOrderForm({ customerType: 'existing', customerId: '', customerName: '', deliveryTime: '', deliveryMethod: '', trip: '', items: [{ productId: '', quantity: 10, unit: '斤' }], note: '' });
     setIsSaving(false);
     addToast(editingOrderId ? '訂單已更新 (同步中...)' : '訂單已建立 (同步中...)', 'success');
 

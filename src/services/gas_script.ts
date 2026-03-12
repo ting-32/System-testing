@@ -3,6 +3,19 @@
 
 const SS = SpreadsheetApp.getActiveSpreadsheet();
 
+// 👇 新增這個輔助函數：用來將試算表的 Date 物件格式化為乾淨的字串
+function formatCellValue(val) {
+  if (val instanceof Date) {
+    // Google Sheets 將純時間儲存為 1899 年的日期
+    if (val.getFullYear() <= 1900) {
+      return Utilities.formatDate(val, SS.getSpreadsheetTimeZone(), "HH:mm");
+    } else {
+      return Utilities.formatDate(val, SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+    }
+  }
+  return val;
+}
+
 // Helper to ensure Config sheet exists and return it
 function getConfigSheet() {
   let sheet = SS.getSheetByName("Config");
@@ -21,6 +34,7 @@ function getSheets() {
     ORDERS: SS.getSheetByName("Orders") || SS.insertSheet("Orders"),
     CUSTOMERS: SS.getSheetByName("Customers") || SS.insertSheet("Customers"),
     PRODUCTS: SS.getSheetByName("Products") || SS.insertSheet("Products"),
+    TRIPS: SS.getSheetByName("Trips") || SS.insertSheet("Trips"),
     CONFIG: getConfigSheet() // Use the helper
   };
 }
@@ -84,6 +98,9 @@ function doPost(e) {
       case "getOrder":
         result = getOrder(params.data);
         break;
+      case "saveTrips":
+        result = saveTrips(params.data);
+        break;
       default:
         throw new Error("Unknown action: " + action);
     }
@@ -142,7 +159,7 @@ function getOrder(data) {
     if (rowId === String(orderId).trim()) {
       let obj = {};
       for (let j = 0; j < headers.length; j++) {
-        obj[headers[j]] = values[i][j];
+        obj[headers[j]] = formatCellValue(values[i][j]);
       }
       orderRows.push(obj);
     }
@@ -161,6 +178,7 @@ function getOrder(data) {
     status: firstRow.Status || firstRow.status || firstRow.狀態,
     deliveryMethod: firstRow.DeliveryMethod || firstRow.deliveryMethod || firstRow.配送方式,
     lastUpdated: firstRow.LastUpdated ? new Date(firstRow.LastUpdated).getTime() : 0,
+    trip: firstRow.Trip || firstRow.trip || firstRow.趟次 || '',
     items: orderRows.map(r => ({
       productId: r.ProductName || r.productName || r.品項,
       quantity: r.Quantity || r.quantity || r.數量,
@@ -226,7 +244,7 @@ function getData(startDateStr) {
     for (let i = 1; i < values.length; i++) {
       let obj = {};
       for (let j = 0; j < headers.length; j++) {
-        obj[headers[j]] = values[i][j];
+        obj[headers[j]] = formatCellValue(values[i][j]);
       }
       data.push(obj);
     }
@@ -244,6 +262,7 @@ function getData(startDateStr) {
     holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
     deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
     paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
+    defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
     lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
   }));
 
@@ -255,6 +274,22 @@ function getData(startDateStr) {
     category: p.Category || p.category || p.分類,
     lastUpdated: p.LastUpdated ? new Date(p.LastUpdated).getTime() : 0
   }));
+
+  const getTripsData = (sheet) => {
+    if (!sheet) return [];
+    const lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return [];
+    
+    const values = sheet.getDataRange().getValues();
+    const trips = [];
+    for (let i = 1; i < values.length; i++) {
+      if (values[i][0]) {
+        trips.push(String(values[i][0]).trim());
+      }
+    }
+    return trips;
+  };
+  const trips = getTripsData(sheets.TRIPS);
 
   const ordersRaw = getSheetData(sheets.ORDERS);
   let orders = ordersRaw.map(o => ({
@@ -269,7 +304,8 @@ function getData(startDateStr) {
     note: o.Note || o.note || o.備註,
     status: o.Status || o.status || o.狀態,
     deliveryMethod: o.DeliveryMethod || o.deliveryMethod || o.配送方式,
-    lastUpdated: o.LastUpdated ? new Date(o.LastUpdated).getTime() : 0
+    lastUpdated: o.LastUpdated ? new Date(o.LastUpdated).getTime() : 0,
+    trip: o.Trip || o.trip || o.趟次 || ''
   }));
 
   if (startDateStr) {
@@ -277,7 +313,22 @@ function getData(startDateStr) {
     orders = orders.filter(o => new Date(o.deliveryDate) >= start);
   }
 
-  return { customers, products, orders };
+  return { customers, products, orders, trips };
+}
+
+function saveTrips(data) {
+  const sheet = getSheets().TRIPS;
+  const trips = data.trips; // Array of strings
+  
+  sheet.clear();
+  sheet.getRange("A1").setValue("TripName");
+  
+  if (trips && trips.length > 0) {
+    const rows = trips.map(t => [t]);
+    sheet.getRange(2, 1, rows.length, 1).setValues(rows);
+  }
+  
+  return true;
 }
 
 // Helper to check for header and add if missing
@@ -380,7 +431,10 @@ function updateOrderContent(orderData) {
     }
   }
 
-  const timestamp = originalCreatedAt || Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+  let timestamp = formatCellValue(originalCreatedAt);
+  if (!timestamp) {
+    timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+  }
   const newLastUpdatedTs = new Date().getTime();
 
   const rows = orderData.items.map(item => {
@@ -560,12 +614,13 @@ function updateCustomer(data) {
     data.name,
     data.phone,
     data.deliveryTime,
-    JSON.stringify(data.defaultItems),
-    JSON.stringify(data.offDays),
-    JSON.stringify(data.holidayDates),
-    JSON.stringify(data.priceList),
     data.deliveryMethod,
+    JSON.stringify(data.defaultItems || []),
+    JSON.stringify(data.priceList || []),
+    JSON.stringify(data.offDays || []),
+    JSON.stringify(data.holidayDates || []),
     data.paymentTerm,
+    data.defaultTrip || '',
     newLastUpdatedTs
   ];
   

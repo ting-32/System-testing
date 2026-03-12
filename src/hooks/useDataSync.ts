@@ -13,12 +13,25 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [trips, setTrips] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('availableTrips');
+      if (saved) return JSON.parse(saved);
+    }
+    return ['第一趟', '第二趟', '未分配'];
+  });
   
   // 👇 新增這段：用 useRef 隨時追蹤最新的資料狀態，避開閉包陷阱
-  const latestDataRef = useRef({ customers: [] as Customer[], products: [] as Product[], orders: [] as Order[] });
+  const latestDataRef = useRef({ customers: [] as Customer[], products: [] as Product[], orders: [] as Order[], trips: [] as string[] });
   useEffect(() => {
-    latestDataRef.current = { customers, products, orders };
-  }, [customers, products, orders]);
+    latestDataRef.current = { customers, products, orders, trips };
+  }, [customers, products, orders, trips]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('availableTrips', JSON.stringify(trips));
+    }
+  }, [trips]);
   
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
@@ -34,12 +47,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     customers: Customer[];
     products: Product[];
     orders: Order[];
+    trips?: string[];
   } | null>(null);
 
   const applyPendingUpdates = useCallback(() => {
     if (pendingData) {
       setCustomers(pendingData.customers);
       setProducts(pendingData.products);
+      if (pendingData.trips && pendingData.trips.length > 0) {
+        setTrips(pendingData.trips);
+      }
       
       setOrders(currentOrders => {
           const serverOrders = pendingData.orders;
@@ -90,6 +107,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
             phone: c.電話 || c.phone || '', 
             deliveryTime: c.配送時間 || c.deliveryTime || '', 
             deliveryMethod: c.配送方式 || c.deliveryMethod || '', 
+            defaultTrip: c.預設趟數 || c.defaultTrip || '',
             paymentTerm: c.付款週期 || c.paymentTerm || 'daily', 
             defaultItems: safeJsonArray(c.預設品項JSON || c.預設品項 || c.defaultItems), 
             priceList: safeJsonArray(c[priceListKey] || c.priceList).map((pl: any) => ({ productId: pl.productId, price: Number(pl.price) || 0, unit: pl.unit || '斤' })), 
@@ -176,22 +194,29 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
             };
             
             // 👇 修改這段：改用 latestDataRef.current 裡面的最新資料來做比對
-            const { customers: currentCustomers, products: currentProducts, orders: currentOrders } = latestDataRef.current;
+            const { customers: currentCustomers, products: currentProducts, orders: currentOrders, trips: currentTrips } = latestDataRef.current;
             const customersChanged = hasChanges(currentCustomers, mappedCustomers);
             const productsChanged = hasChanges(currentProducts, mappedProducts);
             const ordersChanged = hasChanges(currentOrders, newOrders);
+            const fetchedTrips = result.data.trips || [];
+            const tripsChanged = JSON.stringify(currentTrips) !== JSON.stringify(fetchedTrips);
             
-            if (customersChanged || productsChanged || ordersChanged) {
+            if (customersChanged || productsChanged || ordersChanged || tripsChanged) {
                  setPendingData({
                     customers: mappedCustomers,
                     products: mappedProducts,
-                    orders: newOrders
+                    orders: newOrders,
+                    trips: fetchedTrips
                 });
             }
         } else {
+            const fetchedTrips = result.data.trips || [];
             setCustomers(mappedCustomers); 
             setProducts(mappedProducts); 
             setOrders(newOrders); 
+            if (fetchedTrips.length > 0) {
+                setTrips(fetchedTrips);
+            }
             if (!isSilent) addToast('雲端資料已同步完成 (近60天)', 'success'); 
         }
       } 
@@ -286,6 +311,25 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       return false;
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const saveTripsToCloud = async (newTrips: string[]) => {
+    if (!apiEndpoint) return false;
+    try {
+      const res = await fetch(apiEndpoint, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'saveTrips', data: { trips: newTrips } })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setTrips(newTrips);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error("Save Trips Error:", e);
+      return false;
     }
   };
 
@@ -451,6 +495,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     customers, setCustomers,
     products, setProducts,
     orders, setOrders,
+    trips, setTrips,
     isInitialLoading, setIsInitialLoading,
     isBackgroundSyncing, setIsBackgroundSyncing,
     isSaving, setIsSaving,
@@ -462,6 +507,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     handleSaveApiUrl,
     handleForceRetry,
     saveOrderToCloud,
+    saveTripsToCloud,
     pendingData,
     applyPendingUpdates
   };

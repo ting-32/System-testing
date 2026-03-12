@@ -438,12 +438,14 @@ export const useVoiceAssistant = ({
       // Find Customer Delivery Method if ID matched
       let deliveryMethod = '';
       let deliveryTime = '08:00';
+      let trip = ''; // 👈 1. 新增變數
       
       if (matchedCustomerId) {
         const c = customers.find(x => x.id === matchedCustomerId);
         if (c) {
           deliveryMethod = c.deliveryMethod || '';
           deliveryTime = formatTimeForInput(c.deliveryTime);
+          trip = c.defaultTrip || ''; // 👈 2. 提取客戶預設趟數
         }
       }
 
@@ -454,6 +456,7 @@ export const useVoiceAssistant = ({
         customerId: matchedCustomerId || '',
         deliveryTime: deliveryTime,
         deliveryMethod: deliveryMethod,
+        trip: trip, // 👈 3. 寫入表單狀態
         items: newItems,
         note: globalNote // 全域備註
       }));
