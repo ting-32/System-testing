@@ -37,6 +37,7 @@ import {
   List,
   Grid,
   Filter,
+  Check,
   GripVertical
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
@@ -65,7 +66,7 @@ import { useOrderCalculations } from './hooks/useOrderCalculations';
 import { useVoiceAssistant } from './hooks/useVoiceAssistant';
 import { useOrderActions } from './hooks/useOrderActions';
 import { useDataManagement } from './hooks/useDataManagement';
-import { getTomorrowDate, getLastMonthEndDate, formatTimeDisplay, formatTimeForInput } from './utils';
+import { getTomorrowDate, getSmartDefaultDate, getLastMonthEndDate, formatTimeDisplay, formatTimeForInput } from './utils';
 import { modalVariants, buttonTap, buttonHover, triggerHaptic, containerVariants, itemVariants } from './components/animations';
 
 // ... (Toast Types, Variants, Haptic Helper, Helper Functions remain unchanged) ...
@@ -124,6 +125,7 @@ const App: React.FC = () => {
     saveOrderToCloud,
     saveTripsToCloud,
     pendingData,
+    setPendingData,
     applyPendingUpdates
   } = useDataSync(addToast);
 
@@ -141,7 +143,7 @@ const App: React.FC = () => {
       const saved = localStorage.getItem('nm_selected_date');
       if (saved) return saved;
     }
-    return getTomorrowDate();
+    return getSmartDefaultDate();
   });
 
   const [workDates, setWorkDates] = useState<string[]>([getTomorrowDate()]);
@@ -164,6 +166,7 @@ const App: React.FC = () => {
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
 
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [isOrderDatePickerOpen, setIsOrderDatePickerOpen] = useState(false);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   // NEW: State for editing order
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
@@ -233,6 +236,7 @@ const App: React.FC = () => {
     trip: string;
     items: OrderItem[];
     note: string;
+    date: string;
   }>({
     customerType: 'existing',
     customerId: '',
@@ -241,7 +245,8 @@ const App: React.FC = () => {
     deliveryMethod: '',
     trip: '',
     items: [{ productId: '', quantity: 10, unit: '斤' }],
-    note: ''
+    note: '',
+    date: ''
   });
 
   // ... (Rest of states remain unchanged) ...
@@ -570,6 +575,7 @@ const App: React.FC = () => {
     orderSummary,
     saveOrderToCloud,
     setConflictData,
+    setPendingData,
     addToast,
     setIsAddingOrder,
     setIsEditingCustomer,
@@ -676,6 +682,7 @@ const App: React.FC = () => {
     setIsEditingProduct,
     editingVersionRef,
     setConflictData,
+    setPendingData,
     addToast,
     setConfirmConfig
   });
@@ -903,7 +910,21 @@ const App: React.FC = () => {
                     <motion.button whileTap={buttonTap} onClick={() => setActiveTab('work')} className="w-14 h-14 rounded-[20px] bg-white text-morandi-pebble border border-slate-200 shadow-sm flex items-center justify-center hover:bg-slate-50 transition-all">
                        <FileText className="w-6 h-6" />
                     </motion.button>
-                    <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { setEditingOrderId(null); setIsAddingOrder(true); }} className="w-14 h-14 rounded-[20px] text-white shadow-lg shadow-morandi-blue/20 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"><Plus className="w-8 h-8" /></motion.button>
+                    <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { 
+                      setEditingOrderId(null); 
+                      setOrderForm({
+                        customerType: 'existing',
+                        customerId: '',
+                        customerName: '',
+                        deliveryTime: '',
+                        deliveryMethod: '',
+                        trip: '',
+                        items: [{ productId: '', quantity: 10, unit: '斤' }],
+                        note: '',
+                        date: selectedDate
+                      });
+                      setIsAddingOrder(true); 
+                    }} className="w-14 h-14 rounded-[20px] text-white shadow-lg shadow-morandi-blue/20 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"><Plus className="w-8 h-8" /></motion.button>
                   </div>
                </div>
 
@@ -1258,7 +1279,8 @@ const App: React.FC = () => {
                           deliveryMethod: '',
                           trip: '',
                           items: [{ productId: '', quantity: 10, unit: '斤' }],
-                          note: ''
+                          note: '',
+                          date: scheduleDate
                         });
                         setEditingOrderId(null);
                         setIsAddingOrder(true);
@@ -1661,6 +1683,18 @@ const App: React.FC = () => {
       <ConfirmModal isOpen={confirmConfig.isOpen} title={confirmConfig.title} message={confirmConfig.message} onConfirm={confirmConfig.onConfirm} onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))} />
       {holidayEditorId && (<HolidayCalendar storeName={isEditingCustomer ? (customerForm.name || '') : ''} holidays={customerForm.holidayDates || []} onToggle={(date) => { const current = customerForm.holidayDates || []; const newHolidays = current.includes(date) ? current.filter(d => d !== date) : [...current, date]; setCustomerForm({...customerForm, holidayDates: newHolidays}); }} onClose={() => setHolidayEditorId(null)} />)}
       <AnimatePresence>{isDatePickerOpen && <DatePickerModal selectedDate={selectedDate} onSelect={setSelectedDate} onClose={() => setIsDatePickerOpen(false)} />}</AnimatePresence>
+      <AnimatePresence>
+        {isOrderDatePickerOpen && (
+          <DatePickerModal 
+            selectedDate={orderForm.date || selectedDate} 
+            onSelect={(date) => {
+              handleOrderFormChange('date', date);
+              setIsOrderDatePickerOpen(false);
+            }} 
+            onClose={() => setIsOrderDatePickerOpen(false)} 
+          />
+        )}
+      </AnimatePresence>
       <AnimatePresence>{isSettingsOpen && (<SettingsModal onClose={() => setIsSettingsOpen(false)} onSync={syncData} onSavePassword={handleChangePassword} currentUrl={apiEndpoint} onSaveUrl={handleSaveApiUrl} />)}</AnimatePresence>
       <AnimatePresence>{quickAddData && (<div key="quick-add-modal" className="fixed inset-0 bg-morandi-charcoal/40 z-[70] flex flex-col items-center justify-center p-4 backdrop-blur-sm"><motion.div variants={modalVariants} initial="hidden" animate="visible" exit="exit" className="bg-white w-full max-w-sm max-h-[85vh] flex flex-col rounded-[32px] overflow-hidden shadow-xl border border-slate-200"><div className="p-5 bg-morandi-oatmeal/30 border-b border-gray-100 flex-shrink-0"><h3 className="text-center font-extrabold text-morandi-charcoal text-lg">追加訂單</h3><p className="text-center text-xs text-morandi-pebble font-bold tracking-wide mt-1">{quickAddData.customerName}</p></div><div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar"><AnimatePresence initial={false}>{quickAddData.items.map((item, index) => (<motion.div key={index} initial={{ opacity: 0, height: 0, scale: 0.95 }} animate={{ opacity: 1, height: 'auto', scale: 1 }} exit={{ opacity: 0, height: 0, scale: 0.9 }} className="bg-white rounded-[20px] p-3 shadow-sm border border-slate-100 flex flex-wrap gap-2 items-center"><div className="flex-1 min-w-[120px]"><div onClick={() => { const currentCustomer = customers.find(c => c.name === quickAddData.customerName); setPickerConfig({ isOpen: true, currentProductId: item.productId, customPrices: currentCustomer?.priceList, onSelect: (pid) => { const newItems = [...quickAddData.items]; const p = products.find(x => x.id === pid); newItems[index] = { ...item, productId: pid, unit: p?.unit || '斤' }; setQuickAddData({...quickAddData, items: newItems}); } }); }} className="w-full bg-morandi-oatmeal/50 p-3 rounded-xl font-bold text-sm text-morandi-charcoal border border-slate-200 flex items-center justify-between cursor-pointer hover:border-morandi-blue transition-all"><span className={item.productId ? 'text-slate-800' : 'text-gray-400'}>{products.find(p => p.id === item.productId)?.name || '選擇品項...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></div></div><div className="w-20"><input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} placeholder="數量" className="w-full bg-morandi-oatmeal/50 p-3 rounded-xl text-center font-black text-lg text-morandi-charcoal border border-slate-200 outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const newItems = [...quickAddData.items]; const val = parseFloat(e.target.value); newItems[index].quantity = isNaN(val) ? 0 : Math.max(0, val); setQuickAddData({...quickAddData, items: newItems}); }} /></div><div className="w-20"><select value={item.unit || '斤'} onChange={(e) => { const newItems = [...quickAddData.items]; newItems[index].unit = e.target.value; setQuickAddData({...quickAddData, items: newItems}); }} className="w-full bg-morandi-oatmeal/50 p-3 rounded-xl font-bold text-morandi-charcoal border border-slate-100 outline-none focus:ring-2 focus:ring-morandi-blue transition-all">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select></div><button onClick={() => { const newItems = quickAddData.items.filter((_, i) => i !== index); setQuickAddData({...quickAddData, items: newItems}); }} className="p-3 bg-rose-50 text-rose-400 hover:text-rose-600 rounded-xl transition-colors"><Trash2 className="w-4 h-4" /></button></motion.div>))}</AnimatePresence><motion.button whileTap={buttonTap} onClick={() => setQuickAddData({...quickAddData, items: [...quickAddData.items, {productId: '', quantity: 10, unit: '斤'}]})} className="w-full py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide mt-2"><Plus className="w-4 h-4" /> 增加品項</motion.button></div><div className="p-5 bg-white border-t border-gray-100 flex-shrink-0 space-y-4"><AnimatePresence>{(() => { const preview = getQuickAddPricePreview(); if (preview && preview.total > 0) { return (<motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="bg-morandi-amber-bg p-4 rounded-xl border border-amber-100 flex justify-between items-center"><div className="flex flex-col"><span className="text-[10px] font-bold text-morandi-amber-text/70 uppercase tracking-widest">預估總金額</span><span className="text-xs font-medium text-morandi-amber-text/60 mt-0.5 tracking-wide">共 {preview.itemCount} 個品項</span></div><span className="text-2xl font-black text-morandi-amber-text tracking-tight">${preview.total.toLocaleString()}</span></motion.div>); } return null; })()}</AnimatePresence><div className="flex gap-2"><motion.button whileTap={buttonTap} onClick={() => setQuickAddData(null)} className="flex-1 py-3 rounded-[16px] font-bold text-morandi-pebble hover:bg-gray-50 transition-colors border border-slate-200">取消</motion.button><motion.button whileTap={buttonTap} onClick={handleQuickAddSubmit} className="flex-1 py-3 rounded-[16px] font-bold text-white shadow-md bg-morandi-blue hover:bg-slate-600">確認追加</motion.button></div></div></motion.div></div>)}</AnimatePresence>
       <AnimatePresence>
@@ -1669,6 +1703,23 @@ const App: React.FC = () => {
           <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="flex flex-col h-full">
           <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => { setIsAddingOrder(false); setEditingOrderId(null); }} className="p-2 rounded-2xl bg-gray-50 text-morandi-pebble"><X className="w-6 h-6" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">{editingOrderId ? `編輯訂單 - ${orderForm.customerName}` : '建立配送訂單'}</h2><motion.button whileTap={buttonTap} onClick={handleSaveOrder} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : (editingOrderId ? '更新訂單' : '儲存')}</motion.button></div>
           <div className="p-6 space-y-6 overflow-y-auto pb-10">
+            {/* NEW: Date Picker for Order */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">配送日期</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
+                  <CalendarDays className="w-5 h-5 text-gray-400" />
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setIsOrderDatePickerOpen(true)}
+                  className="w-full pl-12 pr-5 py-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all text-left"
+                >
+                  {orderForm.date || selectedDate}
+                </button>
+              </div>
+            </div>
+
             <div className="flex bg-white p-1 rounded-[24px] shadow-sm border border-slate-100"><button onClick={() => handleOrderFormChange('customerType', 'existing')} className={`flex-1 py-4 rounded-[20px] text-xs font-bold transition-all tracking-wide ${orderForm.customerType === 'existing' ? 'bg-morandi-blue text-white shadow-md' : 'text-morandi-pebble'}`}>現有客戶</button><button onClick={() => { handleOrderFormChange('customerType', 'retail'); handleOrderFormChange('customerId', ''); }} className={`flex-1 py-4 rounded-[20px] text-xs font-bold transition-all tracking-wide ${orderForm.customerType === 'retail' ? 'bg-morandi-blue text-white shadow-md' : 'text-morandi-pebble'}`}>零售客戶</button></div>
             {orderForm.customerType === 'existing' ? (
               <div className="space-y-2">

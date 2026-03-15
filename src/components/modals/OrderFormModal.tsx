@@ -37,6 +37,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
   editingOrderId,
   addToast
 }) => {
+  const [orderDate, setOrderDate] = useState<string>(selectedDate);
   const [orderForm, setOrderForm] = useState(initialData || {
     customerType: 'existing',
     customerId: '',
@@ -53,6 +54,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setOrderDate(initialData?.date || selectedDate);
       if (initialData) {
         setOrderForm(initialData);
       } else {
@@ -70,7 +72,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
       }
       setLastOrderCandidate(null);
     }
-  }, [isOpen, initialData]);
+  }, [isOpen, initialData, selectedDate]);
 
   const handleOrderFormChange = (field: string, value: any) => {
     setOrderForm((prev: any) => ({ ...prev, [field]: value }));
@@ -181,6 +183,13 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
     return { totalPrice, details };
   }, [orderForm.items, orderForm.customerId, customers, products]);
 
+  const handleSubmit = () => {
+    onSubmit({
+      ...orderForm,
+      date: orderDate
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -189,9 +198,22 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
       <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
         <motion.button whileTap={buttonTap} onClick={onClose} className="p-2 rounded-2xl bg-gray-50 text-morandi-pebble"><X className="w-6 h-6" /></motion.button>
         <h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">{editingOrderId ? `編輯訂單 - ${orderForm.customerName}` : '建立配送訂單'}</h2>
-        <motion.button whileTap={buttonTap} onClick={() => onSubmit(orderForm)} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : (editingOrderId ? '更新訂單' : '儲存')}</motion.button>
+        <motion.button whileTap={buttonTap} onClick={handleSubmit} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : (editingOrderId ? '更新訂單' : '儲存')}</motion.button>
       </div>
       <div className="p-6 space-y-6 overflow-y-auto pb-10">
+        {/* 配送日期選擇 */}
+        <div className="mb-6">
+          <label className="block text-sm font-bold text-morandi-charcoal mb-2">
+            配送日期
+          </label>
+          <input
+            type="date"
+            value={orderDate}
+            onChange={(e) => setOrderDate(e.target.value)}
+            className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-morandi-blue focus:border-transparent transition-all font-medium text-gray-700"
+          />
+        </div>
+
         <div className="flex bg-white p-1 rounded-[24px] shadow-sm border border-slate-100">
           <button onClick={() => handleOrderFormChange('customerType', 'existing')} className={`flex-1 py-4 rounded-[20px] text-xs font-bold transition-all tracking-wide ${orderForm.customerType === 'existing' ? 'bg-morandi-blue text-white shadow-md' : 'text-morandi-pebble'}`}>現有客戶</button>
           <button onClick={() => { handleOrderFormChange('customerType', 'retail'); handleOrderFormChange('customerId', ''); }} className={`flex-1 py-4 rounded-[20px] text-xs font-bold transition-all tracking-wide ${orderForm.customerType === 'retail' ? 'bg-morandi-blue text-white shadow-md' : 'text-morandi-pebble'}`}>零售客戶</button>

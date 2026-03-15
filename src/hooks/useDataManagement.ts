@@ -17,6 +17,7 @@ interface UseDataManagementProps {
   setIsEditingProduct: (id: string | null) => void;
   editingVersionRef: React.MutableRefObject<number | undefined>;
   setConflictData: any;
+  setPendingData: any;
   addToast: (msg: string, type: ToastType) => void;
   setConfirmConfig: React.Dispatch<React.SetStateAction<any>>;
 }
@@ -37,6 +38,7 @@ export const useDataManagement = ({
   setIsEditingProduct,
   editingVersionRef,
   setConflictData,
+  setPendingData,
   addToast,
   setConfirmConfig
 }: UseDataManagementProps) => {
@@ -94,6 +96,7 @@ export const useDataManagement = ({
     
     setIsSaving(false); 
     editingVersionRef.current = undefined;
+    setPendingData(null);
     addToast('店家資料已儲存', 'success'); 
   };
 
@@ -139,6 +142,7 @@ export const useDataManagement = ({
     
     setIsSaving(false); 
     editingVersionRef.current = undefined;
+    setPendingData(null);
     addToast('品項資料已儲存', 'success'); 
   };
 
@@ -150,6 +154,7 @@ export const useDataManagement = ({
     try { 
       if (apiEndpoint) { 
         await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteCustomer', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) }); 
+        setPendingData(null);
       } 
     } catch (e) { 
       console.error("刪除失敗:", e); 
@@ -166,6 +171,7 @@ export const useDataManagement = ({
     try { 
       if (apiEndpoint) { 
         await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteProduct', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) }); 
+        setPendingData(null);
       } 
     } catch (e) { 
       console.error("刪除失敗:", e); 

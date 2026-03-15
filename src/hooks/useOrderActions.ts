@@ -22,6 +22,7 @@ interface UseOrderActionsProps {
   orderSummary: any;
   saveOrderToCloud: any;
   setConflictData: any;
+  setPendingData: any;
   addToast: (msg: string, type: ToastType) => void;
   setIsAddingOrder: (isAdding: boolean) => void;
   setIsEditingCustomer: (id: string | null) => void;
@@ -53,6 +54,7 @@ export const useOrderActions = ({
   orderSummary,
   saveOrderToCloud,
   setConflictData,
+  setPendingData,
   addToast,
   setIsAddingOrder,
   setIsEditingCustomer,
@@ -118,7 +120,7 @@ export const useOrderActions = ({
       
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      const isAdhoc = cust.category === 'adhoc';
+      const isAdhoc = cust.paymentTerm === 'adhoc';
 
       setOrderForm(prev => {
         // 判斷目前的 items 是否為乾淨的預設狀態
@@ -193,10 +195,14 @@ export const useOrderActions = ({
           const p = products.find(prod => prod.id === item.productId);
           return { productName: p?.name || item.productId, quantity: item.quantity, unit: item.unit };
         });
-        await fetch(apiEndpoint, {
+        const res = await fetch(apiEndpoint, {
           method: 'POST',
           body: JSON.stringify({ action: 'createOrder', data: { ...newOrder, items: uploadItems } })
         });
+        const json = await res.json();
+        if (json.success) {
+           setPendingData(null); // UX: Clear pending data on successful quick add
+        }
       }
     } catch (e) {
       console.error(e);
@@ -315,6 +321,7 @@ export const useOrderActions = ({
                         }
                         return o;
                     }));
+                    setPendingData(null); // UX: Clear pending data on successful batch update
                 }
             }
         } catch (e) {
@@ -360,7 +367,7 @@ export const useOrderActions = ({
     // Trigger batch update immediately and return a promise
     return new Promise<void>((resolve) => {
       batchTimeoutRef.current = setTimeout(async () => {
-          const updatesToProcess = Array.from(pendingUpdatesRef.current.values());
+          const updatesToProcess: { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
           pendingUpdatesRef.current.clear();
           batchTimeoutRef.current = null;
 
@@ -401,6 +408,7 @@ export const useOrderActions = ({
                           }
                           return o;
                       }));
+                      setPendingData(null); // UX: Clear pending data on successful batch settle
                       addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
                   }
               }
@@ -623,7 +631,8 @@ export const useOrderActions = ({
       deliveryMethod: order.deliveryMethod || cust?.deliveryMethod || '',
       trip: order.trip || cust?.defaultTrip || '', // 👈 新增這行：優先使用訂單原本的趟數，否則使用客戶預設
       items: order.items.map(i => ({ ...i })),
-      note: order.note
+      note: order.note,
+      date: order.deliveryDate
     });
     setIsAddingOrder(true);
   };
@@ -640,7 +649,8 @@ export const useOrderActions = ({
         deliveryMethod: c.deliveryMethod || '',
         trip: c.defaultTrip || '',
         items: c.defaultItems && c.defaultItems.length > 0 ? c.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }],
-        note: ''
+        note: '',
+        date: selectedDate
       });
       findLastOrder(c.id, c.name);
       setIsAddingOrder(true);
@@ -718,7 +728,7 @@ export const useOrderActions = ({
       id: editingOrderId || 'ORD-' + Date.now(),
       createdAt: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
       customerName: orderForm.customerName,
-      deliveryDate: selectedDate,
+      deliveryDate: orderForm.date || selectedDate,
       deliveryTime: deliveryTime,
       deliveryMethod: orderForm.deliveryMethod,
       trip: orderForm.trip || '未分配',
@@ -739,9 +749,14 @@ export const useOrderActions = ({
 
     setIsAddingOrder(false);
     setEditingOrderId(null);
-    setOrderForm({ customerType: 'existing', customerId: '', customerName: '', deliveryTime: '', deliveryMethod: '', trip: '', items: [{ productId: '', quantity: 10, unit: '斤' }], note: '' });
+    setOrderForm({ customerType: 'existing', customerId: '', customerName: '', deliveryTime: '', deliveryMethod: '', trip: '', items: [{ productId: '', quantity: 10, unit: '斤' }], note: '', date: '' });
     setIsSaving(false);
-    addToast(editingOrderId ? '訂單已更新 (同步中...)' : '訂單已建立 (同步中...)', 'success');
+    
+    if (orderForm.date && orderForm.date !== selectedDate) {
+      addToast(editingOrderId ? `訂單已更新至 ${orderForm.date}` : `訂單已建立至 ${orderForm.date}`, 'success');
+    } else {
+      addToast(editingOrderId ? '訂單已更新 (同步中...)' : '訂單已建立 (同步中...)', 'success');
+    }
 
     // Background Sync
     await saveOrderToCloud(
@@ -792,6 +807,8 @@ export const useOrderActions = ({
               setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' }]);
               addToast("刪除失敗，已標記為錯誤", 'error');
            }
+        } else {
+           setPendingData(null); // UX: Clear pending data on successful delete
         }
       } 
     } catch (e) { 

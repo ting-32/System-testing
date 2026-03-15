@@ -18,7 +18,7 @@ interface UseOrderCalculationsProps {
   customerSearch: string;
   settlementTarget: { name: string; allOrderIds: string[] } | null;
   settlementDate: string;
-  orderForm?: { items: { productId: string; quantity: number; unit: string }[] };
+  orderForm?: { customerId?: string; items: { productId: string; quantity: number; unit: string }[] };
   quickAddData?: { customerName: string; items: { productId: string; quantity: number; unit: string }[] } | null;
 }
 

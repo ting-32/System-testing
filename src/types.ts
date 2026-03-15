@@ -6,6 +6,18 @@ export enum OrderStatus {
   CANCELLED = 'CANCELLED' // 取消 (保留)
 }
 
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        HapticFeedback?: {
+          notificationOccurred: (type: string) => void;
+        };
+      };
+    };
+  }
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -76,7 +88,7 @@ export interface GASResponse<T> {
   errorCode?: string; // 新增錯誤代碼支援
 }
 
-export type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 export interface Toast {
   id: string;

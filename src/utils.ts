@@ -60,6 +60,22 @@ export const getTomorrowDate = () => {
   return formatDateStr(d);
 };
 
+export const getSmartDefaultDate = (): string => {
+  const now = new Date();
+  const taipeiTimeStr = now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' });
+  const taipeiDate = new Date(taipeiTimeStr);
+
+  if (taipeiDate.getHours() >= 12) {
+    taipeiDate.setDate(taipeiDate.getDate() + 1);
+  }
+
+  const yyyy = taipeiDate.getFullYear();
+  const mm = String(taipeiDate.getMonth() + 1).padStart(2, '0');
+  const dd = String(taipeiDate.getDate()).padStart(2, '0');
+  
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 export const getLastMonthEndDate = () => {
   const date = new Date();
   date.setDate(0); 

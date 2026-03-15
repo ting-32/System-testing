@@ -299,6 +299,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       if (json.success) {
         addToast('強制覆蓋成功', 'success');
         setConflictData(null);
+        setPendingData(null); // Clear pending data on successful force retry
         syncData(true);
         return true;
       } else {
@@ -341,6 +342,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       const json = await res.json();
       if (json.success) {
         setTrips(newTrips);
+        setPendingData(null); // UX: Clear pending data on successful save
         return true;
       }
       return false;
@@ -447,6 +449,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                         setOrders(prev => prev.map(o => o.id === orderId ? { ...o, lastUpdated: newVersion } : o));
                     }
                     
+                    setPendingData(null); // UX: Clear pending data on successful save
                     onSuccess(updatedOrder);
                     
                     // CRITICAL: Return the NEW version for the next task in the chain
@@ -526,6 +529,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     saveOrderToCloud,
     saveTripsToCloud,
     pendingData,
+    setPendingData,
     applyPendingUpdates
   };
 };
