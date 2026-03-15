@@ -150,6 +150,7 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
 
   return (
     <motion.div 
+      key="trip-manager-modal"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}

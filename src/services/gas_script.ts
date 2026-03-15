@@ -504,7 +504,7 @@ function batchUpdateOrders(data) {
       const updateData = updateMap.get(rowId);
       
       // Conflict check if provided and not forced
-      if (updateData.originalLastUpdated !== undefined && !updateData.force) {
+      if (!updateData.force && updateData.originalLastUpdated !== undefined) {
          checkVersionConflict(values[i][lastUpdatedColIdx], updateData.originalLastUpdated);
       }
       
@@ -543,7 +543,7 @@ function deleteOrder(data) {
   // Check conflict first
   for (let i = values.length - 1; i >= 1; i--) {
     if (String(values[i][1]).trim() === targetId) {
-       if (data.originalLastUpdated !== undefined && !data.force) {
+       if (!data.force && data.originalLastUpdated !== undefined) {
          checkVersionConflict(values[i][lastUpdatedColIdx], data.originalLastUpdated);
        }
     }

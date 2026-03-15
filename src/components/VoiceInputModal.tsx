@@ -82,7 +82,7 @@ export const VoiceInputModal: React.FC<{
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[200] flex flex-col justify-end backdrop-blur-sm">
+        <motion.div key="voice-input-modal" className="fixed inset-0 bg-black/50 z-[200] flex flex-col justify-end backdrop-blur-sm">
           <motion.div
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
@@ -147,7 +147,7 @@ export const VoiceInputModal: React.FC<{
                 </button>
             )}
           </motion.div>
-        </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );

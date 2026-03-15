@@ -132,7 +132,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
           </div> 
           <AnimatePresence> 
             {isExpanded && ( 
-              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden"> 
+              <motion.div key="schedule-order-card-expanded" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden"> 
                 <div className="pt-3 mt-3 border-t border-dashed border-gray-200"> 
                   <div className="space-y-1.5 mb-3"> 
                     {order.items.map((item, idx) => { 

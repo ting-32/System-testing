@@ -26,7 +26,7 @@ export const ProductPicker: React.FC<{ isOpen: boolean; onClose: () => void; onS
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-morandi-charcoal/40 z-[120] flex flex-col justify-end sm:justify-center backdrop-blur-sm">
+        <motion.div key="product-picker" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-morandi-charcoal/40 z-[120] flex flex-col justify-end sm:justify-center backdrop-blur-sm">
           <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="bg-white w-full sm:max-w-md sm:mx-auto h-[85vh] sm:h-[80vh] rounded-t-[32px] sm:rounded-[32px] shadow-2xl flex flex-col overflow-hidden">
             <div className="p-5 bg-white border-b border-gray-100 shrink-0 sticky top-0 z-20">
               <div className="flex justify-between items-center mb-4">

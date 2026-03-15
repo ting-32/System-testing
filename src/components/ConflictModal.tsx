@@ -13,7 +13,7 @@ export const ConflictModal: React.FC<{
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 bg-morandi-charcoal/40 z-[160] flex items-center justify-center p-6 backdrop-blur-sm">
+        <motion.div key="conflict-modal" className="fixed inset-0 bg-morandi-charcoal/40 z-[160] flex items-center justify-center p-6 backdrop-blur-sm">
           <motion.div variants={modalVariants} initial="hidden" animate="visible" exit="exit" className="bg-white w-full max-w-sm rounded-[24px] overflow-hidden shadow-xl border-2 border-amber-100">
             <div className="p-6 text-center space-y-4">
               <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-500 mb-2">
@@ -51,7 +51,7 @@ export const ConflictModal: React.FC<{
               </motion.button>
             </div>
           </motion.div>
-        </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );

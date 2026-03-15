@@ -114,7 +114,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               const preview = getQuickAddPricePreview(); 
               if (preview && preview.total > 0) { 
                 return (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="bg-morandi-amber-bg p-4 rounded-xl border border-amber-100 flex justify-between items-center">
+                  <motion.div key="quick-add-preview" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="bg-morandi-amber-bg p-4 rounded-xl border border-amber-100 flex justify-between items-center">
                     <div className="flex flex-col">
                       <span className="text-[10px] font-bold text-morandi-amber-text/70 uppercase tracking-widest">預估總金額</span>
                       <span className="text-xs font-medium text-morandi-amber-text/60 mt-0.5 tracking-wide">共 {preview.itemCount} 個品項</span>
