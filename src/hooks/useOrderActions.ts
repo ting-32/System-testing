@@ -614,7 +614,12 @@ export const useOrderActions = ({
   };
 
   const openGoogleMaps = (name: string) => {
-    const query = encodeURIComponent(name);
+    const customer = customers.find(c => c.name === name);
+    if (customer?.coordinates) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(customer.coordinates)}`, '_blank');
+      return;
+    }
+    const query = encodeURIComponent(customer?.address || name);
     window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
   };
 

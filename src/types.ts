@@ -47,6 +47,8 @@ export interface Customer {
   deliveryTime: string;
   deliveryMethod?: string; // 新增：配送方式
   defaultTrip?: string; // 新增：預設趟數
+  address?: string; // 新增：客戶地址
+  coordinates?: string; // 新增：座標位置 (緯度, 經度)
   // 注意：我們沿用 paymentTerm 欄位來儲存「預定習慣」，以保持後端兼容性
   // 值可能是: 'regular' (預訂), 'occasional' (非每日), 'adhoc' (非預訂), 或舊資料 'daily'/'weekly' 等
   paymentTerm?: string; 

@@ -5,7 +5,13 @@ import { modalVariants } from './animations';
 import { WEEKDAYS } from '../constants';
 import { formatDateStr } from '../utils';
 
-export const DatePickerModal: React.FC<{ selectedDate: string; onSelect: (date: string) => void; onClose: () => void; }> = ({ selectedDate, onSelect, onClose }) => {
+export const DatePickerModal: React.FC<{ 
+  selectedDate: string; 
+  onSelect: (date: string) => void; 
+  onClose: () => void;
+  offDays?: number[];
+  holidayDates?: string[];
+}> = ({ selectedDate, onSelect, onClose, offDays = [], holidayDates = [] }) => {
   const parseLocalDate = (dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number);
     return new Date(y, m - 1, d);
@@ -52,9 +58,21 @@ export const DatePickerModal: React.FC<{ selectedDate: string; onSelect: (date: 
             ))}
             {calendarDays.map((item, idx) => {
               const isSelected = item.dateStr === selectedDate;
+              let isHoliday = false;
+              if (item.dateStr) {
+                const dateObj = new Date(item.dateStr);
+                const dayOfWeek = dateObj.getDay();
+                isHoliday = offDays.includes(dayOfWeek) || holidayDates.includes(item.dateStr);
+              }
               return (
-                <motion.div key={idx} whileTap={{ scale: 0.8 }} onClick={() => item.dateStr && (onSelect(item.dateStr), onClose())} className={`aspect-square flex items-center justify-center text-sm font-medium rounded-xl cursor-pointer transition-all border ${!item.day ? 'opacity-0 pointer-events-none' : 'hover:bg-morandi-oatmeal'} ${isSelected ? 'bg-morandi-blue text-white font-bold' : 'bg-white border-transparent text-morandi-charcoal'}`}>
-                  {item.day}
+                <motion.div 
+                  key={idx} 
+                  whileTap={{ scale: 0.8 }} 
+                  onClick={() => item.dateStr && (onSelect(item.dateStr), onClose())} 
+                  className={`aspect-square flex flex-col items-center justify-center text-sm font-medium rounded-xl cursor-pointer transition-all border ${!item.day ? 'opacity-0 pointer-events-none' : 'hover:bg-morandi-oatmeal'} ${isSelected ? 'bg-morandi-blue text-white font-bold shadow-md' : isHoliday ? 'bg-rose-50 text-rose-400 border-rose-100' : 'bg-white border-transparent text-morandi-charcoal'}`}
+                >
+                  <span>{item.day}</span>
+                  {isHoliday && <span className="text-[8px] font-bold mt-0.5">公休</span>}
                 </motion.div>
               );
             })}

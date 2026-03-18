@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Mic, StopCircle } from 'lucide-react';
+import { X, Mic, StopCircle, MicOff, Info } from 'lucide-react';
 
 export const VoiceInputModal: React.FC<{
   isOpen: boolean;
@@ -11,11 +11,13 @@ export const VoiceInputModal: React.FC<{
 }> = ({ isOpen, onClose, onTranscriptComplete, isAiMode, onToggleAiMode }) => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
+  const [permissionError, setPermissionError] = useState(false);
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     if (isOpen) {
       setTranscript('');
+      setPermissionError(false);
       startListening();
     } else {
       stopListening();
@@ -39,7 +41,10 @@ export const VoiceInputModal: React.FC<{
     recognition.continuous = false; // Auto-stop after one sentence
     recognition.interimResults = true; // Show real-time results
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => {
+      setIsListening(true);
+      setPermissionError(false);
+    };
     recognition.onend = () => setIsListening(false);
     
     recognition.onresult = (event: any) => {
@@ -64,16 +69,27 @@ export const VoiceInputModal: React.FC<{
 
     recognition.onerror = (event: any) => {
       console.error('Speech recognition error', event.error);
+      if (event.error === 'not-allowed') {
+        setPermissionError(true);
+      }
       setIsListening(false);
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error('Failed to start recognition', e);
+    }
   };
 
   const stopListening = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        // ignore
+      }
       recognitionRef.current = null;
     }
     setIsListening(false);
@@ -92,7 +108,7 @@ export const VoiceInputModal: React.FC<{
           >
             <div className="w-full flex justify-between items-center mb-4">
                <h3 className="font-extrabold text-slate-800 text-lg">語音輸入</h3>
-               <button onClick={onClose} className="p-2 rounded-full bg-slate-100 text-slate-500"><X className="w-5 h-5"/></button>
+               <button onClick={onClose} className="p-2 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"><X className="w-5 h-5"/></button>
             </div>
 
             {/* AI Mode Toggle */}
@@ -113,7 +129,7 @@ export const VoiceInputModal: React.FC<{
 
             <div className="relative mb-8 flex items-center justify-center">
                {/* Breathing Animation Circles */}
-               {isListening && (
+               {isListening && !permissionError && (
                  <>
                    <motion.div 
                      animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
@@ -128,23 +144,40 @@ export const VoiceInputModal: React.FC<{
                  </>
                )}
                
-               <div className={`w-16 h-16 rounded-full flex items-center justify-center relative z-10 shadow-lg transition-colors ${isListening ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-400'}`}>
-                 <Mic className="w-8 h-8" />
+               <div className={`w-16 h-16 rounded-full flex items-center justify-center relative z-10 shadow-lg transition-colors ${permissionError ? 'bg-rose-100 text-rose-500' : isListening ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                 {permissionError ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
                </div>
             </div>
 
-            <p className="text-xl font-bold text-slate-700 text-center min-h-[3rem] px-4 break-words w-full">
-              {transcript || (isListening ? "請說話..." : "準備中...")}
-            </p>
-            
-            <p className="text-xs text-slate-400 mt-4 font-medium">
-              例如：「明天幫阿明麵攤送 20 斤油麵」
-            </p>
-            
-            {isListening && (
-                <button onClick={stopListening} className="mt-6 flex items-center gap-2 px-6 py-3 bg-rose-50 text-rose-500 rounded-full font-bold text-sm hover:bg-rose-100 transition-colors">
-                    <StopCircle className="w-4 h-4" /> 停止錄音
-                </button>
+            {permissionError ? (
+              <div className="text-center px-4 w-full">
+                <p className="text-lg font-bold text-rose-600 mb-4">無法使用麥克風</p>
+                <div className="bg-rose-50 rounded-2xl p-5 text-sm text-rose-800 text-left space-y-3 border border-rose-100 shadow-sm">
+                  <p className="font-bold flex items-center gap-1.5 text-rose-900"><Info className="w-4 h-4"/> 請依照以下步驟解鎖：</p>
+                  <ol className="list-decimal pl-5 space-y-2 font-medium">
+                    <li>點擊網址列左側的 <strong>🔒 (鎖頭)</strong> 或 <strong>ⓘ (資訊)</strong> 圖示。</li>
+                    <li>找到「<strong>麥克風 (Microphone)</strong>」。</li>
+                    <li>將設定改為「<strong>允許 (Allow)</strong>」。</li>
+                    <li>重新整理網頁後再試一次。</li>
+                  </ol>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="text-xl font-bold text-slate-700 text-center min-h-[3rem] px-4 break-words w-full">
+                  {transcript || (isListening ? "請說話..." : "準備中...")}
+                </p>
+                
+                <p className="text-xs text-slate-400 mt-4 font-medium">
+                  例如：「明天幫阿明麵攤送 20 斤油麵」
+                </p>
+                
+                {isListening && (
+                    <button onClick={stopListening} className="mt-6 flex items-center gap-2 px-6 py-3 bg-rose-50 text-rose-500 rounded-full font-bold text-sm hover:bg-rose-100 transition-colors">
+                        <StopCircle className="w-4 h-4" /> 停止錄音
+                    </button>
+                )}
+              </>
             )}
           </motion.div>
         </motion.div>

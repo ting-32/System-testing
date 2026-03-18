@@ -50,7 +50,17 @@ export const useDataManagement = ({
     const isDuplicateName = customers.some(c => c.name.trim() === (customerForm.name || '').trim() && c.id !== (isEditingCustomer === 'new' ? null : isEditingCustomer)); 
     if (isDuplicateName) { addToast('客戶名稱不可重複！', 'error'); setIsSaving(false); return; } 
     
-    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: (customerForm.name || '').trim(), phone: (customerForm.phone || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '' }; 
+    // Validate coordinates
+    if (customerForm.coordinates) {
+      const coordPattern = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
+      if (!coordPattern.test(customerForm.coordinates)) {
+        addToast('請輸入正確的座標格式，例如：25.033964, 121.564468', 'error');
+        setIsSaving(false);
+        return;
+      }
+    }
+
+    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: (customerForm.name || '').trim(), phone: (customerForm.phone || '').trim(), address: (customerForm.address || '').trim(), coordinates: (customerForm.coordinates || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '' }; 
     
     // Backup old list for revert
     const previousCustomers = [...customers];

@@ -38,7 +38,9 @@ import {
   Grid,
   Filter,
   Check,
-  GripVertical
+  GripVertical,
+  Navigation,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
@@ -148,7 +150,8 @@ const App: React.FC = () => {
 
   const [workDates, setWorkDates] = useState<string[]>([getTomorrowDate()]);
   const [workCustomerFilter, setWorkCustomerFilter] = useState('');
-  const [workCategoryFilter, setWorkCategoryFilter] = useState<string>('all');
+  const [workProductFilter, setWorkProductFilter] = useState<Set<string>>(new Set());
+  const [expandedFilterCats, setExpandedFilterCats] = useState<Set<string>>(new Set());
   const [workDeliveryMethodFilter, setWorkDeliveryMethodFilter] = useState<string[]>([]);
   
   const [scheduleDate, setScheduleDate] = useState<string>(getTomorrowDate());
@@ -259,12 +262,32 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
   
+  const [isScrollingDown, setIsScrollingDown] = useState(false);
+  const [lastScrollY, setLastScrollY] = useState(0);
+  
   const [initialProductOrder, setInitialProductOrder] = useState<string[]>([]);
   const [hasReorderedProducts, setHasReorderedProducts] = useState(false);
 
   const [lastOrderCandidate, setLastOrderCandidate] = useState<{date: string, items: OrderItem[], sourceLabel?: string} | null>(null);
 
   const [hasChanges, setHasChanges] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY; // 如果你的滾動容器是特定 div，這裡改為該 div 的 scrollTop
+      
+      // 當向下滑動超過 50px 時隱藏，向上滑動時顯示
+      if (currentScrollY > lastScrollY && currentScrollY > 50) {
+        setIsScrollingDown(true);
+      } else if (currentScrollY < lastScrollY) {
+        setIsScrollingDown(false);
+      }
+      setLastScrollY(currentScrollY);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [lastScrollY]);
 
   useEffect(() => {
     if (isAddingOrder || isEditingCustomer || isEditingProduct || editingOrderId) {
@@ -434,7 +457,7 @@ const App: React.FC = () => {
     scheduleDeliveryMethodFilter,
     workDates,
     workCustomerFilter,
-    workCategoryFilter,
+    workProductFilter,
     workDeliveryMethodFilter,
     customerSearch,
     settlementTarget,
@@ -484,6 +507,45 @@ const App: React.FC = () => {
 
     setSelectedOrderIds(new Set());
     setIsSelectionMode(false);
+  };
+
+  const handleNavigateTrip = (tripOrders: Order[]) => {
+    // 1. 取得該趟數所有不重複的店家名稱 (依照原本的訂單排序)
+    const customerNames = Array.from(new Set(tripOrders.map(o => o.customerName)));
+    
+    if (customerNames.length === 0) return;
+
+    // 取得對應的客戶資料，優先使用座標，其次使用地址，最後使用客戶名稱
+    const getCustomerLocation = (name: string) => {
+      const customer = customers.find(c => c.name === name);
+      
+      if (customer?.coordinates) {
+        return customer.coordinates;
+      }
+
+      if (customer?.address) {
+        return customer.address;
+      }
+      return name;
+    };
+
+    const locations = customerNames.map(getCustomerLocation);
+
+    // 2. 終點是最後一個地點 (需進行 URL 編碼)
+    const destination = encodeURIComponent(locations[locations.length - 1]);
+    
+    // 3. 中間的地點是停靠站 (waypoints)
+    const waypoints = locations.slice(0, -1).map(loc => encodeURIComponent(loc)).join('|');
+    
+    // 4. 組合 Google Maps 導航網址 (未指定 origin 預設為使用者當前位置)
+    let url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
+    
+    if (waypoints) {
+      url += `&waypoints=${waypoints}`;
+    }
+    
+    // 5. 開啟新分頁導航 (在手機上會自動喚醒 Google Maps App)
+    window.open(url, '_blank');
   };
 
   const handleDeleteTrip = (tripToDelete: string) => {
@@ -910,116 +972,123 @@ const App: React.FC = () => {
                     <motion.button whileTap={buttonTap} onClick={() => setActiveTab('work')} className="w-14 h-14 rounded-[20px] bg-white text-morandi-pebble border border-slate-200 shadow-sm flex items-center justify-center hover:bg-slate-50 transition-all">
                        <FileText className="w-6 h-6" />
                     </motion.button>
-                    <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { 
-                      setEditingOrderId(null); 
-                      setOrderForm({
-                        customerType: 'existing',
-                        customerId: '',
-                        customerName: '',
-                        deliveryTime: '',
-                        deliveryMethod: '',
-                        trip: '',
-                        items: [{ productId: '', quantity: 10, unit: '斤' }],
-                        note: '',
-                        date: selectedDate
-                      });
-                      setIsAddingOrder(true); 
-                    }} className="w-14 h-14 rounded-[20px] text-white shadow-lg shadow-morandi-blue/20 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"><Plus className="w-8 h-8" /></motion.button>
                   </div>
                </div>
 
                {/* NEW: Sticky Search Bar & Filter Button */}
-               <div className="flex gap-2 items-center">
-                 <div className="relative flex-1">
-                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                   <input 
-                     type="text" 
-                     placeholder="搜尋客戶名稱或電話..." 
-                     className="w-full pl-10 pr-10 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" 
-                     value={orderSearch} 
-                     onChange={(e) => setOrderSearch(e.target.value)} 
-                   />
-                   {orderSearch && (
-                     <button onClick={() => setOrderSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full bg-gray-100 text-gray-400 hover:bg-gray-200">
-                       <X className="w-3 h-3" />
-                     </button>
-                   )}
-                 </div>
-                 
-                 {/* 新增的漏斗篩選按鈕 */}
-                 <button 
-                   onClick={() => setShowOrderDeliveryFilters(!showOrderDeliveryFilters)}
-                   className={`relative flex-shrink-0 w-12 h-12 rounded-[20px] border flex items-center justify-center transition-all shadow-sm ${showOrderDeliveryFilters || orderDeliveryFilter.length > 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-slate-200 hover:bg-slate-50'}`}
-                 >
-                   <Filter className="w-5 h-5" />
-                   {/* 如果有選取條件，顯示一個小紅點提示 */}
-                   {orderDeliveryFilter.length > 0 && (
-                     <span className="absolute -top-1 -right-1 bg-rose-500 border-2 border-white text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
-                       {orderDeliveryFilter.length}
-                     </span>
-                   )}
-                 </button>
-               </div>
-
-               {/* 展開的篩選選項區塊 */}
-               <AnimatePresence>
-                 {showOrderDeliveryFilters && (
-                   <motion.div 
-                     key="order-delivery-filters"
-                     initial={{ height: 0, opacity: 0, marginTop: 0 }} 
-                     animate={{ height: 'auto', opacity: 1, marginTop: 8 }} 
-                     exit={{ height: 0, opacity: 0, marginTop: 0 }} 
-                     transition={{ duration: 0.2 }}
-                     className="overflow-hidden"
-                   >
-                     <div className="flex gap-2 overflow-x-auto pb-2 pt-1 custom-scrollbar">
+               <motion.div
+                 initial={false}
+                 animate={{ 
+                   height: isScrollingDown ? 0 : 'auto', 
+                   opacity: isScrollingDown ? 0 : 1,
+                   overflow: 'hidden'
+                 }}
+                 transition={{ duration: 0.3, ease: 'easeInOut' }}
+                 className="space-y-2"
+               >
+                 <div className="flex gap-2 items-center">
+                   <div className="relative flex-1 flex items-center">
+                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                     <input 
+                       type="text" 
+                       placeholder="搜尋客戶名稱或電話..." 
+                       className="w-full pl-10 pr-20 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" 
+                       value={orderSearch} 
+                       onChange={(e) => setOrderSearch(e.target.value)} 
+                     />
+                     <div className="absolute right-2 flex items-center gap-1">
+                       {orderSearch && (
+                         <button onClick={() => setOrderSearch('')} className="p-1 rounded-full bg-gray-100 text-gray-400 hover:bg-gray-200">
+                           <X className="w-3 h-3" />
+                         </button>
+                       )}
                        <button 
-                         onClick={() => setOrderDeliveryFilter([])} 
-                         className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${orderDeliveryFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}
+                         onClick={() => setIsVoiceModalOpen(true)}
+                         className={`p-1.5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-morandi-blue bg-transparent ${isProcessingVoice ? 'text-rose-500 animate-pulse' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-100'}`}
+                         aria-label="語音輸入"
+                         title="語音輸入"
                        >
-                         全部
+                         <Mic className="w-5 h-5" />
                        </button>
-                       {DELIVERY_METHODS.map(m => {
-                         const isSelected = orderDeliveryFilter.includes(m);
-                         return (
-                           <button 
-                             key={m} 
-                             onClick={() => {
-                                if (isSelected) setOrderDeliveryFilter(orderDeliveryFilter.filter(x => x !== m));
-                                else setOrderDeliveryFilter([...orderDeliveryFilter, m]);
-                             }} 
-                             className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
-                             style={{ backgroundColor: isSelected ? COLORS.primary : '' }}
-                           >
-                             {m}
-                           </button>
-                         );
-                       })}
                      </div>
-                   </motion.div>
-                 )}
-               </AnimatePresence>
+                   </div>
+                   
+                   {/* 新增的漏斗篩選按鈕 */}
+                   <button 
+                     onClick={() => setShowOrderDeliveryFilters(!showOrderDeliveryFilters)}
+                     className={`relative flex-shrink-0 w-12 h-12 rounded-[20px] border flex items-center justify-center transition-all shadow-sm ${showOrderDeliveryFilters || orderDeliveryFilter.length > 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-slate-200 hover:bg-slate-50'}`}
+                   >
+                     <Filter className="w-5 h-5" />
+                     {/* 如果有選取條件，顯示一個小紅點提示 */}
+                     {orderDeliveryFilter.length > 0 && (
+                       <span className="absolute -top-1 -right-1 bg-rose-500 border-2 border-white text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
+                         {orderDeliveryFilter.length}
+                       </span>
+                     )}
+                   </button>
+
+                   <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl h-12">
+                     <button 
+                       onClick={() => setViewMode('list')}
+                       className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                     >
+                       <List className="w-4 h-4" />
+                     </button>
+                     <button 
+                       onClick={() => setViewMode('grid')}
+                       className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                     >
+                       <Grid className="w-4 h-4" />
+                     </button>
+                   </div>
+                 </div>
+
+                 {/* 展開的篩選選項區塊 */}
+                 <AnimatePresence>
+                   {showOrderDeliveryFilters && (
+                     <motion.div 
+                       key="order-delivery-filters"
+                       initial={{ height: 0, opacity: 0, marginTop: 0 }} 
+                       animate={{ height: 'auto', opacity: 1, marginTop: 8 }} 
+                       exit={{ height: 0, opacity: 0, marginTop: 0 }} 
+                       transition={{ duration: 0.2 }}
+                       className="overflow-hidden"
+                     >
+                       <div className="flex gap-2 overflow-x-auto pb-2 pt-1 custom-scrollbar">
+                         <button 
+                           onClick={() => setOrderDeliveryFilter([])} 
+                           className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${orderDeliveryFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}
+                         >
+                           全部
+                         </button>
+                         {DELIVERY_METHODS.map(m => {
+                           const isSelected = orderDeliveryFilter.includes(m);
+                           return (
+                             <button 
+                               key={m} 
+                               onClick={() => {
+                                  if (isSelected) setOrderDeliveryFilter(orderDeliveryFilter.filter(x => x !== m));
+                                  else setOrderDeliveryFilter([...orderDeliveryFilter, m]);
+                               }} 
+                               className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
+                               style={{ backgroundColor: isSelected ? COLORS.primary : '' }}
+                             >
+                               {m}
+                             </button>
+                           );
+                         })}
+                       </div>
+                     </motion.div>
+                   )}
+                 </AnimatePresence>
+               </motion.div>
             </div>
              {/* ... (Orders List - same logic as before but using toast handlers) */}
              <div className="space-y-3">
               <div className="flex items-center justify-between px-2 mb-2">
                 <h2 className="text-sm font-bold text-morandi-pebble flex items-center gap-2 uppercase tracking-widest"><Layers className="w-4 h-4" /> 配送列表 [{selectedDate}] ({Object.keys(groupedOrders).length} 家)</h2>
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
-                  <button 
-                    onClick={() => setViewMode('list')}
-                    className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    <List className="w-4 h-4" />
-                  </button>
-                  <button 
-                    onClick={() => setViewMode('grid')}
-                    className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    <Grid className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
-              <motion.div variants={containerVariants} initial="hidden" animate="show" className={viewMode === 'grid' ? "grid grid-cols-3 gap-2 p-1.5" : ""}>
+              <motion.div variants={containerVariants} initial="hidden" animate="show" className={viewMode === 'grid' ? "grid grid-cols-2 sm:grid-cols-3 gap-2 p-1.5" : ""}>
               {viewMode === 'grid' ? (
                 Object.keys(groupedOrders).length > 0 ? (
                   Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => (
@@ -1149,6 +1218,30 @@ const App: React.FC = () => {
               )}
               </motion.div>
             </div>
+            {/* 貼上並修改 className 成為 FAB */}
+            <motion.button 
+              whileTap={buttonTap} 
+              whileHover={buttonHover} 
+              onClick={() => { 
+                setEditingOrderId(null); 
+                setOrderForm({
+                  customerType: 'existing',
+                  customerId: '',
+                  customerName: '',
+                  deliveryTime: '',
+                  deliveryMethod: '',
+                  trip: '',
+                  items: [{ productId: '', quantity: 10, unit: '斤' }],
+                  note: '',
+                  date: selectedDate
+                });
+                setIsAddingOrder(true); 
+              }} 
+              // 👇 這裡換成 FAB 專屬的 Tailwind 樣式
+              className="fixed bottom-24 right-6 z-50 w-14 h-14 rounded-full text-white shadow-2xl shadow-morandi-blue/40 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"
+            >
+              <Plus className="w-8 h-8" />
+            </motion.button>
           </motion.div>
         )}
         
@@ -1156,7 +1249,7 @@ const App: React.FC = () => {
         {activeTab === 'customers' && (
            <motion.div key="customers" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="relative">
             <div className="sticky top-0 z-20 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
-              <div className="flex justify-between items-center mb-3"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2><motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { setCustomerForm({ name: '', phone: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div>
+              <div className="flex justify-between items-center mb-3"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2><motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => { setCustomerForm({ name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div>
               <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="搜尋店家名稱..." className="w-full pl-10 pr-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} /></div>
             </div>
             <motion.div variants={containerVariants} initial="hidden" animate="show" className="pt-4">
@@ -1165,11 +1258,31 @@ const App: React.FC = () => {
                return (
                   <motion.div variants={itemVariants} key={c.id} className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-200 mb-4 hover:shadow-md transition-all relative overflow-hidden">
                     {hasOrderToday && <div className="absolute top-0 right-0 bg-amber-100 text-amber-700 text-[9px] font-bold px-3 py-1 rounded-bl-xl z-10">今日已下單</div>}
-                    <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{c.name.charAt(0)}</div><div><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p></div></div><div className="flex flex-col items-end gap-1 mt-2"><div className="flex gap-1">{WEEKDAYS.map(d => (<div key={d.value} className={`w-4 h-4 rounded-full text-[8px] flex items-center justify-center font-bold ${c.offDays?.includes(d.value) ? 'bg-rose-100 text-rose-400' : 'bg-gray-50 text-gray-300'}`}>{d.label}</div>))}</div>{c.holidayDates && c.holidayDates.length > 0 && <span className="text-[8px] font-bold text-rose-300">+{c.holidayDates.length} 特定休</span>}{c.priceList && c.priceList.length > 0 && <span className="text-[8px] font-bold text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded mt-1">已設 {c.priceList.length} 種單價</span>}</div></div>
+                    <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{c.name.charAt(0)}</div><div><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p>{(c.address || c.coordinates) && (() => {
+  const targetUrl = c.coordinates ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.coordinates)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address || '')}`;
+  const tooltipText = c.coordinates ? "開啟精準地圖連結" : "在 Google 地圖上搜尋此地址";
+
+  return (
+    <div className="mt-1.5">
+      <a 
+        href={targetUrl} 
+        target="_blank" 
+        rel="noopener noreferrer" 
+        title={tooltipText}
+        className="group inline-flex items-start gap-1.5 px-1.5 py-1 -ml-1.5 rounded-md transition-all hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-100"
+      >
+        <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400 group-hover:text-blue-500 transition-colors mt-0.5" />
+        <span className="text-xs text-slate-500 group-hover:text-blue-600 transition-colors font-medium tracking-wide">
+          {c.address || '查看 Google 地圖'}
+        </span>
+      </a>
+    </div>
+  );
+})()}</div></div><div className="flex flex-col items-end gap-1 mt-2"><div className="flex gap-1">{WEEKDAYS.map(d => (<div key={d.value} className={`w-4 h-4 rounded-full text-[8px] flex items-center justify-center font-bold ${c.offDays?.includes(d.value) ? 'bg-rose-100 text-rose-400' : 'bg-gray-50 text-gray-300'}`}>{d.label}</div>))}</div>{c.holidayDates && c.holidayDates.length > 0 && <span className="text-[8px] font-bold text-rose-300">+{c.holidayDates.length} 特定休</span>}{c.priceList && c.priceList.length > 0 && <span className="text-[8px] font-bold text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded mt-1">已設 {c.priceList.length} 種單價</span>}</div></div>
                     <div className="space-y-3 mb-4 bg-gray-50/60 p-4 rounded-[24px] border border-gray-100"><div className="flex justify-between"><div className="text-[11px] font-bold text-slate-700 tracking-wide">配送時間:{formatTimeDisplay(c.deliveryTime)}</div><div className="flex gap-1">{c.defaultTrip && <div className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">{c.defaultTrip}</div>}{c.deliveryMethod && <div className="text-[11px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-lg border border-gray-100">{c.deliveryMethod}</div>}{c.paymentTerm && (<div className="text-[11px] font-bold text-morandi-blue bg-white px-2 py-0.5 rounded-lg border border-gray-100">{ORDERING_HABITS.find(t => t.value === c.paymentTerm)?.label}</div>)}</div></div>{c.defaultItems && c.defaultItems.length > 0 ? (<div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-200/50">{c.defaultItems.map((di, idx) => { const p = products.find(prod => prod.id === di.productId); return (<div key={idx} className="bg-white px-2 py-1 rounded-xl text-[10px] border border-gray-200 flex items-center gap-1 shadow-sm"><span className="font-bold text-slate-700">{p?.name || '未知品項'}</span><span className="font-extrabold text-morandi-blue">{di.quantity}{di.unit || p?.unit || '斤'}</span></div>); })}</div>) : (<div className="text-[10px] text-gray-400 font-medium italic pt-2 border-t border-gray-200/50 tracking-wide">尚未設定預設品項</div>)}</div>
                     <div className="flex gap-2">
                        <motion.button whileTap={buttonTap} onClick={() => handleCreateOrderFromCustomer(c)} className="flex-[2] py-3 bg-morandi-blue rounded-2xl text-white font-bold text-xs flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors shadow-md shadow-morandi-blue/20"><ClipboardList className="w-3.5 h-3.5" /> 建立訂單</motion.button>
-                       <motion.button whileTap={buttonTap} onClick={() => { setCustomerForm({ ...c, deliveryTime: formatTimeForInput(c.deliveryTime), paymentTerm: c.paymentTerm || 'regular', defaultTrip: c.defaultTrip || '' }); setIsEditingCustomer(c.id); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="flex-1 py-3 bg-gray-50 rounded-2xl text-slate-700 font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"><Edit2 className="w-3.5 h-3.5" /> 編輯</motion.button>
+                       <motion.button whileTap={buttonTap} onClick={() => { setCustomerForm({ ...c, address: c.address || '', coordinates: c.coordinates || '', deliveryTime: formatTimeForInput(c.deliveryTime), paymentTerm: c.paymentTerm || 'regular', defaultTrip: c.defaultTrip || '' }); setIsEditingCustomer(c.id); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="flex-1 py-3 bg-gray-50 rounded-2xl text-slate-700 font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"><Edit2 className="w-3.5 h-3.5" /> 編輯</motion.button>
                        <motion.button whileTap={buttonTap} onClick={() => handleDeleteCustomer(c.id)} className="px-4 py-3 bg-gray-50 rounded-2xl text-morandi-pink hover:text-rose-500 transition-colors border border-gray-100"><Trash2 className="w-4 h-4" /></motion.button>
                     </div>
                   </motion.div>
@@ -1358,6 +1471,20 @@ const App: React.FC = () => {
                           <h4 className="text-sm font-bold flex items-center gap-2">
                             {trip}
                             <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded-full">{tripOrders.length}</span>
+                            
+                            {/* 新增：Google 導航按鈕 */}
+                            {tripOrders.length > 0 && (
+                              <button 
+                                onClick={() => handleNavigateTrip(tripOrders)} 
+                                className="ml-2 p-1.5 bg-blue-500 text-white hover:bg-blue-600 rounded-full shadow-sm transition-all flex items-center gap-1"
+                                title="Google 路線導航"
+                              >
+                                <Navigation className="w-3.5 h-3.5" />
+                                <span className="text-[10px] font-bold pr-1">導航</span>
+                              </button>
+                            )}
+
+                            {/* 下面是你原本的刪除趟數按鈕 */}
                             {trip !== '未分配' && (
                               <button onClick={() => handleDeleteTrip(trip)} className="ml-1 p-1 text-current opacity-50 hover:opacity-100 hover:bg-white/50 rounded-full transition-all">
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1543,22 +1670,101 @@ const App: React.FC = () => {
              <div className="px-1"><div className="flex items-center gap-2 mb-4"><button onClick={() => setActiveTab('orders')} className="p-2 bg-white rounded-xl shadow-sm border border-slate-200 text-morandi-pebble"><ChevronLeft className="w-5 h-5"/></button><h2 className="text-xl font-extrabold text-morandi-charcoal tracking-tight">工作小抄</h2></div>
               <div className="space-y-3 mb-4"><div className="relative"><Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" /><input type="text" placeholder="篩選特定店家..." className="w-full pl-12 pr-6 py-4 bg-white rounded-[24px] border border-slate-100 shadow-sm text-slate-800 font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300 text-sm" value={workCustomerFilter} onChange={(e) => setWorkCustomerFilter(e.target.value)} />{workCustomerFilter && <button onClick={() => setWorkCustomerFilter('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500"><X className="w-4 h-4" /></button>}</div>
               <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar mb-2"><button onClick={() => setWorkDeliveryMethodFilter([])} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${workDeliveryMethodFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部方式</button>{DELIVERY_METHODS.map(m => { const isSelected = workDeliveryMethodFilter.includes(m); return (<button key={m} onClick={() => { if (isSelected) { setWorkDeliveryMethodFilter(workDeliveryMethodFilter.filter(x => x !== m)); } else { setWorkDeliveryMethodFilter([...workDeliveryMethodFilter, m]); } }} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: isSelected ? COLORS.primary : '' }}>{m}</button>); })}</div>
-              <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-                <button onClick={() => setWorkCategoryFilter('all')} className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${workCategoryFilter === 'all' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部種類</button>
-                {PRODUCT_CATEGORIES.map(cat => {
-                    const isSelected = workCategoryFilter === cat.id;
+              {/* 麵種進階篩選區塊 */}
+              <div className="space-y-2 mb-4">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-xs font-bold text-morandi-pebble uppercase tracking-widest">麵種篩選</span>
+                  {workProductFilter.size > 0 && (
+                    <button onClick={() => setWorkProductFilter(new Set())} className="text-xs text-morandi-blue font-bold bg-blue-50 px-2 py-1 rounded-md transition-colors hover:bg-blue-100">清除全部</button>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {PRODUCT_CATEGORIES.map(cat => {
+                    // 找出屬於這個類別的所有產品
+                    const catProducts = products.filter(p => (p.category || 'other') === cat.id);
+                    if (catProducts.length === 0) return null;
+                    
+                    const isExpanded = expandedFilterCats.has(cat.id);
+                    const selectedCount = catProducts.filter(p => workProductFilter.has(p.id)).length;
+                    const isAllSelected = selectedCount === catProducts.length && catProducts.length > 0;
+
                     return (
-                        <button
-                            key={cat.id}
-                            onClick={() => setWorkCategoryFilter(isSelected ? 'all' : cat.id)}
-                            className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border flex items-center gap-1.5 ${isSelected ? 'border-transparent shadow-sm' : 'bg-white text-gray-400 border-gray-200'}`}
-                            style={{ backgroundColor: isSelected ? cat.color : '', color: isSelected ? '#3E3C3A' : '' }}
+                      <div key={cat.id} className="bg-white rounded-[16px] border border-slate-200 overflow-hidden shadow-sm">
+                        {/* 類別標題 (點擊展開/收合) */}
+                        <div 
+                          className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                          onClick={() => {
+                            const newExpanded = new Set(expandedFilterCats);
+                            if (isExpanded) newExpanded.delete(cat.id);
+                            else newExpanded.add(cat.id);
+                            setExpandedFilterCats(newExpanded);
+                          }}
                         >
-                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color, border: '1px solid rgba(0,0,0,0.1)' }}></span>
-                            {cat.label}
-                        </button>
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color, border: '1px solid rgba(0,0,0,0.1)' }}></span>
+                            <span className="font-bold text-sm text-slate-700">{cat.label}</span>
+                            {selectedCount > 0 && (
+                              <span className="bg-morandi-blue text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
+                                已選 {selectedCount}
+                              </span>
+                            )}
+                          </div>
+                          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        </div>
+                        
+                        {/* 展開的特定麵種清單 */}
+                        <AnimatePresence>
+                          {isExpanded && (
+                            <motion.div 
+                              initial={{ height: 0, opacity: 0 }} 
+                              animate={{ height: 'auto', opacity: 1 }} 
+                              exit={{ height: 0, opacity: 0 }}
+                              className="overflow-hidden"
+                            >
+                              <div className="p-3 pt-0 border-t border-slate-100 bg-slate-50/50 flex flex-wrap gap-2">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const newFilter = new Set(workProductFilter);
+                                    if (isAllSelected) {
+                                      catProducts.forEach(p => newFilter.delete(p.id)); // 取消全選
+                                    } else {
+                                      catProducts.forEach(p => newFilter.add(p.id)); // 全選
+                                    }
+                                    setWorkProductFilter(newFilter);
+                                  }}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${isAllSelected ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+                                >
+                                  {isAllSelected ? '取消全選' : '全選此類'}
+                                </button>
+                                
+                                {catProducts.map(p => {
+                                  const isSelected = workProductFilter.has(p.id);
+                                  return (
+                                    <button
+                                      key={p.id}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const newFilter = new Set(workProductFilter);
+                                        if (isSelected) newFilter.delete(p.id);
+                                        else newFilter.add(p.id);
+                                        setWorkProductFilter(newFilter);
+                                      }}
+                                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-1 ${isSelected ? 'bg-morandi-blue text-white border-morandi-blue shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-morandi-blue/50'}`}
+                                    >
+                                      {isSelected && <Check className="w-3 h-3" />}
+                                      {p.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
                     );
-                })}
+                  })}
+                </div>
               </div>
               </div>
               <div className="mb-6"><WorkCalendar selectedDate={workDates} onSelect={setWorkDates} orders={orders} /></div>
@@ -1692,6 +1898,8 @@ const App: React.FC = () => {
               setIsOrderDatePickerOpen(false);
             }} 
             onClose={() => setIsOrderDatePickerOpen(false)} 
+            offDays={customers.find(c => c.name === orderForm.customerName)?.offDays || []}
+            holidayDates={customers.find(c => c.name === orderForm.customerName)?.holidayDates || []}
           />
         )}
       </AnimatePresence>
@@ -1713,9 +1921,23 @@ const App: React.FC = () => {
                 <button 
                   type="button"
                   onClick={() => setIsOrderDatePickerOpen(true)}
-                  className="w-full pl-12 pr-5 py-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all text-left"
+                  className="w-full pl-12 pr-5 py-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all text-left flex items-center justify-between"
                 >
-                  {orderForm.date || selectedDate}
+                  <div className="flex items-center gap-2">
+                    <span>{orderForm.date || selectedDate}</span>
+                    {(() => {
+                      const c = customers.find(x => x.name === orderForm.customerName);
+                      if (!c) return null;
+                      const dateObj = new Date(orderForm.date || selectedDate);
+                      const dayOfWeek = dateObj.getDay();
+                      const isHoliday = (c.offDays || []).includes(dayOfWeek) || (c.holidayDates || []).includes(orderForm.date || selectedDate);
+                      if (isHoliday) {
+                        return <span className="bg-rose-100 text-rose-500 text-[10px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap">此日公休</span>;
+                      }
+                      return null;
+                    })()}
+                  </div>
+                  <ChevronDown className="w-4 h-4 text-gray-400" />
                 </button>
               </div>
             </div>
@@ -1780,7 +2002,24 @@ const App: React.FC = () => {
           <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => setIsEditingCustomer(null)} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">店家詳細資料</h2><motion.button whileTap={buttonTap} onClick={handleSaveCustomer} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : '儲存'}</motion.button></div>
           <div className="p-6 space-y-6 overflow-y-auto pb-10">
             {/* ... Customer Form Fields ... */}
-             <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">基本資訊</label><div className="space-y-4"><input type="text" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="店名" value={customerForm.name || ''} onChange={(e) => setCustomerForm({...customerForm, name: e.target.value})} /><input type="tel" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="電話" value={customerForm.phone || ''} onChange={(e) => setCustomerForm({...customerForm, phone: e.target.value})} /></div></div>
+             <div className="space-y-2">
+               <label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">基本資訊</label>
+               <div className="space-y-4">
+                 <input type="text" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="店名" value={customerForm.name || ''} onChange={(e) => setCustomerForm({...customerForm, name: e.target.value})} />
+                 <input type="tel" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="電話" value={customerForm.phone || ''} onChange={(e) => setCustomerForm({...customerForm, phone: e.target.value})} />
+                 
+                 <div className="p-4 bg-slate-50 rounded-[20px] border border-slate-100 space-y-3">
+                   <input type="text" className="w-full p-4 bg-white rounded-[16px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="請輸入完整地址" value={customerForm.address || ''} onChange={(e) => setCustomerForm({...customerForm, address: e.target.value})} />
+                   <div>
+                     <input type="text" className="w-full p-4 bg-white rounded-[16px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="例如: 25.033964, 121.564468" value={customerForm.coordinates || ''} onChange={(e) => setCustomerForm({...customerForm, coordinates: e.target.value})} />
+                     <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed flex items-start gap-1">
+                       <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                       💡 提示：在 Google 地圖上對著地點按右鍵，即可點擊複製座標。
+                     </p>
+                   </div>
+                 </div>
+               </div>
+             </div>
              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">配送與習慣</label><div className="space-y-4">
                   <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 pl-1">配送方式</label><select value={customerForm.deliveryMethod || ''} onChange={(e) => setCustomerForm({...customerForm, deliveryMethod: e.target.value})} className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all appearance-none"><option value="">選擇配送方式...</option>{DELIVERY_METHODS.map(method => (<option key={method} value={method}>{method}</option>))}</select></div>
                   
@@ -2131,15 +2370,6 @@ const App: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Voice Input FAB - Global */}
-      <motion.button 
-        whileTap={buttonTap} 
-        whileHover={buttonHover} 
-        onClick={() => setIsVoiceModalOpen(true)} 
-        className="absolute bottom-[90px] right-4 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-colors flex items-center justify-center">
-          <Mic className="w-6 h-6" />
-      </motion.button>
 
       {/* 底部抽屜選單 (Bottom Sheet) */}
       <AnimatePresence>

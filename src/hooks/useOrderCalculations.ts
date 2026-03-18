@@ -13,7 +13,7 @@ interface UseOrderCalculationsProps {
   scheduleDeliveryMethodFilter: string[];
   workDates: string[];
   workCustomerFilter: string;
-  workCategoryFilter: string;
+  workProductFilter: Set<string>;
   workDeliveryMethodFilter: string[];
   customerSearch: string;
   settlementTarget: { name: string; allOrderIds: string[] } | null;
@@ -33,7 +33,7 @@ export const useOrderCalculations = ({
   scheduleDeliveryMethodFilter,
   workDates,
   workCustomerFilter,
-  workCategoryFilter,
+  workProductFilter,
   workDeliveryMethodFilter,
   customerSearch,
   settlementTarget,
@@ -322,6 +322,12 @@ export const useOrderCalculations = ({
 
     flatList.forEach(item => { 
       const product = products.find(p => p.name === item.name); 
+      
+      // 👇 新增這段：如果有設定特定麵種篩選，且該產品不在篩選名單內，則跳過不計算
+      if (workProductFilter.size > 0 && product && !workProductFilter.has(product.id)) {
+        return;
+      }
+
       const catId = product?.category || 'other'; 
       if (groups[catId]) groups[catId].push(item); 
       else groups['other'].push(item); 
@@ -332,11 +338,9 @@ export const useOrderCalculations = ({
       items: groups[cat.id], 
       totalWeight: groups[cat.id].reduce((sum, i) => sum + i.totalQty, 0) 
     })).filter(g => g.items.length > 0);
-
-    if (workCategoryFilter !== 'all') return result.filter(group => group.id === workCategoryFilter);
     
     return result;
-  }, [orders, workDates, workCustomerFilter, workCategoryFilter, workDeliveryMethodFilter, products, customers]);
+  }, [orders, workDates, workCustomerFilter, workProductFilter, workDeliveryMethodFilter, products, customers]);
 
   return {
     orderSummary,

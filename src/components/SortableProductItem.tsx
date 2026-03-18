@@ -27,9 +27,15 @@ export const SortableProductItem: React.FC<SortableProductItemProps> = ({ produc
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         whileDrag={{ scale: 1.05, boxShadow: "0px 10px 20px rgba(0,0,0,0.1)", zIndex: 10 }}
-        className="bg-white rounded-[24px] p-5 shadow-sm border border-slate-200 flex justify-between items-center mb-4 active:cursor-grabbing"
+        className="bg-white rounded-2xl p-3 shadow-sm border border-slate-200 flex justify-between items-center mb-2 active:cursor-grabbing"
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div 
+            onPointerDown={(e) => controls.start(e)}
+            className="p-1 pr-2 text-morandi-pebble/50 cursor-grab active:cursor-grabbing touch-none hover:text-morandi-blue transition-colors"
+          >
+            <GripVertical className="w-5 h-5" />
+          </div>
           <div className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-500 shadow-sm border border-white/50" style={{ backgroundColor: categoryColor }}>
             <Box className="w-5 h-5" />
           </div>
@@ -54,12 +60,6 @@ export const SortableProductItem: React.FC<SortableProductItemProps> = ({ produc
           <motion.button whileTap={buttonTap} onClick={() => onDelete(product.id)} className="p-2 text-rose-100 hover:text-rose-400 transition-colors">
             <Trash2 className="w-4 h-4" />
           </motion.button>
-          <div 
-            onPointerDown={(e) => controls.start(e)}
-            className="p-2 text-morandi-pebble/50 cursor-grab active:cursor-grabbing touch-none hover:text-morandi-blue transition-colors"
-          >
-            <GripVertical className="w-5 h-5" />
-          </div>
         </div>
       </motion.div>
     </Reorder.Item>

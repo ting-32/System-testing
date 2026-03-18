@@ -11,17 +11,32 @@ export const ProductPicker: React.FC<{ isOpen: boolean; onClose: () => void; onS
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
-      const matchCategory = activeCategory === 'all' || (p.category || 'other') === activeCategory;
+      
+      let matchCategory = false;
+      if (activeCategory === 'all') {
+        matchCategory = true;
+      } else if (activeCategory === 'custom') {
+        // 核心邏輯：檢查這個品項 ID 是否存在於該客戶的 customPrices 陣列中
+        matchCategory = customPrices?.some(cp => cp.productId === p.id) ?? false;
+      } else {
+        matchCategory = (p.category || 'other') === activeCategory;
+      }
+      
       return matchSearch && matchCategory;
     });
-  }, [products, search, activeCategory]);
+  }, [products, search, activeCategory, customPrices]); // ⚠️ 重要：必須將 customPrices 加入依賴陣列
 
   useEffect(() => {
     if (isOpen) {
       setSearch('');
-      setActiveCategory('all');
+      // UX 優化：如果有專屬價格，預設選中 'custom'，否則選中 'all'
+      if (customPrices && customPrices.length > 0) {
+        setActiveCategory('custom');
+      } else {
+        setActiveCategory('all');
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, customPrices]); // ⚠️ 重要：必須將 customPrices 加入依賴陣列
 
   return (
     <AnimatePresence>
@@ -39,6 +54,19 @@ export const ProductPicker: React.FC<{ isOpen: boolean; onClose: () => void; onS
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar -mx-2 px-2">
                 <button onClick={() => setActiveCategory('all')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${activeCategory === 'all' ? 'bg-morandi-charcoal text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}>全部</button>
+                {/* 只有當該客戶有專屬價格設定時，才顯示「專屬」標籤 */}
+                {customPrices && customPrices.length > 0 && (
+                  <button 
+                    onClick={() => setActiveCategory('custom')} 
+                    className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border flex items-center gap-1 ${
+                      activeCategory === 'custom' 
+                        ? 'bg-emerald-500 text-white border-transparent shadow-sm' 
+                        : 'bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50'
+                    }`}
+                  >
+                    ✨ 專屬
+                  </button>
+                )}
                 {PRODUCT_CATEGORIES.map(cat => (
                   <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 ${activeCategory === cat.id ? 'border-transparent shadow-sm' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: activeCategory === cat.id ? cat.color : '', color: activeCategory === cat.id ? '#3E3C3A' : '' }}>
                     <span className={`w-2 h-2 rounded-full`} style={{ backgroundColor: cat.color, border: '1px solid rgba(0,0,0,0.1)' }}></span>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { X, ChevronDown, Plus, Trash2, Info } from 'lucide-react';
 import { Customer, Product } from '../../types';
 import { WEEKDAYS, DELIVERY_METHODS, ORDERING_HABITS, UNITS } from '../../constants';
 import { buttonTap } from '../animations';
@@ -36,7 +36,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setCustomerForm(initialData || {
-        name: '', phone: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular'
+        name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular'
       });
       setTempPriceProdId('');
       setTempPriceValue('');
@@ -61,6 +61,17 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
            <div className="space-y-4">
              <input type="text" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="店名" value={customerForm.name || ''} onChange={(e) => setCustomerForm({...customerForm, name: e.target.value})} />
              <input type="tel" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="電話" value={customerForm.phone || ''} onChange={(e) => setCustomerForm({...customerForm, phone: e.target.value})} />
+             
+             <div className="p-4 bg-slate-50 rounded-[20px] border border-slate-100 space-y-3">
+               <input type="text" className="w-full p-4 bg-white rounded-[16px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="請輸入完整地址" value={customerForm.address || ''} onChange={(e) => setCustomerForm({...customerForm, address: e.target.value})} />
+               <div>
+                 <input type="text" className="w-full p-4 bg-white rounded-[16px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="例如: 25.033964, 121.564468" value={customerForm.coordinates || ''} onChange={(e) => setCustomerForm({...customerForm, coordinates: e.target.value})} />
+                 <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed flex items-start gap-1">
+                   <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                   💡 提示：在 Google 地圖上對著地點按右鍵，即可點擊複製座標。
+                 </p>
+               </div>
+             </div>
            </div>
          </div>
          <div className="space-y-2">

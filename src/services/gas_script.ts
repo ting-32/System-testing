@@ -255,6 +255,8 @@ function getData(startDateStr) {
     id: c.ID || c.id,
     name: c.Name || c.name || c.客戶名稱,
     phone: c.Phone || c.phone || c.電話,
+    address: c.Address || c.address || c.地址 || '',
+    coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
     deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
     defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
     priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
@@ -593,6 +595,9 @@ function reorderProducts(orderedIds) {
 function updateCustomer(data) {
   const sheet = getSheets().CUSTOMERS;
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const addressColIdx = ensureHeader(sheet, "地址");
+  const coordinatesColIdx = ensureHeader(sheet, "座標位置");
+  
   const values = sheet.getDataRange().getValues();
   let rowIndex = -1;
   const targetId = String(data.id).trim();
@@ -609,7 +614,7 @@ function updateCustomer(data) {
   
   const newLastUpdatedTs = new Date().getTime();
 
-  const rowData = [
+  const baseRowData = [
     data.id,
     data.name,
     data.phone,
@@ -625,9 +630,16 @@ function updateCustomer(data) {
   ];
   
   if (rowIndex > 0) {
-    sheet.getRange(rowIndex, 1, 1, rowData.length).setValues([rowData]);
+    sheet.getRange(rowIndex, 1, 1, baseRowData.length).setValues([baseRowData]);
+    sheet.getRange(rowIndex, addressColIdx + 1).setValue(data.address || '');
+    sheet.getRange(rowIndex, coordinatesColIdx + 1).setValue(data.coordinates || '');
   } else {
-    sheet.appendRow(rowData);
+    const maxCol = Math.max(baseRowData.length, addressColIdx + 1, coordinatesColIdx + 1);
+    const newRow = new Array(maxCol).fill('');
+    for(let i=0; i<baseRowData.length; i++) newRow[i] = baseRowData[i];
+    newRow[addressColIdx] = data.address || '';
+    newRow[coordinatesColIdx] = data.coordinates || '';
+    sheet.appendRow(newRow);
   }
   return true;
 }

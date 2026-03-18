@@ -6,7 +6,10 @@ import { formatDateStr, normalizeDate, safeJsonArray } from '../utils';
 export const useDataSync = (addToast: (msg: string, type: ToastType) => void) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [apiEndpoint, setApiEndpoint] = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('nm_gas_url') || DEFAULT_GAS_URL;
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('nm_gas_url');
+      if (saved && saved !== 'undefined' && saved !== 'null') return saved;
+    }
     return DEFAULT_GAS_URL;
   });
 
@@ -105,6 +108,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
             id: String(c.ID || c.id || ''), 
             name: c.客戶名稱 || c.name || '', 
             phone: c.電話 || c.phone || '', 
+            address: c.地址 || c.address || '',
+            coordinates: c.座標位置 || c.coordinates || c.GoogleMap網址 || c.googleMapUrl || '',
             deliveryTime: c.配送時間 || c.deliveryTime || '', 
             deliveryMethod: c.配送方式 || c.deliveryMethod || '', 
             defaultTrip: c.預設趟數 || c.defaultTrip || '',
