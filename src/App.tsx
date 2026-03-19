@@ -623,6 +623,7 @@ const App: React.FC = () => {
     customers,
     products,
     selectedDate,
+    setSelectedDate,
     apiEndpoint,
     isSaving,
     setIsSaving,
@@ -904,7 +905,7 @@ const App: React.FC = () => {
         onSelect={customerPickerConfig.onSelect} 
         customers={customers}
         orders={orders} // Pass orders here
-        selectedDate={selectedDate} // Pass selected date for filtering open stores
+        selectedDate={orderForm.date || selectedDate} // Pass selected date for filtering open stores
         currentSelectedId={customerPickerConfig.currentSelectedId}
       />
 
@@ -1218,30 +1219,32 @@ const App: React.FC = () => {
               )}
               </motion.div>
             </div>
-            {/* 貼上並修改 className 成為 FAB */}
-            <motion.button 
-              whileTap={buttonTap} 
-              whileHover={buttonHover} 
-              onClick={() => { 
-                setEditingOrderId(null); 
-                setOrderForm({
-                  customerType: 'existing',
-                  customerId: '',
-                  customerName: '',
-                  deliveryTime: '',
-                  deliveryMethod: '',
-                  trip: '',
-                  items: [{ productId: '', quantity: 10, unit: '斤' }],
-                  note: '',
-                  date: selectedDate
-                });
-                setIsAddingOrder(true); 
-              }} 
-              // 👇 這裡換成 FAB 專屬的 Tailwind 樣式
-              className="fixed bottom-24 right-6 z-50 w-14 h-14 rounded-full text-white shadow-2xl shadow-morandi-blue/40 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"
-            >
-              <Plus className="w-8 h-8" />
-            </motion.button>
+            {/* 👇 新增這層外掛容器來限制按鈕位置，使其與 App 寬度一致 */}
+            <div className="fixed bottom-24 left-1/2 -translate-x-1/2 w-full max-w-md pointer-events-none z-50 flex justify-end px-6">
+              <motion.button 
+                whileTap={buttonTap} 
+                whileHover={buttonHover} 
+                onClick={() => { 
+                  setEditingOrderId(null); 
+                  setOrderForm({
+                    customerType: 'existing',
+                    customerId: '',
+                    customerName: '',
+                    deliveryTime: '',
+                    deliveryMethod: '',
+                    trip: '',
+                    items: [{ productId: '', quantity: 10, unit: '斤' }],
+                    note: '',
+                    date: selectedDate
+                  });
+                  setIsAddingOrder(true); 
+                }} 
+                // 👇 修改這裡的 Tailwind 樣式：移除 absolute，改用 flex 排版
+                className="pointer-events-auto w-14 h-14 rounded-full text-white shadow-2xl shadow-morandi-blue/40 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"
+              >
+                <Plus className="w-8 h-8" />
+              </motion.button>
+            </div>
           </motion.div>
         )}
         
@@ -1579,7 +1582,32 @@ const App: React.FC = () => {
         {activeTab === 'finance' && (
            <motion.div key="finance" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
              <div className="px-1">
-               <h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 mb-4 tracking-tight"><Wallet className="w-5 h-5 text-morandi-blue" /> 帳務總覽</h2>
+               <div className="flex justify-between items-center mb-4">
+                 <h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Wallet className="w-5 h-5 text-morandi-blue" /> 帳務總覽</h2>
+                 <motion.button 
+                   whileTap={buttonTap} 
+                   whileHover={buttonHover} 
+                   onClick={() => { 
+                     setEditingOrderId(null); 
+                     setOrderForm({
+                       customerType: 'existing',
+                       customerId: '',
+                       customerName: '',
+                       deliveryTime: '',
+                       deliveryMethod: '',
+                       trip: '',
+                       items: [{ productId: '', quantity: 10, unit: '斤' }],
+                       note: '',
+                       date: selectedDate
+                     });
+                     setIsAddingOrder(true); 
+                   }} 
+                   className="p-2.5 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors flex items-center gap-1.5"
+                 >
+                   <Plus className="w-5 h-5" />
+                   <span className="text-xs font-bold">建立訂單</span>
+                 </motion.button>
+               </div>
                
                {/* Revenue Overview Cards */}
                <div className="grid grid-cols-2 gap-3 mb-6">

@@ -8,6 +8,7 @@ interface UseOrderActionsProps {
   customers: Customer[];
   products: Product[];
   selectedDate: string;
+  setSelectedDate: (date: string) => void;
   apiEndpoint: string;
   isSaving: boolean;
   setIsSaving: (isSaving: boolean) => void;
@@ -40,6 +41,7 @@ export const useOrderActions = ({
   customers,
   products,
   selectedDate,
+  setSelectedDate,
   apiEndpoint,
   isSaving,
   setIsSaving,
@@ -759,6 +761,7 @@ export const useOrderActions = ({
     
     if (orderForm.date && orderForm.date !== selectedDate) {
       addToast(editingOrderId ? `訂單已更新至 ${orderForm.date}` : `訂單已建立至 ${orderForm.date}`, 'success');
+      setSelectedDate(orderForm.date);
     } else {
       addToast(editingOrderId ? '訂單已更新 (同步中...)' : '訂單已建立 (同步中...)', 'success');
     }

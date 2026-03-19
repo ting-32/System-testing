@@ -39,7 +39,7 @@ export const CustomerPicker: React.FC<{ isOpen: boolean; onClose: () => void; on
 
     if (search) {
       const term = search.toLowerCase();
-      list = list.filter(c => c.name.toLowerCase().includes(term) || (c.phone && c.phone.includes(term)));
+      list = list.filter(c => (c.name || '').toLowerCase().includes(term) || String(c.phone || '').includes(term));
     } else {
       list = list.filter(c => c.category === activeTab);
     }
