@@ -5,7 +5,7 @@ export const getStatusStyles = (status: OrderStatus) => {
     case OrderStatus.PAID:
       return {
         cardBg: '#E8F0EB', // 淺豆沙綠 (Light Sage)
-        cardBorder: '#CZDCD4',
+        cardBorder: '#C2DCD4',
         tagBg: '#BCCFC6',
         tagText: '#4A6356',
         iconColor: '#4A6356',
