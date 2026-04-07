@@ -265,6 +265,7 @@ function getData(startDateStr) {
     deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
     paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
     defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
+    autoOrderEnabled: c.自動建單開關 === true || c.自動建單開關 === 'true',
     lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
   }));
 
@@ -597,6 +598,7 @@ function updateCustomer(data) {
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
   const addressColIdx = ensureHeader(sheet, "地址");
   const coordinatesColIdx = ensureHeader(sheet, "座標位置");
+  const autoOrderColIdx = ensureHeader(sheet, "自動建單開關");
   
   const values = sheet.getDataRange().getValues();
   let rowIndex = -1;
@@ -633,12 +635,14 @@ function updateCustomer(data) {
     sheet.getRange(rowIndex, 1, 1, baseRowData.length).setValues([baseRowData]);
     sheet.getRange(rowIndex, addressColIdx + 1).setValue(data.address || '');
     sheet.getRange(rowIndex, coordinatesColIdx + 1).setValue(data.coordinates || '');
+    sheet.getRange(rowIndex, autoOrderColIdx + 1).setValue(data.autoOrderEnabled ? 'true' : 'false');
   } else {
-    const maxCol = Math.max(baseRowData.length, addressColIdx + 1, coordinatesColIdx + 1);
+    const maxCol = Math.max(baseRowData.length, addressColIdx + 1, coordinatesColIdx + 1, autoOrderColIdx + 1);
     const newRow = new Array(maxCol).fill('');
     for(let i=0; i<baseRowData.length; i++) newRow[i] = baseRowData[i];
     newRow[addressColIdx] = data.address || '';
     newRow[coordinatesColIdx] = data.coordinates || '';
+    newRow[autoOrderColIdx] = data.autoOrderEnabled ? 'true' : 'false';
     sheet.appendRow(newRow);
   }
   return true;
@@ -714,4 +718,82 @@ function deleteProduct(data) {
     }
   }
   return false;
+}
+
+function safeJsonArray(val) {
+  if (!val) return [];
+  if (typeof val === 'string') {
+    try { return JSON.parse(val); } catch(e) { return []; }
+  }
+  return Array.isArray(val) ? val : [];
+}
+
+function generateTomorrowDefaultOrders() {
+  const sheets = getSheets();
+  const orderSheet = sheets.ORDERS;
+  
+  const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const today = new Date();
+  const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+  const tomorrowStr = Utilities.formatDate(tomorrow, timeZone, "yyyy-MM-dd");
+  const tomorrowDayOfWeek = tomorrow.getDay(); 
+
+  const customers = getData().customers;
+  // --- 新增以下這段 ---
+  const products = getData().products;
+  const productMap = {};
+  products.forEach(p => {
+    productMap[p.id] = p.name;
+  });
+  // -------------------
+  const newOrderRows = [];
+  const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
+  const lastUpdatedTs = new Date().getTime();
+
+  const lastUpdatedColIdx = ensureHeader(orderSheet, "LastUpdated");
+  const tripColIdx = ensureHeader(orderSheet, "Trip");
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx) + 1;
+  if (orderSheet.getMaxColumns() < maxCol) {
+    orderSheet.insertColumnsAfter(orderSheet.getMaxColumns(), maxCol - orderSheet.getMaxColumns());
+  }
+
+  customers.forEach(c => {
+    const isAutoEnabled = c.autoOrderEnabled;
+    if (!isAutoEnabled) return; 
+
+    const defaultItems = typeof c.defaultItems === 'string' ? safeJsonArray(c.defaultItems) : (c.defaultItems || []);
+    if (!defaultItems || defaultItems.length === 0) return;
+    
+    const offDays = typeof c.offDays === 'string' ? safeJsonArray(c.offDays) : (c.offDays || []);
+    if (offDays.includes(tomorrowDayOfWeek)) return;
+    
+    const holidayDates = typeof c.holidayDates === 'string' ? safeJsonArray(c.holidayDates) : (c.holidayDates || []);
+    if (holidayDates.includes(tomorrowStr)) return;
+
+    const orderId = "AUTO-" + Utilities.formatDate(tomorrow, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
+
+    defaultItems.forEach(item => {
+      const row = new Array(maxCol).fill("");
+      row[0] = timestamp;
+      row[1] = orderId;
+      row[2] = c.name;
+      row[3] = tomorrowStr;
+      row[4] = c.deliveryTime || "08:00";
+      row[5] = productMap[item.productId] || item.productName || item.productId;
+      row[6] = item.quantity || 1;
+      row[7] = "🤖 系統自動生成";
+      row[8] = "PENDING";
+      row[9] = c.deliveryMethod || "";
+      row[10] = item.unit || "斤";
+      row[lastUpdatedColIdx] = lastUpdatedTs;
+      row[tripColIdx] = c.defaultTrip || "";
+      
+      newOrderRows.push(row);
+    });
+  });
+
+  if (newOrderRows.length > 0) {
+    const lastRow = orderSheet.getLastRow();
+    orderSheet.getRange(lastRow + 1, 1, newOrderRows.length, maxCol).setValues(newOrderRows);
+  }
 }

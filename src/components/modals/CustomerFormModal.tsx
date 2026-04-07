@@ -36,7 +36,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setCustomerForm(initialData || {
-        name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular'
+        name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular', autoOrderEnabled: false
       });
       setTempPriceProdId('');
       setTempPriceValue('');
@@ -89,6 +89,23 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                 <select value={customerForm.paymentTerm || 'regular'} onChange={(e) => setCustomerForm({...customerForm, paymentTerm: e.target.value as any})} className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all appearance-none">
                   {ORDERING_HABITS.map(habit => (<option key={habit.value} value={habit.value}>{habit.label}</option>))}
                 </select>
+              </div>
+              <div className="flex items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                <div>
+                  <label className="font-bold text-slate-700 block text-sm">自動產生預設訂單</label>
+                  <span className="text-xs text-gray-400">每日半夜自動依據預設品項建立明日訂單</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomerForm({ ...customerForm, autoOrderEnabled: !customerForm.autoOrderEnabled })}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    customerForm.autoOrderEnabled ? 'bg-emerald-500' : 'bg-gray-200'
+                  }`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    customerForm.autoOrderEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`} />
+                </button>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-gray-400 pl-1">配送時間</label>

@@ -60,7 +60,7 @@ export const useDataManagement = ({
       }
     }
 
-    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: (customerForm.name || '').trim(), phone: (customerForm.phone || '').trim(), address: (customerForm.address || '').trim(), coordinates: (customerForm.coordinates || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '' }; 
+    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: (customerForm.name || '').trim(), phone: (customerForm.phone || '').trim(), address: (customerForm.address || '').trim(), coordinates: (customerForm.coordinates || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '', autoOrderEnabled: customerForm.autoOrderEnabled || false }; 
     
     // Backup old list for revert
     const previousCustomers = [...customers];
