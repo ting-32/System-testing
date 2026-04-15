@@ -60,6 +60,26 @@ export const getTomorrowDate = () => {
   return formatDateStr(d);
 };
 
+export const getUpcomingHolidays = (offDays: number[], specificHolidays: string[]) => {
+  const upcoming = new Set([...specificHolidays]);
+  const today = new Date();
+  
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(today.getTime() + i * 24 * 60 * 60 * 1000);
+    if (offDays.includes(d.getDay())) {
+      const dateStr = formatDateStr(d);
+      upcoming.add(dateStr);
+    }
+  }
+  
+  return Array.from(upcoming).sort();
+};
+
+export const isDateInOffDays = (dateStr: string, offDays: number[]) => {
+  const d = new Date(dateStr);
+  return offDays.includes(d.getDay());
+};
+
 export const getSmartDefaultDate = (): string => {
   const now = new Date();
   const taipeiTimeStr = now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' });

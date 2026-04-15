@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Customer, Product, OrderItem, ToastType } from '../types';
 import { formatDateStr, formatTimeForInput } from '../utils';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 interface UseVoiceAssistantProps {
   customers: Customer[];

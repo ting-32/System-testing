@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo } from 'framer-motion';
 import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';

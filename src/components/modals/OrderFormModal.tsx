@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { X, ChevronDown, Plus, Trash2, Calculator, History } from 'lucide-react';
 import { Customer, Product, Order, OrderItem } from '../../types';
 import { UNITS, DELIVERY_METHODS } from '../../constants';

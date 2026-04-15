@@ -734,9 +734,31 @@ function generateTomorrowDefaultOrders() {
   
   const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
   const today = new Date();
-  const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-  const tomorrowStr = Utilities.formatDate(tomorrow, timeZone, "yyyy-MM-dd");
-  const tomorrowDayOfWeek = tomorrow.getDay(); 
+  
+  // 將目標日期改為「當天」
+  const targetDateStr = Utilities.formatDate(today, timeZone, "yyyy-MM-dd");
+  const targetDayOfWeek = today.getDay(); 
+
+  // ==========================================
+  // 👇 新增的第 1 段：建立防呆檢查名單 👇
+  // ==========================================
+  const existingOrders = orderSheet.getDataRange().getValues();
+  const alreadyGeneratedCustomers = new Set();
+  
+  // 從第 2 列開始迴圈 (跳過標題列)
+  for (let i = 1; i < existingOrders.length; i++) {
+    const rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
+    const rowCustomer = existingOrders[i][2]; // 第 3 欄 (Index 2) 是客戶名稱
+    const rowNote = existingOrders[i][7]; // 第 8 欄 (Index 7) 是備註
+    
+    // 如果日期是今天，且備註包含「🤖 系統自動生成」
+    if (rowDate === targetDateStr && String(rowNote).includes("🤖 系統自動生成")) {
+      alreadyGeneratedCustomers.add(rowCustomer); // 將客戶名稱加入已建單名單
+    }
+  }
+  // ==========================================
+  // 👆 第 1 段結束 👆
+  // ==========================================
 
   const customers = getData().customers;
   // --- 新增以下這段 ---
@@ -761,23 +783,33 @@ function generateTomorrowDefaultOrders() {
     const isAutoEnabled = c.autoOrderEnabled;
     if (!isAutoEnabled) return; 
 
+    // ==========================================
+    // 👇 新增的第 2 段：攔截重複建單 👇
+    // ==========================================
+    if (alreadyGeneratedCustomers.has(c.name)) {
+      return; // 如果這間店今天已經有自動訂單了，就直接跳過，不往下執行
+    }
+    // ==========================================
+    // 👆 第 2 段結束 👆
+    // ==========================================
+
     const defaultItems = typeof c.defaultItems === 'string' ? safeJsonArray(c.defaultItems) : (c.defaultItems || []);
     if (!defaultItems || defaultItems.length === 0) return;
     
     const offDays = typeof c.offDays === 'string' ? safeJsonArray(c.offDays) : (c.offDays || []);
-    if (offDays.includes(tomorrowDayOfWeek)) return;
+    if (offDays.includes(targetDayOfWeek)) return;
     
     const holidayDates = typeof c.holidayDates === 'string' ? safeJsonArray(c.holidayDates) : (c.holidayDates || []);
-    if (holidayDates.includes(tomorrowStr)) return;
+    if (holidayDates.includes(targetDateStr)) return;
 
-    const orderId = "AUTO-" + Utilities.formatDate(tomorrow, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
+    const orderId = "AUTO-" + Utilities.formatDate(today, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
 
     defaultItems.forEach(item => {
       const row = new Array(maxCol).fill("");
       row[0] = timestamp;
       row[1] = orderId;
       row[2] = c.name;
-      row[3] = tomorrowStr;
+      row[3] = targetDateStr;
       row[4] = c.deliveryTime || "08:00";
       row[5] = productMap[item.productId] || item.productName || item.productId;
       row[6] = item.quantity || 1;

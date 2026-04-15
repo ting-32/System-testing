@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { Customer, Product, Order, OrderStatus, OrderItem, ToastType } from '../types';
+import { Customer, Product, Order, OrderStatus, ToastType } from '../types';
 import { formatTimeForInput, formatTimeDisplay } from '../utils';
 
 interface UseOrderActionsProps {
@@ -53,7 +53,6 @@ export const useOrderActions = ({
   quickAddData,
   setQuickAddData,
   groupedOrders,
-  orderSummary,
   saveOrderToCloud,
   setConflictData,
   setPendingData,

@@ -2,10 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { WEEKDAYS } from '../constants';
-import { formatDateStr } from '../utils';
+import { formatDateStr, isDateInOffDays } from '../utils';
 import { buttonTap } from './animations';
 
-export const HolidayCalendar: React.FC<{ holidays: string[]; onToggle: (dateStr: string) => void; onClose: () => void; storeName: string; }> = ({ holidays, onToggle, onClose, storeName }) => {
+export const HolidayCalendar: React.FC<{ holidays: string[]; offDays?: number[]; onToggle: (dateStr: string) => void; onClose: () => void; storeName: string; }> = ({ holidays, offDays = [], onToggle, onClose, storeName }) => {
   const [viewDate, setViewDate] = useState(new Date());
   const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
@@ -25,7 +25,7 @@ export const HolidayCalendar: React.FC<{ holidays: string[]; onToggle: (dateStr:
   }, [viewDate]);
 
   return (
-    <div className="fixed inset-0 bg-morandi-charcoal/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-morandi-charcoal/40 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
       <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ type: "spring", duration: 0.3 }} className="bg-white w-full max-w-sm rounded-[32px] overflow-hidden shadow-xl border border-slate-200">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-morandi-oatmeal/30">
           <div>
@@ -44,8 +44,17 @@ export const HolidayCalendar: React.FC<{ holidays: string[]; onToggle: (dateStr:
             {WEEKDAYS.map(d => (<div key={d.value} className="text-[10px] font-bold text-morandi-pebble uppercase py-2">{d.label}</div>))}
             {calendarDays.map((item, idx) => {
               const isHoliday = item.dateStr && holidays.includes(item.dateStr);
+              const isWeeklyOff = item.dateStr && offDays.length > 0 ? isDateInOffDays(item.dateStr, offDays) : false;
+              
               return (
-                <motion.div key={idx} whileTap={{ scale: 0.8 }} onClick={() => item.dateStr && onToggle(item.dateStr)} className={`aspect-square flex items-center justify-center text-sm font-medium rounded-xl cursor-pointer transition-colors border ${!item.day ? 'opacity-0 pointer-events-none' : ''} ${isHoliday ? 'bg-rose-50 border-rose-200 text-rose-500 font-bold' : 'bg-white border-transparent text-morandi-charcoal hover:bg-morandi-oatmeal'}`}>
+                <motion.div key={idx} whileTap={isWeeklyOff || !item.day ? {} : { scale: 0.8 }} onClick={() => {
+                  if (!item.dateStr) return;
+                  if (isWeeklyOff) {
+                    alert('此為每週常態公休，請於上方設定更改');
+                    return;
+                  }
+                  onToggle(item.dateStr);
+                }} className={`aspect-square flex items-center justify-center text-sm font-medium rounded-xl cursor-pointer transition-colors border ${!item.day ? 'opacity-0 pointer-events-none' : ''} ${isWeeklyOff ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : isHoliday ? 'bg-rose-50 border-rose-200 text-rose-500 font-bold' : 'bg-white border-transparent text-morandi-charcoal hover:bg-morandi-oatmeal'}`}>
                   {item.day}
                 </motion.div>
               );
