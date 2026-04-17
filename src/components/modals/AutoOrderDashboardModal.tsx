@@ -161,7 +161,7 @@ export const AutoOrderDashboardModal: React.FC<AutoOrderDashboardModalProps> = (
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="bg-white w-full h-[100dvh] sm:h-auto sm:max-w-5xl sm:max-h-[90vh] rounded-none sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl"
+        className="bg-white w-full h-[100dvh] sm:h-[85vh] sm:max-w-5xl rounded-none sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl"
       >
         {/* Sticky Header */}
         <div className="p-4 sm:p-6 border-b flex flex-col sticky top-0 bg-white z-10 gap-4">
