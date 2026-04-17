@@ -2041,18 +2041,40 @@ const App: React.FC = () => {
               });
             }}
             onClose={async () => {
-              const payload = { ...directHolidayCustomer, lastUpdated: new Date().toISOString() };
-              setCustomers(prev => prev.map(c => c.id === directHolidayCustomer.id ? payload : c));
+              // 記住原本的狀態，以備失敗時還原
+              const originalCustomer = customers.find(c => c.id === directHolidayCustomer?.id);
+              if (!directHolidayCustomer) return;
+              const updatedCustomer = { ...directHolidayCustomer, lastUpdated: Date.now() };
+              
+              // 1. 樂觀更新畫面
+              setCustomers(prev => prev.map(c => c.id === directHolidayCustomer.id ? updatedCustomer : c));
               setDirectHolidayCustomer(null);
               
-              if (apiEndpoint) {
+              if (apiEndpoint && originalCustomer) {
                 try {
-                  await fetch(apiEndpoint, {
+                  // 2. 補上 originalLastUpdated
+                  const payload = { ...updatedCustomer, originalLastUpdated: originalCustomer.lastUpdated };
+                  const res = await fetch(apiEndpoint, {
                     method: 'POST',
                     body: JSON.stringify({ action: 'updateCustomer', data: payload })
                   });
+                  const json = await res.json();
+                  
+                  if (!json.success) {
+                    console.error("公休儲存失敗:", json);
+                    // 3. 失敗還原
+                    setCustomers(prev => prev.map(c => c.id === originalCustomer.id ? originalCustomer : c));
+                    addToast("公休儲存失敗，請重新整理後再試", "error");
+                  } else {
+                    // 成功時，把後端產生的最新時間戳記更新到本地
+                    const newVersion = json.data?.lastUpdated || payload.lastUpdated;
+                    setCustomers(prev => prev.map(c => c.id === originalCustomer.id ? { ...updatedCustomer, lastUpdated: newVersion } : c));
+                  }
                 } catch (e) {
                   console.error("公休儲存失敗", e);
+                  // 3. 失敗還原
+                  setCustomers(prev => prev.map(c => c.id === originalCustomer.id ? originalCustomer : c));
+                  addToast("網路連線異常，公休儲存失敗", "error");
                 }
               }
             }}
@@ -2741,23 +2763,38 @@ const App: React.FC = () => {
                 const updatedCustomer = { 
                   ...customer, 
                   autoOrderEnabled: !customer.autoOrderEnabled,
-                  lastUpdated: new Date().toISOString()
+                  // 💡 修正 1：lastUpdated 應該是數字 (Timestamp)
+                  lastUpdated: Date.now() 
                 };
+                
+                // 1. 先樂觀更新畫面
                 setCustomers(prev => prev.map(c => c.id === customerId ? updatedCustomer : c));
                 
                 if (apiEndpoint) {
                   try {
+                    // 2. 補上 originalLastUpdated 與 force 給後端驗證 (開關自動建單不需要嚴格檢查版本)
+                    const payload = { ...updatedCustomer, originalLastUpdated: customer.lastUpdated, force: true };
                     const res = await fetch(apiEndpoint, {
                       method: 'POST',
-                      body: JSON.stringify({ action: 'updateCustomer', data: updatedCustomer })
+                      body: JSON.stringify({ action: 'updateCustomer', data: payload })
                     });
                     const json = await res.json();
                     
                     if (!json.success) {
                       console.error("儲存失敗，後端回傳錯誤:", json);
+                      // 3. 失敗時：把畫面還原成原本的狀態，並跳出提示
+                      setCustomers(prev => prev.map(c => c.id === customerId ? customer : c));
+                      addToast("儲存失敗，請重新整理後再試", "error");
+                    } else {
+                      // 💡 修正 2：成功時，把後端產生的最新時間戳記更新到本地，防止背景同步誤判
+                      const newVersion = json.data?.lastUpdated || payload.lastUpdated;
+                      setCustomers(prev => prev.map(c => c.id === customerId ? { ...updatedCustomer, lastUpdated: newVersion } : c));
                     }
                   } catch (e) {
                     console.error("自動建單狀態儲存失敗，請檢查網路:", e);
+                    // 3. 失敗時：把畫面還原成原本的狀態，並跳出提示
+                    setCustomers(prev => prev.map(c => c.id === customerId ? customer : c));
+                    addToast("網路連線異常，儲存失敗", "error");
                   }
                 }
               }

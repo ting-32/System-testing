@@ -118,7 +118,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
             priceList: safeJsonArray(c[priceListKey] || c.priceList).map((pl: any) => ({ productId: pl.productId, price: Number(pl.price) || 0, unit: pl.unit || '斤' })), 
             offDays: safeJsonArray(c.公休日週期JSON || c.公休日週期 || c.offDays), 
             holidayDates: safeJsonArray(c.特定公休日JSON || c.特定公休日 || c.holidayDates),
-            autoOrderEnabled: c.自動建單開關 === true || c.自動建單開關 === 'true',
+            autoOrderEnabled: c.autoOrderEnabled === true || String(c.autoOrderEnabled).trim().toLowerCase() === 'true' || String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
             lastUpdated: Number(c.lastUpdated) || 0
           }; 
         }); 

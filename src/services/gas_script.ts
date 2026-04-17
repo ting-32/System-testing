@@ -265,7 +265,7 @@ function getData(startDateStr) {
     deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
     paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
     defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
-    autoOrderEnabled: c.自動建單開關 === true || c.自動建單開關 === 'true',
+    autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
     lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
   }));
 
@@ -635,17 +635,25 @@ function updateCustomer(data) {
     sheet.getRange(rowIndex, 1, 1, baseRowData.length).setValues([baseRowData]);
     sheet.getRange(rowIndex, addressColIdx + 1).setValue(data.address || '');
     sheet.getRange(rowIndex, coordinatesColIdx + 1).setValue(data.coordinates || '');
-    sheet.getRange(rowIndex, autoOrderColIdx + 1).setValue(data.autoOrderEnabled ? 'true' : 'false');
+    
+    // 確保欄位存在，且前端有傳來這個變數
+    if (data.autoOrderEnabled !== undefined) {
+      sheet.getRange(rowIndex, autoOrderColIdx + 1).setValue(data.autoOrderEnabled);
+    }
   } else {
     const maxCol = Math.max(baseRowData.length, addressColIdx + 1, coordinatesColIdx + 1, autoOrderColIdx + 1);
     const newRow = new Array(maxCol).fill('');
     for(let i=0; i<baseRowData.length; i++) newRow[i] = baseRowData[i];
     newRow[addressColIdx] = data.address || '';
     newRow[coordinatesColIdx] = data.coordinates || '';
-    newRow[autoOrderColIdx] = data.autoOrderEnabled ? 'true' : 'false';
+    
+    // 確保欄位存在，且前端有傳來這個變數
+    if (data.autoOrderEnabled !== undefined) {
+      newRow[autoOrderColIdx] = data.autoOrderEnabled;
+    }
     sheet.appendRow(newRow);
   }
-  return true;
+  return { lastUpdated: newLastUpdatedTs };
 }
 
 function deleteCustomer(data) {
@@ -699,7 +707,7 @@ function updateProduct(data) {
   } else {
     sheet.appendRow(rowData);
   }
-  return true;
+  return { lastUpdated: newLastUpdatedTs };
 }
 
 function deleteProduct(data) {
