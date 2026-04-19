@@ -415,7 +415,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                             const latestJson = await latestRes.json();
                             if (latestJson.success && latestJson.data) {
                                 const latestOrder = latestJson.data;
-                                if (latestOrder && latestOrder.lastUpdated) {
+                                if (latestOrder && latestOrder.lastUpdated !== undefined) {
                                     // Retry with the new lastUpdated
                                     const retryPayload = { ...payload, originalLastUpdated: latestOrder.lastUpdated };
                                     const retryRes = await fetch(apiEndpoint, {

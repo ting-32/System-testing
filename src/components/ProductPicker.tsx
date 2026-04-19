@@ -10,7 +10,7 @@ export const ProductPicker: React.FC<{ isOpen: boolean; onClose: () => void; onS
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
-      const matchSearch = (p.name || '').toLowerCase().includes((search || '').toLowerCase());
+      const matchSearch = String(p.name || '').toLowerCase().includes(String(search || '').toLowerCase());
       
       let matchCategory = false;
       if (activeCategory === 'all') {

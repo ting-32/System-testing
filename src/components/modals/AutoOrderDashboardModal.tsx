@@ -45,8 +45,8 @@ export const AutoOrderDashboardModal: React.FC<AutoOrderDashboardModalProps> = (
     setPreviewDate(new Date(previewDate.getTime() + 24 * 60 * 60 * 1000));
   };
 
-  const filteredGreenZone = greenZone.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
-  const filteredGrayZone = grayZone.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredGreenZone = greenZone.filter(c => String(c.name || '').toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredGrayZone = grayZone.filter(c => String(c.name || '').toLowerCase().includes(searchQuery.toLowerCase()));
 
   const slideVariants = {
     enter: (direction: number) => ({

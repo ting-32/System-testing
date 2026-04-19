@@ -242,7 +242,7 @@ export const useOrderCalculations = ({
     if (orderSearch) {
       const term = orderSearch.toLowerCase();
       dayOrders = dayOrders.filter(o => {
-        const matchName = (o.customerName || '').toLowerCase().includes(term);
+        const matchName = String(o.customerName || '').toLowerCase().includes(term);
         const customer = customers.find(c => c.name === o.customerName);
         const matchPhone = customer?.phone?.includes(term);
         return matchName || matchPhone;
@@ -271,7 +271,7 @@ export const useOrderCalculations = ({
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers;
     const term = customerSearch.toLowerCase();
-    return customers.filter(c => (c.name || '').toLowerCase().includes(term) || String(c.phone || '').includes(term));
+    return customers.filter(c => String(c.name || '').toLowerCase().includes(term) || String(c.phone || '').includes(term));
   }, [customers, customerSearch]);
 
   // 10. Work Sheet Data (Production List)

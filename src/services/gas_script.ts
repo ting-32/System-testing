@@ -392,7 +392,7 @@ function createOrder(orderData) {
     const lastRow = sheet.getLastRow();
     sheet.getRange(lastRow + 1, 1, rows.length, maxCol).setValues(rows);
   }
-  return true;
+  return { lastUpdated: lastUpdatedTs };
 }
 
 function updateOrderContent(orderData) {
@@ -461,7 +461,7 @@ function updateOrderContent(orderData) {
   if (rows.length > 0) {
     sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, maxCol).setValues(rows);
   }
-  return true;
+  return { lastUpdated: newLastUpdatedTs };
 }
 
 function updateOrderStatus(data) {
@@ -486,7 +486,7 @@ function updateOrderStatus(data) {
   }
   
   if (!updated) throw new Error("Order not found: " + targetId);
-  return true;
+  return { lastUpdated: newLastUpdatedTs };
 }
 
 function batchUpdateOrders(data) {
