@@ -2609,7 +2609,7 @@ const App: React.FC = () => {
       {/* 底部抽屜選單 (Bottom Sheet) */}
       <AnimatePresence>
         {drawerConfig.isOpen && (
-          <motion.div key="bottom-drawer" className="fixed inset-0 z-[100] flex flex-col justify-end">
+          <motion.div key="bottom-drawer" className="fixed inset-0 z-[120] flex flex-col justify-end">
             {/* 黑色半透明遮罩 */}
             <motion.div 
               initial={{ opacity: 0 }} 

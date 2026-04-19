@@ -244,7 +244,7 @@ export const useOrderCalculations = ({
       dayOrders = dayOrders.filter(o => {
         const matchName = String(o.customerName || '').toLowerCase().includes(term);
         const customer = customers.find(c => c.name === o.customerName);
-        const matchPhone = customer?.phone?.includes(term);
+        const matchPhone = String(customer?.phone || '').includes(term);
         return matchName || matchPhone;
       });
     }

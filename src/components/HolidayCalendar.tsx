@@ -25,7 +25,7 @@ export const HolidayCalendar: React.FC<{ holidays: string[]; offDays?: number[];
   }, [viewDate]);
 
   return (
-    <div className="fixed inset-0 bg-morandi-charcoal/40 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-morandi-charcoal/40 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
       <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ type: "spring", duration: 0.3 }} className="bg-white w-full max-w-sm rounded-[32px] overflow-hidden shadow-xl border border-slate-200">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-morandi-oatmeal/30">
           <div>
