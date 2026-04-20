@@ -23,7 +23,6 @@ interface UseOrderActionsProps {
   orderSummary: any;
   saveOrderToCloud: any;
   setConflictData: any;
-  setPendingData: any;
   addToast: (msg: string, type: ToastType) => void;
   setIsAddingOrder: (isAdding: boolean) => void;
   setIsEditingCustomer: (id: string | null) => void;
@@ -55,7 +54,6 @@ export const useOrderActions = ({
   groupedOrders,
   saveOrderToCloud,
   setConflictData,
-  setPendingData,
   addToast,
   setIsAddingOrder,
   setIsEditingCustomer,
@@ -201,9 +199,6 @@ export const useOrderActions = ({
           body: JSON.stringify({ action: 'createOrder', data: { ...newOrder, items: uploadItems } })
         });
         const json = await res.json();
-        if (json.success) {
-           setPendingData(null); // UX: Clear pending data on successful quick add
-        }
       }
     } catch (e) {
       console.error(e);
@@ -322,7 +317,6 @@ export const useOrderActions = ({
                         }
                         return o;
                     }));
-                    setPendingData(null); // UX: Clear pending data on successful batch update
                 }
             }
         } catch (e) {
@@ -409,7 +403,6 @@ export const useOrderActions = ({
                           }
                           return o;
                       }));
-                      setPendingData(null); // UX: Clear pending data on successful batch settle
                       addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
                   }
               }
@@ -814,8 +807,6 @@ export const useOrderActions = ({
               setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' }]);
               addToast("刪除失敗，已標記為錯誤", 'error');
            }
-        } else {
-           setPendingData(null); // UX: Clear pending data on successful delete
         }
       } 
     } catch (e) { 

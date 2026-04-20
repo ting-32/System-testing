@@ -33,6 +33,12 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   const [pickerConfig, setPickerConfig] = useState<{isOpen: boolean, currentProductId?: string, onSelect: (id: string) => void}>({ isOpen: false, onSelect: () => {} });
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  const handleSubmit = () => {
+    // We cannot detect conflicts smoothly without passing customers list or tracking lastUpdated in customers yet.
+    // However, we apply the updated data
+    onSubmit(customerForm);
+  };
+
   useEffect(() => {
     if (isOpen) {
       setCustomerForm(initialData || {
@@ -53,7 +59,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
         <motion.button whileTap={buttonTap} onClick={onClose} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button>
         <h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">店家詳細資料</h2>
-        <motion.button whileTap={buttonTap} onClick={() => onSubmit(customerForm)} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : '儲存'}</motion.button>
+        <motion.button whileTap={buttonTap} onClick={handleSubmit} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : '儲存'}</motion.button>
       </div>
       <div className="p-6 overflow-y-auto pb-10">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

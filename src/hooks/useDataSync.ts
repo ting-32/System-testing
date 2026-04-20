@@ -46,45 +46,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     description: string;
   } | null>(null);
 
-  const [pendingData, setPendingData] = useState<{
-    customers: Customer[];
-    products: Product[];
-    orders: Order[];
-    trips?: string[];
-  } | null>(null);
-
-  const applyPendingUpdates = useCallback(() => {
-    if (pendingData) {
-      setCustomers(pendingData.customers);
-      setProducts(pendingData.products);
-      if (pendingData.trips && pendingData.trips.length > 0) {
-        setTrips(pendingData.trips);
-      }
-      
-      setOrders(currentOrders => {
-          const serverOrders = pendingData.orders;
-          const mergedOrders = [...serverOrders];
-          
-          currentOrders.forEach(localOrder => {
-              if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
-                  const index = mergedOrders.findIndex(o => o.id === localOrder.id);
-                  if (index !== -1) {
-                      // Replace server version with local pending version
-                      mergedOrders[index] = localOrder;
-                  } else {
-                      // Add local new order
-                      mergedOrders.push(localOrder);
-                  }
-              }
-          });
-          return mergedOrders;
-      });
-
-      setPendingData(null);
-      addToast('資料已更新', 'success');
-    }
-  }, [pendingData, addToast]);
-
   // Sync Data Logic
   const syncData = useCallback(async (isSilent = false) => { 
     if (!apiEndpoint) { 
@@ -160,71 +121,35 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         
         const newOrders = Object.values(orderMap);
 
-        if (isSilent) {
-            const omitMetadata = (obj: any) => {
-                const { lastUpdated, syncStatus, errorMessage, pendingAction, ...rest } = obj;
-                return rest;
-            };
+        // SILENT AND MANUAL NOW USE THE SAME AUTO-MERGE LOGIC
+        const fetchedTrips = result.data.trips || [];
+        
+        // State isolation check is not handled here but merging logic is
+        setCustomers(mappedCustomers);
+        setProducts(mappedProducts);
+        if (fetchedTrips.length > 0) {
+            setTrips(fetchedTrips);
+        }
+        
+        setOrders(currentOrders => {
+          const mergedOrders = [...newOrders];
+          
+          currentOrders.forEach(localOrder => {
+              // Preserve locally modified items that haven't been successfully synced
+              if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
+                  const index = mergedOrders.findIndex(o => o.id === localOrder.id);
+                  if (index !== -1) {
+                      mergedOrders[index] = localOrder;
+                  } else {
+                      mergedOrders.push(localOrder);
+                  }
+              }
+          });
+          return mergedOrders;
+      });
 
-            const stableStringify = (obj: any) => {
-                if (typeof obj !== 'object' || obj === null) return JSON.stringify(obj);
-                const keys = Object.keys(obj).sort();
-                const sortedObj = keys.reduce((acc: any, key) => {
-                    acc[key] = obj[key];
-                    return acc;
-                }, {});
-                return JSON.stringify(sortedObj);
-            };
-
-            const hasChanges = (local: any[], server: any[], idKey: string = 'id') => {
-                const localMap = new Map(local.map(i => [i[idKey], i]));
-                const serverMap = new Map(server.map(i => [i[idKey], i]));
-                
-                for (const serverItem of server) {
-                    const localItem = localMap.get(serverItem[idKey]);
-                    if (!localItem) return true; // Server has new item
-                    
-                    // If local item is pending, ignore
-                    if (localItem.syncStatus === 'pending' || localItem.syncStatus === 'error') continue;
-                    
-                    const serverStr = stableStringify(omitMetadata(serverItem));
-                    const localStr = stableStringify(omitMetadata(localItem));
-                    
-                    if (serverStr !== localStr) return true;
-                }
-                
-                for (const localItem of local) {
-                    if (localItem.syncStatus === 'pending' || localItem.syncStatus === 'error') continue;
-                    if (!serverMap.has(localItem[idKey])) return true; // Server deleted item
-                }
-                return false;
-            };
-            
-            // 👇 修改這段：改用 latestDataRef.current 裡面的最新資料來做比對
-            const { customers: currentCustomers, products: currentProducts, orders: currentOrders, trips: currentTrips } = latestDataRef.current;
-            const customersChanged = hasChanges(currentCustomers, mappedCustomers);
-            const productsChanged = hasChanges(currentProducts, mappedProducts);
-            const ordersChanged = hasChanges(currentOrders, newOrders);
-            const fetchedTrips = result.data.trips || [];
-            const tripsChanged = JSON.stringify(currentTrips) !== JSON.stringify(fetchedTrips);
-            
-            if (customersChanged || productsChanged || ordersChanged || tripsChanged) {
-                 setPendingData({
-                    customers: mappedCustomers,
-                    products: mappedProducts,
-                    orders: newOrders,
-                    trips: fetchedTrips
-                });
-            }
-        } else {
-            const fetchedTrips = result.data.trips || [];
-            setCustomers(mappedCustomers); 
-            setProducts(mappedProducts); 
-            setOrders(newOrders); 
-            if (fetchedTrips.length > 0) {
-                setTrips(fetchedTrips);
-            }
-            if (!isSilent) addToast('雲端資料已同步完成 (近60天)', 'success'); 
+        if (!isSilent) {
+          addToast('雲端資料已同步完成 (近60天)', 'success');
         }
       } 
     } catch (e) { 
@@ -534,9 +459,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     handleSaveApiUrl,
     handleForceRetry,
     saveOrderToCloud,
-    saveTripsToCloud,
-    pendingData,
-    setPendingData,
-    applyPendingUpdates
+    saveTripsToCloud
   };
 };

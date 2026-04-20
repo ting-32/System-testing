@@ -184,6 +184,16 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
   }, [orderForm.items, orderForm.customerId, customers, products]);
 
   const handleSubmit = () => {
+    // Conflict Check
+    if (editingOrderId && initialData) {
+        const latestServerOrder = orders.find(o => o.id === editingOrderId);
+        // If the server has a newer lastUpdated timestamp than the one we started editing with
+        if (latestServerOrder && latestServerOrder.lastUpdated && initialData.lastUpdated && latestServerOrder.lastUpdated > initialData.lastUpdated) {
+            const force = window.confirm("⚠️ 這筆資料剛剛被其他人修改過，請問要強制覆蓋，還是放棄您的修改？\n\n按「確定」強制覆蓋，按「取消」放棄您的修改。");
+            if (!force) return;
+        }
+    }
+
     onSubmit({
       ...orderForm,
       date: orderDate

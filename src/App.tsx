@@ -129,10 +129,7 @@ const App: React.FC = () => {
     handleSaveApiUrl,
     handleForceRetry,
     saveOrderToCloud,
-    saveTripsToCloud,
-    pendingData,
-    setPendingData,
-    applyPendingUpdates
+    saveTripsToCloud
   } = useDataSync(addToast);
 
   const [activeTab, setActiveTab] = useState<'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance'>('orders');
@@ -663,7 +660,6 @@ const App: React.FC = () => {
     orderSummary,
     saveOrderToCloud,
     setConflictData,
-    setPendingData,
     addToast,
     setIsAddingOrder,
     setIsEditingCustomer,
@@ -770,7 +766,6 @@ const App: React.FC = () => {
     setIsEditingProduct,
     editingVersionRef,
     setConflictData,
-    setPendingData,
     addToast,
     setConfirmConfig
   });
@@ -888,27 +883,6 @@ const App: React.FC = () => {
           <motion.button whileTap={buttonTap} onClick={() => setIsSettingsOpen(true)} className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center border border-slate-100 text-morandi-pebble hover:text-slate-600 transition-colors active:scale-95"><Settings className="w-5 h-5" /></motion.button>
         </div>
       </header>
-
-      {/* New Data Notification Banner */}
-      <AnimatePresence>
-        {pendingData && (
-          <motion.div
-            key="pending-data-banner"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="bg-morandi-blue text-white overflow-hidden shadow-md z-30 relative"
-          >
-            <button 
-              onClick={applyPendingUpdates}
-              className="w-full py-3 px-4 flex items-center justify-center gap-2 text-sm font-bold active:bg-white/10 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              有新資料可用，點擊更新
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* --- Toast Container --- */}
       <ToastNotification toasts={toasts} removeToast={removeToast} />
