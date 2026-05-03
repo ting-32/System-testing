@@ -4,7 +4,12 @@ import { GAS_URL as DEFAULT_GAS_URL } from '../constants';
 import { formatDateStr, normalizeDate, safeJsonArray } from '../utils';
 
 export const useDataSync = (addToast: (msg: string, type: ToastType) => void) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('nm_auth_status') === 'true';
+    }
+    return false;
+  });
   const [apiEndpoint, setApiEndpoint] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('nm_gas_url');
@@ -60,7 +65,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       const startDate = new Date(); 
       startDate.setDate(startDate.getDate() - 60); 
       const startDateStr = formatDateStr(startDate); 
-      const res = await fetch(`${apiEndpoint}?type=init&startDate=${startDateStr}`); 
+      const token = localStorage.getItem('nm_auth_token') || '';
+      const res = await fetch(`${apiEndpoint}?type=init&startDate=${startDateStr}&token=${token}`); 
       const result: GASResponse<any> = await res.json(); 
       if (result.success && result.data) { 
         const mappedCustomers: Customer[] = (result.data.customers || []).map((c: any) => { 
@@ -162,11 +168,12 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   }, [apiEndpoint, addToast]);
 
   // Auth Functions
-  const handleLogin = async (pwd: string) => { 
+  const handleLogin = useCallback(async (pwd: string) => { 
     if (!apiEndpoint) { 
       if (pwd === '8888') { 
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
+        localStorage.setItem('nm_auth_token', pwd); 
         return true; 
       } 
       return false; 
@@ -177,6 +184,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       if (json.success && json.data === true) { 
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
+        localStorage.setItem('nm_auth_token', pwd); 
         return true; 
       } 
       return false; 
@@ -184,11 +192,12 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       console.error("Login Error:", e); 
       return false; 
     } 
-  };
+  }, [apiEndpoint]);
 
   const handleLogout = () => { 
     setIsAuthenticated(false); 
     localStorage.removeItem('nm_auth_status'); 
+    localStorage.removeItem('nm_auth_token'); 
     setCustomers([]); 
     setOrders([]); 
     setProducts([]); 
@@ -224,7 +233,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     try {
       const res = await fetch(apiEndpoint, { 
         method: 'POST', 
-        body: JSON.stringify({ action: conflictData.action, data: newPayload }) 
+        body: JSON.stringify({ action: conflictData.action, token: localStorage.getItem('nm_auth_token') || '', data: newPayload }) 
       });
       const json = await res.json();
       
@@ -322,7 +331,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
                 const res = await fetch(apiEndpoint, {
                     method: 'POST',
-                    body: JSON.stringify({ action: actionName, data: payload })
+                    body: JSON.stringify({ action: actionName, token: localStorage.getItem('nm_auth_token') || '', data: payload })
                 });
                 const json = await res.json();
 
@@ -333,7 +342,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                             // Fetch latest data silently
                             const latestRes = await fetch(apiEndpoint, {
                                 method: 'POST',
-                                body: JSON.stringify({ action: 'getOrder', data: { id: orderId } })
+                                body: JSON.stringify({ action: 'getOrder', token: localStorage.getItem('nm_auth_token') || '', data: { id: orderId } })
                             });
                             const latestJson = await latestRes.json();
                             if (latestJson.success && latestJson.data) {
@@ -343,7 +352,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                                     const retryPayload = { ...payload, originalLastUpdated: latestOrder.lastUpdated };
                                     const retryRes = await fetch(apiEndpoint, {
                                         method: 'POST',
-                                        body: JSON.stringify({ action: actionName, data: retryPayload })
+                                        body: JSON.stringify({ action: actionName, token: localStorage.getItem('nm_auth_token') || '', data: retryPayload })
                                     });
                                     const retryJson = await retryRes.json();
                                     if (retryJson.success) {
@@ -416,9 +425,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
     const pollInterval = setInterval(async () => {
       try {
+        const token = localStorage.getItem('nm_auth_token') || '';
         const res = await fetch(apiEndpoint, {
           method: 'POST',
-          body: JSON.stringify({ action: 'checkUpdates', data: {} })
+          body: JSON.stringify({ action: 'checkUpdates', token, data: {} })
         });
         const json = await res.json();
         if (json.success && json.data) {

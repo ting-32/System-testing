@@ -746,7 +746,7 @@ const App: React.FC = () => {
 
 
 
-  const handleSaveProductOrder = async () => { if (!apiEndpoint || isSaving) return; setIsSaving(true); const orderedIds = products.map(p => p.id); try { await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', data: orderedIds }) }); setInitialProductOrder(orderedIds); setHasReorderedProducts(false); addToast("排序已更新！", 'success'); } catch (e) { console.error(e); addToast("排序儲存失敗，請檢查網路", 'error'); } finally { setIsSaving(false); } };
+  const handleSaveProductOrder = async () => { if (!apiEndpoint || isSaving) return; setIsSaving(true); const orderedIds = products.map(p => p.id); try { await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', token: localStorage.getItem('nm_auth_token') || '', data: orderedIds }) }); setInitialProductOrder(orderedIds); setHasReorderedProducts(false); addToast("排序已更新！", 'success'); } catch (e) { console.error(e); addToast("排序儲存失敗，請檢查網路", 'error'); } finally { setIsSaving(false); } };
 
   const {
     handleSaveCustomer,
@@ -851,6 +851,21 @@ const App: React.FC = () => {
     printWindow.document.write(htmlContent); 
     printWindow.document.close(); 
   };
+
+  // Auto-login via URL auth parameter
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !isAuthenticated) {
+      const params = new URLSearchParams(window.location.search);
+      const auth = params.get('auth');
+      if (auth) {
+        handleLogin(auth).then(success => {
+          if (success) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        });
+      }
+    }
+  }, [isAuthenticated, handleLogin]);
 
   if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} />;
   if (isInitialLoading) {
@@ -2033,7 +2048,7 @@ const App: React.FC = () => {
                   const payload = { ...updatedCustomer, originalLastUpdated: originalCustomer.lastUpdated };
                   const res = await fetch(apiEndpoint, {
                     method: 'POST',
-                    body: JSON.stringify({ action: 'updateCustomer', data: payload })
+                    body: JSON.stringify({ action: 'updateCustomer', token: localStorage.getItem('nm_auth_token') || '', data: payload })
                   });
                   const json = await res.json();
                   
@@ -2753,7 +2768,7 @@ const App: React.FC = () => {
                     const payload = { ...updatedCustomer, originalLastUpdated: customer.lastUpdated, force: true };
                     const res = await fetch(apiEndpoint, {
                       method: 'POST',
-                      body: JSON.stringify({ action: 'updateCustomer', data: payload })
+                      body: JSON.stringify({ action: 'updateCustomer', token: localStorage.getItem('nm_auth_token') || '', data: payload })
                     });
                     const json = await res.json();
                     

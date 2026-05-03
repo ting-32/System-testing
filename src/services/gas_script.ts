@@ -41,6 +41,18 @@ function getSheets() {
 
 function doGet(e) {
   const startDateStr = e.parameter.startDate;
+  const token = e.parameter.token;
+  
+  const dbPassword = getConfigSheet().getRange("B1").getDisplayValue().trim() || "8888";
+  
+  if (token !== dbPassword) {
+    return ContentService.createTextOutput(JSON.stringify({ 
+      success: false, 
+      message: "Unauthorized: Invalid or missing token", 
+      code: 401 
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
   const data = getData(startDateStr);
   return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -50,7 +62,25 @@ function doPost(e) {
   try {
     const params = JSON.parse(e.postData.contents);
     const action = params.action;
+    const token = params.token;
+    
     let result = null;
+
+    // --- Authentication Check ---
+    const dbPassword = getConfigSheet().getRange("B1").getDisplayValue().trim() || "8888";
+    
+    // login is allowed to pass to handle the response
+    // changePassword needs oldPassword, which is checked inside the function
+    if (action !== "login" && action !== "changePassword") {
+      if (token !== dbPassword) {
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: false, 
+          message: "Unauthorized: Invalid or missing token", 
+          code: 401 
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+    // ----------------------------
 
     switch (action) {
       case "login":
