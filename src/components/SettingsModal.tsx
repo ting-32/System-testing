@@ -1,9 +1,17 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X } from 'lucide-react';
+import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X, Maximize } from 'lucide-react';
 import { modalVariants, buttonTap } from './animations';
 
-export const SettingsModal: React.FC<{ onClose: () => void; onSync: () => void; onSavePassword: (oldPwd: string, newPwd: string) => Promise<boolean>; currentUrl: string; onSaveUrl: (newUrl: string) => void; }> = ({ onClose, onSync, onSavePassword, currentUrl, onSaveUrl }) => {
+export const SettingsModal: React.FC<{ 
+  onClose: () => void; 
+  onSync: () => void; 
+  onSavePassword: (oldPwd: string, newPwd: string) => Promise<boolean>; 
+  currentUrl: string; 
+  onSaveUrl: (newUrl: string) => void;
+  layoutMode?: 'auto' | 'standard' | 'compact';
+  onLayoutModeChange?: (mode: 'auto' | 'standard' | 'compact') => void;
+}> = ({ onClose, onSync, onSavePassword, currentUrl, onSaveUrl, layoutMode = 'auto', onLayoutModeChange }) => {
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [inputUrl, setInputUrl] = useState(currentUrl);
@@ -51,6 +59,34 @@ export const SettingsModal: React.FC<{ onClose: () => void; onSync: () => void; 
           </button>
         </div>
         <div className="p-6 space-y-8">
+          <section className="space-y-3">
+            <h4 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2">
+              <Maximize className="w-4 h-4" /> 畫面顯示模式
+            </h4>
+            <div className="bg-morandi-oatmeal/50 p-5 rounded-[24px] border border-slate-100 space-y-3">
+              <p className="text-xs text-morandi-charcoal/80 mb-2 font-bold leading-relaxed tracking-wide">
+                若您因為放大系統字體導致畫面空間壓縮，可選擇「長輩舒適模式」來縮減元件間距，增加操作空間。
+              </p>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-morandi-blue transition-colors">
+                  <input type="radio" name="layoutMode" value="auto" checked={layoutMode === 'auto'} onChange={() => onLayoutModeChange?.('auto')} className="w-4 h-4 text-morandi-blue" />
+                  <span className="text-sm font-bold text-slate-700">自動偵測 (推薦)</span>
+                </label>
+                <label className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-morandi-blue transition-colors">
+                  <input type="radio" name="layoutMode" value="standard" checked={layoutMode === 'standard'} onChange={() => onLayoutModeChange?.('standard')} className="w-4 h-4 text-morandi-blue" />
+                  <span className="text-sm font-bold text-slate-700">標準模式</span>
+                </label>
+                <label className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-morandi-blue transition-colors">
+                  <input type="radio" name="layoutMode" value="compact" checked={layoutMode === 'compact'} onChange={() => onLayoutModeChange?.('compact')} className="w-4 h-4 text-morandi-blue" />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-slate-700">長輩舒適模式</span>
+                    <span className="text-[10px] text-gray-500 font-medium">縮減留白，保留大字體</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </section>
+
           <section className="space-y-3">
             <h4 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2">
               <RefreshCw className="w-4 h-4" /> 資料同步
