@@ -78,7 +78,7 @@ export const useDataManagement = ({
            (payload as any).originalLastUpdated = editingVersionRef.current;
         }
 
-        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateCustomer', token: localStorage.getItem('nm_auth_token') || '', data: payload }) }); 
+        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateCustomer', data: payload }) }); 
         const json = await res.json();
         
         if (!json.success) {
@@ -124,7 +124,7 @@ export const useDataManagement = ({
         if (isEditingProduct !== 'new') {
            (payload as any).originalLastUpdated = editingVersionRef.current;
         }
-        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateProduct', token: localStorage.getItem('nm_auth_token') || '', data: payload }) }); 
+        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateProduct', data: payload }) }); 
         const json = await res.json();
         if (!json.success) {
            setProducts(previousProducts);
@@ -159,7 +159,7 @@ export const useDataManagement = ({
     setCustomers((prev: Customer[]) => prev.filter(c => c.id !== customerId)); 
     try { 
       if (apiEndpoint) { 
-        await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteCustomer', token: localStorage.getItem('nm_auth_token') || '', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) }); 
+        await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteCustomer', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) }); 
       } 
     } catch (e) { 
       console.error("刪除失敗:", e); 
@@ -175,7 +175,7 @@ export const useDataManagement = ({
     setProducts((prev: Product[]) => prev.filter(p => p.id !== productId)); 
     try { 
       if (apiEndpoint) { 
-        await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteProduct', token: localStorage.getItem('nm_auth_token') || '', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) }); 
+        await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteProduct', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) }); 
       } 
     } catch (e) { 
       console.error("刪除失敗:", e); 

@@ -746,7 +746,7 @@ const App: React.FC = () => {
 
 
 
-  const handleSaveProductOrder = async () => { if (!apiEndpoint || isSaving) return; setIsSaving(true); const orderedIds = products.map(p => p.id); try { await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', token: localStorage.getItem('nm_auth_token') || '', data: orderedIds }) }); setInitialProductOrder(orderedIds); setHasReorderedProducts(false); addToast("排序已更新！", 'success'); } catch (e) { console.error(e); addToast("排序儲存失敗，請檢查網路", 'error'); } finally { setIsSaving(false); } };
+  const handleSaveProductOrder = async () => { if (!apiEndpoint || isSaving) return; setIsSaving(true); const orderedIds = products.map(p => p.id); try { await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', data: orderedIds }) }); setInitialProductOrder(orderedIds); setHasReorderedProducts(false); addToast("排序已更新！", 'success'); } catch (e) { console.error(e); addToast("排序儲存失敗，請檢查網路", 'error'); } finally { setIsSaving(false); } };
 
   const {
     handleSaveCustomer,
@@ -851,21 +851,6 @@ const App: React.FC = () => {
     printWindow.document.write(htmlContent); 
     printWindow.document.close(); 
   };
-
-  // Auto-login via URL auth parameter
-  useEffect(() => {
-    if (typeof window !== 'undefined' && !isAuthenticated) {
-      const params = new URLSearchParams(window.location.search);
-      const auth = params.get('auth');
-      if (auth) {
-        handleLogin(auth).then(success => {
-          if (success) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
-        });
-      }
-    }
-  }, [isAuthenticated, handleLogin]);
 
   if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} />;
   if (isInitialLoading) {
@@ -979,8 +964,18 @@ const App: React.FC = () => {
             className="space-y-6 relative"
           >
             {/* ... (Orders Tab Content) */}
-            <div className="sticky top-0 z-30 bg-morandi-oatmeal py-2 space-y-2 px-1 mb-2">
-               <div className="flex items-center justify-between">
+            <div className="sticky top-0 z-30 bg-morandi-oatmeal py-2 space-y-2 px-1 mb-2 shadow-sm rounded-b-[20px] pb-4">
+               {/* 建議1: 長輩舒適模式下，向下滑動隱藏頂部標題列 */}
+               <motion.div 
+                 initial={false}
+                 animate={{
+                   height: (isScrollingDown && layoutMode === 'compact') ? 0 : 'auto',
+                   opacity: (isScrollingDown && layoutMode === 'compact') ? 0 : 1,
+                   overflow: 'hidden'
+                 }}
+                 transition={{ duration: 0.3, ease: 'easeInOut' }}
+                 className="flex items-center justify-between"
+               >
                   <motion.button whileTap={buttonTap} onClick={() => setIsDatePickerOpen(true)} className="flex-1 mr-2 flex items-center gap-3 bg-white p-3 rounded-[20px] shadow-sm border border-slate-200 active:scale-95 transition-all">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-morandi-blue/10"><CalendarDays className="w-5 h-5 text-morandi-blue" /></div>
                     <div><p className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest">出貨日期</p><p className="font-bold text-morandi-charcoal text-lg tracking-tight">{selectedDate}</p></div>
@@ -1007,15 +1002,16 @@ const App: React.FC = () => {
                        <FileText className="w-6 h-6" />
                     </motion.button>
                   </div>
-               </div>
+               </motion.div>
 
-               {/* NEW: Sticky Search Bar & Filter Button */}
+               {/* Sticky Search Bar & Filter Button */}
                <motion.div
                  initial={false}
                  animate={{ 
                    height: isScrollingDown ? 0 : 'auto', 
                    opacity: isScrollingDown ? 0 : 1,
-                   overflow: 'hidden'
+                   overflow: 'hidden',
+                   marginTop: (isScrollingDown && layoutMode === 'compact') ? 0 : undefined
                  }}
                  transition={{ duration: 0.3, ease: 'easeInOut' }}
                  className="space-y-2"
@@ -1253,7 +1249,16 @@ const App: React.FC = () => {
               </motion.div>
             </div>
             {/* 👇 新增這層外掛容器來限制按鈕位置，使其與 App 寬度一致 */}
-            <div className="fixed bottom-24 left-1/2 -translate-x-1/2 w-full max-w-md pointer-events-none z-50 flex justify-end px-6">
+            <motion.div 
+              initial={false}
+              animate={{ 
+                opacity: (isScrollingDown && layoutMode === 'compact') ? 0 : 1,
+                scale: (isScrollingDown && layoutMode === 'compact') ? 0.8 : 1,
+                y: (isScrollingDown && layoutMode === 'compact') ? 20 : 0
+              }}
+              transition={{ duration: 0.3 }}
+              className={`fixed bottom-24 left-1/2 -translate-x-1/2 w-full max-w-md ${isScrollingDown && layoutMode === 'compact' ? 'pointer-events-none' : 'pointer-events-none'} z-50 flex justify-end px-6`}
+            >
               <motion.button 
                 whileTap={buttonTap} 
                 whileHover={buttonHover} 
@@ -1277,7 +1282,7 @@ const App: React.FC = () => {
               >
                 <Plus className="w-8 h-8" />
               </motion.button>
-            </div>
+            </motion.div>
           </motion.div>
         )}
         
@@ -2048,7 +2053,7 @@ const App: React.FC = () => {
                   const payload = { ...updatedCustomer, originalLastUpdated: originalCustomer.lastUpdated };
                   const res = await fetch(apiEndpoint, {
                     method: 'POST',
-                    body: JSON.stringify({ action: 'updateCustomer', token: localStorage.getItem('nm_auth_token') || '', data: payload })
+                    body: JSON.stringify({ action: 'updateCustomer', data: payload })
                   });
                   const json = await res.json();
                   
@@ -2768,7 +2773,7 @@ const App: React.FC = () => {
                     const payload = { ...updatedCustomer, originalLastUpdated: customer.lastUpdated, force: true };
                     const res = await fetch(apiEndpoint, {
                       method: 'POST',
-                      body: JSON.stringify({ action: 'updateCustomer', token: localStorage.getItem('nm_auth_token') || '', data: payload })
+                      body: JSON.stringify({ action: 'updateCustomer', data: payload })
                     });
                     const json = await res.json();
                     
