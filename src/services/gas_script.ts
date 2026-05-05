@@ -743,9 +743,11 @@ function generateTomorrowDefaultOrders() {
   const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
   const today = new Date();
   
-  // 將目標日期改為「當天」
-  const targetDateStr = Utilities.formatDate(today, timeZone, "yyyy-MM-dd");
-  const targetDayOfWeek = today.getDay(); 
+  // 將目標日期改為「明天」
+  const tomorrow = new Date();
+  tomorrow.setDate(today.getDate() + 1);
+  const targetDateStr = Utilities.formatDate(tomorrow, timeZone, "yyyy-MM-dd");
+  const targetDayOfWeek = tomorrow.getDay(); 
 
   // ==========================================
   // 👇 新增的第 1 段：建立防呆檢查名單 👇
@@ -810,7 +812,7 @@ function generateTomorrowDefaultOrders() {
     const holidayDates = typeof c.holidayDates === 'string' ? safeJsonArray(c.holidayDates) : (c.holidayDates || []);
     if (holidayDates.includes(targetDateStr)) return;
 
-    const orderId = "AUTO-" + Utilities.formatDate(today, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
+    const orderId = "AUTO-" + Utilities.formatDate(tomorrow, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
 
     defaultItems.forEach(item => {
       const row = new Array(maxCol).fill("");

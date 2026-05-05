@@ -1252,12 +1252,12 @@ const App: React.FC = () => {
             <motion.div 
               initial={false}
               animate={{ 
-                opacity: (isScrollingDown && layoutMode === 'compact') ? 0 : 1,
-                scale: (isScrollingDown && layoutMode === 'compact') ? 0.8 : 1,
-                y: (isScrollingDown && layoutMode === 'compact') ? 20 : 0
+                opacity: isScrollingDown ? 0 : 1,
+                scale: isScrollingDown ? 0.8 : 1,
+                x: isScrollingDown ? 60 : 0
               }}
               transition={{ duration: 0.3 }}
-              className={`fixed bottom-24 left-1/2 -translate-x-1/2 w-full max-w-md ${isScrollingDown && layoutMode === 'compact' ? 'pointer-events-none' : 'pointer-events-none'} z-50 flex justify-end px-6`}
+              className="fixed bottom-24 left-0 right-0 mx-auto w-full max-w-md pointer-events-none z-50 flex justify-end px-4 sm:px-6"
             >
               <motion.button 
                 whileTap={buttonTap} 
@@ -1277,10 +1277,16 @@ const App: React.FC = () => {
                   });
                   setIsAddingOrder(true); 
                 }} 
-                // 👇 修改這裡的 Tailwind 樣式：移除 absolute，改用 flex 排版
-                className="pointer-events-auto w-14 h-14 rounded-full text-white shadow-2xl shadow-morandi-blue/40 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue"
+                className={`pointer-events-auto text-white shadow-2xl shadow-morandi-blue/40 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue ${
+                  layoutMode === 'compact' 
+                    ? 'h-14 px-6 rounded-full gap-2'
+                    : 'w-14 h-14 rounded-full'
+                }`}
               >
-                <Plus className="w-8 h-8" />
+                <Plus className={layoutMode === 'compact' ? "w-6 h-6" : "w-8 h-8"} />
+                {layoutMode === 'compact' && (
+                  <span className="font-bold text-lg tracking-wide whitespace-nowrap">建立訂單</span>
+                )}
               </motion.button>
             </motion.div>
           </motion.div>
