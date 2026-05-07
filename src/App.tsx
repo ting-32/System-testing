@@ -58,6 +58,8 @@ import { ProductPicker } from './components/ProductPicker';
 import { CustomerPicker } from './components/CustomerPicker';
 import { HolidayCalendar } from './components/HolidayCalendar';
 import { WorkCalendar } from './components/WorkCalendar';
+import { CustomerProfileDrawer } from './components/CustomerProfileDrawer';
+import { CustomerReportModal } from './components/CustomerReportModal';
 import { ToastNotification } from './components/ToastNotification';
 import { NavItem } from './components/NavItem';
 import { SortableProductItem } from './components/SortableProductItem';
@@ -71,7 +73,7 @@ import { useVoiceAssistant } from './hooks/useVoiceAssistant';
 import { useOrderActions } from './hooks/useOrderActions';
 import { useDataManagement } from './hooks/useDataManagement';
 import { useAutoOrderPrediction } from './hooks/useAutoOrderPrediction';
-import { useCompactMode, LayoutMode } from './hooks/useCompactMode';
+import { useCompactMode } from './hooks/useCompactMode';
 import { AutoOrderDashboardModal } from './components/modals/AutoOrderDashboardModal';
 import { getTomorrowDate, getSmartDefaultDate, getLastMonthEndDate, formatTimeDisplay, formatTimeForInput, getUpcomingHolidays, isDateInOffDays } from './utils';
 import { modalVariants, buttonTap, buttonHover, triggerHaptic, containerVariants, itemVariants } from './components/animations';
@@ -265,6 +267,8 @@ const App: React.FC = () => {
   // ... (Rest of states remain unchanged) ...
   const [customerForm, setCustomerForm] = useState<Partial<Customer>>({});
   const [isEditingCustomer, setIsEditingCustomer] = useState<string | null>(null);
+  const [viewingCustomerProfile, setViewingCustomerProfile] = useState<string | null>(null);
+  const [viewingCustomerReport, setViewingCustomerReport] = useState<string | null>(null);
   const [directHolidayCustomer, setDirectHolidayCustomer] = useState<Customer | null>(null);
   const [editCustomerMode, setEditCustomerMode] = useState<'full' | 'itemsOnly' | 'holidayOnly'>('full');
   const [showAdvancedCustomerSettings, setShowAdvancedCustomerSettings] = useState(false);
@@ -937,6 +941,33 @@ const App: React.FC = () => {
         onToggleAiMode={setIsAiMode}
       />
 
+      {viewingCustomerProfile && (
+        <CustomerProfileDrawer
+          isOpen={true}
+          onClose={() => setViewingCustomerProfile(null)}
+          customerName={viewingCustomerProfile}
+          customers={customers}
+          orders={orders}
+          products={products}
+          onCreateOrder={(c) => {
+            handleCreateOrderFromCustomer(c);
+            setActiveTab('orders');
+          }}
+          onOpenReport={setViewingCustomerReport}
+        />
+      )}
+
+      {viewingCustomerReport && (
+        <CustomerReportModal
+          isOpen={true}
+          onClose={() => setViewingCustomerReport(null)}
+          customerName={viewingCustomerReport}
+          customers={customers}
+          orders={orders}
+          products={products}
+        />
+      )}
+
       {/* --- Global Loading Overlay for Voice Processing --- */}
       <AnimatePresence>
         {isProcessingVoice && (
@@ -1219,6 +1250,7 @@ const App: React.FC = () => {
                                 onMap={openGoogleMaps}
                                 onEdit={handleEditOrder}
                                 onRetry={handleRetryOrder}
+                                onViewCustomer={setViewingCustomerProfile}
                              />
                           ))}
                           <motion.button whileTap={buttonTap} onClick={() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] })} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
@@ -1328,8 +1360,9 @@ const App: React.FC = () => {
 })()}</div></div><div className="flex flex-col items-end gap-1 mt-2"><div className="flex gap-1">{WEEKDAYS.map(d => (<div key={d.value} className={`w-4 h-4 rounded-full text-[8px] flex items-center justify-center font-bold ${c.offDays?.includes(d.value) ? 'bg-rose-100 text-rose-400' : 'bg-gray-50 text-gray-300'}`}>{d.label}</div>))}</div>{c.holidayDates && c.holidayDates.length > 0 && <span className="text-[8px] font-bold text-rose-300">+{c.holidayDates.length} 特定休</span>}{c.priceList && c.priceList.length > 0 && <span className="text-[8px] font-bold text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded mt-1">已設 {c.priceList.length} 種單價</span>}</div></div>
                     <div className="space-y-3 mb-4 bg-gray-50/60 p-4 rounded-[24px] border border-gray-100"><div className="flex justify-between"><div className="text-[11px] font-bold text-slate-700 tracking-wide">配送時間:{formatTimeDisplay(c.deliveryTime)}</div><div className="flex gap-1">{c.defaultTrip && <div className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">{c.defaultTrip}</div>}{c.deliveryMethod && <div className="text-[11px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-lg border border-gray-100">{c.deliveryMethod}</div>}{c.paymentTerm && (<div className="text-[11px] font-bold text-morandi-blue bg-white px-2 py-0.5 rounded-lg border border-gray-100">{ORDERING_HABITS.find(t => t.value === c.paymentTerm)?.label}</div>)}</div></div>{c.defaultItems && c.defaultItems.length > 0 ? (<div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-200/50">{c.defaultItems.map((di, idx) => { const p = products.find(prod => prod.id === di.productId); return (<div key={idx} className="bg-white px-2 py-1 rounded-xl text-[10px] border border-gray-200 flex items-center gap-1 shadow-sm"><span className="font-bold text-slate-700">{p?.name || '未知品項'}</span><span className="font-extrabold text-morandi-blue">{di.quantity}{di.unit || p?.unit || '斤'}</span></div>); })}</div>) : (<div className="text-[10px] text-gray-400 font-medium italic pt-2 border-t border-gray-200/50 tracking-wide">尚未設定預設品項</div>)}</div>
                     <div className="flex gap-2">
+                       <motion.button whileTap={buttonTap} onClick={() => setViewingCustomerProfile(c.name)} className="flex-[2] py-3 bg-slate-800 rounded-2xl text-white font-bold text-xs flex items-center justify-center gap-2 hover:bg-slate-700 transition-colors shadow-md shadow-slate-200"><History className="w-3.5 h-3.5" /> 歷史/報表</motion.button>
                        <motion.button whileTap={buttonTap} onClick={() => handleCreateOrderFromCustomer(c)} className="flex-[2] py-3 bg-morandi-blue rounded-2xl text-white font-bold text-xs flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors shadow-md shadow-morandi-blue/20"><ClipboardList className="w-3.5 h-3.5" /> 建立訂單</motion.button>
-                       <motion.button whileTap={buttonTap} onClick={() => { setCustomerForm({ ...c, address: c.address || '', coordinates: c.coordinates || '', deliveryTime: formatTimeForInput(c.deliveryTime), paymentTerm: c.paymentTerm || 'regular', defaultTrip: c.defaultTrip || '' }); setIsEditingCustomer(c.id); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="flex-1 py-3 bg-gray-50 rounded-2xl text-slate-700 font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"><Edit2 className="w-3.5 h-3.5" /> 編輯</motion.button>
+                       <motion.button whileTap={buttonTap} onClick={() => { setCustomerForm({ ...c, address: c.address || '', coordinates: c.coordinates || '', deliveryTime: formatTimeForInput(c.deliveryTime), paymentTerm: c.paymentTerm || 'regular', defaultTrip: c.defaultTrip || '' }); setIsEditingCustomer(c.id); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); }} className="flex-1 py-3 bg-gray-50 rounded-2xl text-slate-700 font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"><Edit2 className="w-3.5 h-3.5" /></motion.button>
                        <motion.button whileTap={buttonTap} onClick={() => handleDeleteCustomer(c.id)} className="px-4 py-3 bg-gray-50 rounded-2xl text-morandi-pink hover:text-rose-500 transition-colors border border-gray-100"><Trash2 className="w-4 h-4" /></motion.button>
                     </div>
                   </motion.div>
@@ -2404,6 +2437,10 @@ const App: React.FC = () => {
                     setSelectedCustomerForModal(null);
                   }}
                   onRetry={handleRetryOrder}
+                  onViewCustomer={(name) => {
+                    setSelectedCustomerForModal(null);
+                    setViewingCustomerProfile(name);
+                  }}
                 />
               ))}
             </div>

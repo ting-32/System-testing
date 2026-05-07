@@ -198,7 +198,7 @@ export const useOrderActions = ({
           method: 'POST',
           body: JSON.stringify({ action: 'createOrder', data: { ...newOrder, items: uploadItems } })
         });
-        const json = await res.json();
+        await res.json();
       }
     } catch (e) {
       console.error(e);
