@@ -4,7 +4,12 @@ import { GAS_URL as DEFAULT_GAS_URL } from '../constants';
 import { formatDateStr, normalizeDate, safeJsonArray } from '../utils';
 
 export const useDataSync = (addToast: (msg: string, type: ToastType) => void) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('nm_auth_status') === 'true';
+    }
+    return false;
+  });
   const [apiEndpoint, setApiEndpoint] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('nm_gas_url');
@@ -13,9 +18,30 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     return DEFAULT_GAS_URL;
   });
 
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>(() => {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem('nm_cache_customers');
+      return cached ? JSON.parse(cached) : [];
+    }
+    return [];
+  });
+  
+  const [products, setProducts] = useState<Product[]>(() => {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem('nm_cache_products');
+      return cached ? JSON.parse(cached) : [];
+    }
+    return [];
+  });
+  
+  const [orders, setOrders] = useState<Order[]>(() => {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem('nm_cache_orders');
+      return cached ? JSON.parse(cached) : [];
+    }
+    return [];
+  });
+  
   const [trips, setTrips] = useState<string[]>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('availableTrips');
@@ -36,7 +62,32 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     }
   }, [trips]);
   
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  // NEW: Automator Effect to sink data to cache whenever it changes successfully
+  useEffect(() => {
+    if (typeof window !== 'undefined' && customers.length > 0) {
+      localStorage.setItem('nm_cache_customers', JSON.stringify(customers));
+    }
+  }, [customers]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && products.length > 0) {
+      localStorage.setItem('nm_cache_products', JSON.stringify(products));
+    }
+  }, [products]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && orders.length > 0) {
+      localStorage.setItem('nm_cache_orders', JSON.stringify(orders));
+    }
+  }, [orders]);
+
+  const [isInitialLoading, setIsInitialLoading] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const hasCache = !!localStorage.getItem('nm_cache_orders');
+      return !hasCache;
+    }
+    return true;
+  });
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -150,6 +201,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
         if (!isSilent) {
           addToast('雲端資料已同步完成 (近60天)', 'success');
+        } else {
+          addToast('已更新至最新資料', 'success');
         }
       } 
     } catch (e) { 
@@ -404,7 +457,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   // Initial Sync
   useEffect(() => { 
     if (isAuthenticated) { 
-      syncData(false); 
+      const hasCache = !!localStorage.getItem('nm_cache_orders');
+      syncData(hasCache); 
     } 
   }, [isAuthenticated, syncData]);
 
