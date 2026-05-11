@@ -22,9 +22,13 @@ interface CustomerReportModalProps {
 export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
   isOpen, onClose, customerName, customers, orders, products
 }) => {
+  const [reportType, setReportType] = useState<'month' | 'year'>('month');
   const [reportMonth, setReportMonth] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [reportYear, setReportYear] = useState(() => {
+    return new Date().getFullYear().toString();
   });
 
   const customer = customers.find(c => c.name === customerName);
@@ -32,10 +36,12 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
   const reportOrders = useMemo(() => {
     return orders.filter(o => 
       o.customerName === customerName && 
-      o.deliveryDate.startsWith(reportMonth) &&
+      (reportType === 'month' 
+        ? o.deliveryDate.startsWith(reportMonth) 
+        : o.deliveryDate.startsWith(reportYear)) &&
       o.status !== 'cancelled'
     ).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
-  }, [orders, customerName, reportMonth]);
+  }, [orders, customerName, reportMonth, reportYear, reportType]);
 
   const kpis = useMemo(() => {
     let totalSpend = 0;
@@ -44,6 +50,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
     const itemsSummary: Record<string, { quantity: number, spend: number }> = {};
     const tripSummary: Record<string, number> = {};
     const dailySpend: Record<string, number> = {};
+    const monthlySpend: Record<string, number> = {};
 
     reportOrders.forEach(order => {
       let orderTotal = 0;
@@ -79,6 +86,9 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
 
       const dateStr = order.deliveryDate.substring(8, 10); // DD
       dailySpend[dateStr] = (dailySpend[dateStr] || 0) + orderTotal;
+
+      const monthStr = order.deliveryDate.substring(5, 7); // MM
+      monthlySpend[monthStr] = (monthlySpend[monthStr] || 0) + orderTotal;
     });
 
     const avgOrderValue = reportOrders.length > 0 ? Math.round(totalSpend / reportOrders.length) : 0;
@@ -98,16 +108,26 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
 
     const tripData = Object.entries(tripSummary).map(([name, value]) => ({ name, value }));
 
-    // Generate full month daily data to ensure smooth area chart interpolation
-    const [yearStr, monthStr] = reportMonth.split('-');
-    const daysInMonth = new Date(parseInt(yearStr), parseInt(monthStr), 0).getDate();
+    // Generate full month/year data to ensure smooth area chart interpolation
     const trendData = [];
-    for (let i = 1; i <= daysInMonth; i++) {
-        const dd = String(i).padStart(2, '0');
-        trendData.push({
-            date: dd,
-            amount: dailySpend[dd] || 0
-        });
+    if (reportType === 'month') {
+      const [yearStr, monthStr] = reportMonth.split('-');
+      const daysInMonth = new Date(parseInt(yearStr), parseInt(monthStr), 0).getDate();
+      for (let i = 1; i <= daysInMonth; i++) {
+          const dd = String(i).padStart(2, '0');
+          trendData.push({
+              date: dd,
+              amount: dailySpend[dd] || 0
+          });
+      }
+    } else {
+      for (let i = 1; i <= 12; i++) {
+          const mm = String(i).padStart(2, '0');
+          trendData.push({
+              date: mm,
+              amount: monthlySpend[mm] || 0
+          });
+      }
     }
 
     return { 
@@ -119,7 +139,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
       tripData,
       trendData
     };
-  }, [reportOrders, products, customer, reportMonth]);
+  }, [reportOrders, products, customer, reportMonth, reportType]);
 
   const [printWarning, setPrintWarning] = useState(false);
 
@@ -155,15 +175,45 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
              <h2 className="text-lg font-extrabold text-slate-800 tracking-tight">對帳單預覽</h2>
           </div>
           <div className="flex items-center gap-2">
-             <div className="relative">
-               <input 
-                 type="month" 
-                 className="pl-9 pr-3 py-2 bg-morandi-oatmeal/50 rounded-xl text-sm font-bold border border-slate-100 outline-none focus:ring-2 focus:ring-morandi-blue transition-all"
-                 value={reportMonth}
-                 onChange={e => setReportMonth(e.target.value)}
-               />
-               <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+             <div className="flex bg-slate-100 p-1 rounded-xl">
+               <button 
+                 onClick={() => setReportType('month')}
+                 className={`px-3 py-1.5 text-sm font-bold rounded-lg transition-colors ${reportType === 'month' ? 'bg-white text-morandi-blue shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+               >
+                 月報
+               </button>
+               <button 
+                 onClick={() => setReportType('year')}
+                 className={`px-3 py-1.5 text-sm font-bold rounded-lg transition-colors ${reportType === 'year' ? 'bg-white text-morandi-blue shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+               >
+                 年報
+               </button>
              </div>
+             
+             {reportType === 'month' ? (
+               <div className="relative">
+                 <input 
+                   type="month" 
+                   className="pl-9 pr-3 py-2 bg-morandi-oatmeal/50 rounded-xl text-sm font-bold border border-slate-100 outline-none focus:ring-2 focus:ring-morandi-blue transition-all"
+                   value={reportMonth}
+                   onChange={e => setReportMonth(e.target.value)}
+                 />
+                 <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+               </div>
+             ) : (
+               <div className="relative">
+                 <select 
+                   className="pl-9 pr-3 py-2 bg-morandi-oatmeal/50 rounded-xl text-sm font-bold border border-slate-100 outline-none focus:ring-2 focus:ring-morandi-blue transition-all appearance-none min-w-[100px]"
+                   value={reportYear}
+                   onChange={e => setReportYear(e.target.value)}
+                 >
+                   {Array.from({ length: 11 }, (_, i) => new Date().getFullYear() - 5 + i).map(y => (
+                     <option key={y} value={y.toString()}>{y}年</option>
+                   ))}
+                 </select>
+                 <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+               </div>
+             )}
              <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 bg-morandi-blue text-white rounded-xl text-sm font-bold shadow-md hover:bg-slate-600 transition-colors">
                <Printer className="w-4 h-4" /> 列印 / PDF
              </button>
@@ -211,7 +261,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                 <h1 className="text-3xl font-black text-slate-800 tracking-tight">B2B 客戶對帳單</h1>
              </div>
              <div className="text-right">
-                <p className="text-sm font-bold text-slate-500 mb-1">對帳期間：{reportMonth.replace('-', '年')}月</p>
+                <p className="text-sm font-bold text-slate-500 mb-1">對帳期間：{reportType === 'month' ? reportMonth.replace('-', '年') + '月' : `${reportYear}年度`}</p>
                 <p className="text-xl font-extrabold text-slate-800">{customerName}</p>
                 {customer?.address && <p className="text-xs text-slate-400 mt-1">{customer.address}</p>}
              </div>
@@ -251,7 +301,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                {/* 3. Data Visualizations */}
                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 print:break-inside-avoid">
                  <div className="md:col-span-2 bg-white border border-gray-100 p-6 rounded-2xl shadow-sm">
-                    <h3 className="text-sm font-extrabold text-slate-800 tracking-wide mb-6">採購金額趨勢 (日)</h3>
+                    <h3 className="text-sm font-extrabold text-slate-800 tracking-wide mb-6">採購金額趨勢 ({reportType === 'month' ? '日' : '月'})</h3>
                     <div className="w-full" style={{ height: 250 }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={kpis.trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
@@ -267,7 +317,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                           <RechartsTooltip 
                             contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                             formatter={(value: number) => [`$${value}`, '金額']}
-                            labelFormatter={label => `${reportMonth}-${label}`}
+                            labelFormatter={label => reportType === 'month' ? `${reportMonth}-${label}` : `${reportYear}-${label}月`}
                           />
                           <Area type="monotone" dataKey="amount" stroke={COLORS[0]} strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" />
                         </AreaChart>
@@ -327,8 +377,13 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                </div>
 
                {/* 4. Detailed Data Table */}
-               <div className="print:break-inside-avoid">
-                 <h3 className="text-sm font-extrabold text-slate-800 tracking-wide mb-4">訂單明細表</h3>
+               <div className="print:break-before-page">
+                 {/* Print-only header for second page */}
+                 <div className="hidden print:block text-lg font-black text-slate-800 mb-6 border-b-2 border-slate-200 pb-2">
+                   {customerName} - {reportType === 'month' ? reportMonth.replace('-', '年') + '月' : `${reportYear}年度`} 訂單明細
+                 </div>
+
+                 <h3 className="text-sm font-extrabold text-slate-800 tracking-wide mb-4 print:hidden">訂單明細表</h3>
                  <div className="overflow-x-auto rounded-xl border border-gray-100">
                     <table className="w-full text-left text-sm">
                       <thead className="bg-gray-50 text-gray-500 font-bold text-[11px] uppercase tracking-wider">
