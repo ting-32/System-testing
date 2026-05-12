@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   Users, 
   Package, 
@@ -136,6 +136,24 @@ const App: React.FC = () => {
     saveTripsToCloud
   } = useDataSync(addToast);
 
+  const customerMap = useMemo(() => {
+    const map: Record<string, Customer> = {};
+    customers.forEach(c => {
+      map[c.name] = c;
+      if (c.id) map[c.id] = c;
+    });
+    return map;
+  }, [customers]);
+
+  const productMap = useMemo(() => {
+    const map: Record<string, Product> = {};
+    products.forEach(p => {
+      if (p.id) map[p.id] = p;
+      if (p.name) map[p.name] = p;
+    });
+    return map;
+  }, [products]);
+
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [unlockTimeout, setUnlockTimeout] = useState<number | null>(null);
   const [showUnlockModal, setShowUnlockModal] = useState(false);
@@ -195,6 +213,11 @@ const App: React.FC = () => {
   const { layoutMode, setLayoutMode } = useCompactMode();
 
   const mainRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // 移除不必要的 scrollParent 邏輯
+  }, []);
+
   
   // NEW: Ref to store the version (lastUpdated timestamp) of the item currently being edited
   const editingVersionRef = useRef<number | undefined>(undefined);
@@ -1278,102 +1301,111 @@ const App: React.FC = () => {
                   </div>
                 )
               ) : Object.keys(groupedOrders).length > 0 ? (
-                Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => {
-                  const isExpanded = expandedCustomer === custName;
-                  const currentCustomer = customers.find(c => c.name === custName);
-                  
-                  // 1. 計算商品總和與總價格
-                  let totalAmount = 0;
-                  const itemTotals = new Map<string, number>();
+                Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders], index) => {
+                    const isExpanded = expandedCustomer === custName;
+                    const currentCustomer = customerMap[custName];
+                    
+                    // 1. 計算商品總和與總價格
+                    let totalAmount = 0;
+                    const itemTotals = new Map<string, number>();
+                    const isLoadingProduct = isBackgroundSyncing && Object.keys(productMap).length === 0;
 
-                  custOrders.forEach(o => { 
-                    o.items.forEach(item => { 
-                      const p = products.find(prod => prod.id === item.productId); 
-                      const pName = p?.name || item.productId; 
-                      const unit = item.unit || p?.unit || '斤'; 
-                      
-                      // 加總相同品項與單位
-                      const key = `${pName}::${unit}`;
-                      itemTotals.set(key, (itemTotals.get(key) || 0) + item.quantity);
+                    custOrders.forEach(o => { 
+                      o.items.forEach(item => { 
+                        const p = productMap[item.productId]; 
+                        const pName = p?.name || item.productId; 
+                        const unit = item.unit || p?.unit || '斤'; 
+                        
+                        // 加總相同品項與單位
+                        const key = `${pName}::${unit}`;
+                        itemTotals.set(key, (itemTotals.get(key) || 0) + item.quantity);
 
-                      // 計算總價格
-                      if (unit === '元') { 
-                        totalAmount += item.quantity; 
-                      } else { 
-                        const priceInfo = currentCustomer?.priceList?.find(pl => pl.productId === item.productId); 
-                        const price = priceInfo ? priceInfo.price : (p?.price || 0); 
-                        totalAmount += Math.round(item.quantity * price); 
-                      } 
-                    }); 
-                  });
+                        // 計算總價格
+                        if (unit === '元') { 
+                          totalAmount += item.quantity; 
+                        } else { 
+                          const priceInfo = currentCustomer?.priceList?.find(pl => pl.productId === item.productId); 
+                          const price = priceInfo ? priceInfo.price : (p?.price || 0); 
+                          totalAmount += Math.round(item.quantity * price); 
+                        } 
+                      }); 
+                    });
 
-                  // 轉換為字串陣列 (例如: 油麵 3斤)
-                  const itemSummaries = Array.from(itemTotals.entries()).map(([key, qty]) => {
-                    const [name, unit] = key.split('::');
-                    return `${name} ${qty}${unit}`;
-                  });
-                  const summaryText = itemSummaries.join('、');
+                    // 轉換為字串陣列 (例如: 油麵 3斤)
+                    const itemSummaries = Array.from(itemTotals.entries()).map(([key, qty]) => {
+                      const [name, unit] = key.split('::');
+                      return `${name} ${qty}${unit}`;
+                    });
+                    const summaryText = itemSummaries.join('、');
 
-                  // 2. 判斷綜合狀態
-                  const allPaid = custOrders.every(o => o.status === OrderStatus.PAID);
-                  const allShipped = custOrders.every(o => o.status === OrderStatus.SHIPPED || o.status === OrderStatus.PAID);
-                  let statusTag = { label: '待處理', color: 'bg-blue-50 text-blue-600 border-blue-100' };
-                  if (allPaid) statusTag = { label: '已收款', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
-                  else if (allShipped) statusTag = { label: '已配送', color: 'bg-amber-50 text-amber-600 border-amber-100' };
+                    // 2. 判斷綜合狀態
+                    const allPaid = custOrders.every(o => o.status === OrderStatus.PAID);
+                    const allShipped = custOrders.every(o => o.status === OrderStatus.SHIPPED || o.status === OrderStatus.PAID);
+                    let statusTag = { label: '待處理', color: 'bg-blue-50 text-blue-600 border-blue-100' };
+                    if (allPaid) statusTag = { label: '已收款', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
+                    else if (allShipped) statusTag = { label: '已配送', color: 'bg-amber-50 text-amber-600 border-amber-100' };
 
-                  return (
-                    <motion.div variants={itemVariants} key={custName} className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden mb-3 hover:shadow-md transition-shadow duration-300">
-                      <button onClick={() => setExpandedCustomer(isExpanded ? null : custName)} className="w-full flex items-center justify-between p-5 text-left active:bg-morandi-oatmeal/30 transition-colors">
-                        <div className="flex items-center gap-4 overflow-hidden">
-                          <div className={`w-12 h-12 rounded-[16px] flex-shrink-0 flex items-center justify-center text-xl font-extrabold transition-colors ${isExpanded ? 'bg-morandi-blue text-white' : 'bg-morandi-oatmeal text-morandi-pebble'}`}>{String(custName || '').charAt(0)}</div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <h3 className={`font-bold text-lg truncate tracking-tight ${isExpanded ? 'text-morandi-charcoal' : 'text-slate-700'}`}>{custName}</h3>
-                              {/* 新增狀態標籤 */}
-                              <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold flex-shrink-0 border ${statusTag.color}`}>{statusTag.label}</span>
-                              {/* 原本的總價格 */}
-                              {totalAmount > 0 && (<span className="bg-morandi-amber-bg text-morandi-amber-text text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 tracking-wide">${totalAmount.toLocaleString()}</span>)}
+                    return (
+                      <div key={custName} className="pb-3 px-1">
+                        <motion.div variants={itemVariants} className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow duration-300">
+                          <button onClick={() => setExpandedCustomer(isExpanded ? null : custName)} className="w-full flex items-center justify-between p-5 text-left active:bg-morandi-oatmeal/30 transition-colors">
+                            <div className="flex items-center gap-4 overflow-hidden">
+                              <div className={`w-12 h-12 rounded-[16px] flex-shrink-0 flex items-center justify-center text-xl font-extrabold transition-colors ${isExpanded ? 'bg-morandi-blue text-white' : 'bg-morandi-oatmeal text-morandi-pebble'}`}>{String(custName || '').charAt(0)}</div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <h3 className={`font-bold text-lg truncate tracking-tight ${isExpanded ? 'text-morandi-charcoal' : 'text-slate-700'}`}>{custName}</h3>
+                                  {/* 新增狀態標籤 */}
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold flex-shrink-0 border ${statusTag.color}`}>{statusTag.label}</span>
+                                  {/* 原本的總價格 */}
+                                  {totalAmount > 0 && (<span className="bg-morandi-amber-bg text-morandi-amber-text text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 tracking-wide">${totalAmount.toLocaleString()}</span>)}
+                                </div>
+                                {!isExpanded && (
+                                  isLoadingProduct ? (
+                                    <div className="h-3 w-32 bg-slate-200 animate-pulse rounded mt-1"></div>
+                                  ) : (
+                                    <p className="text-xs text-morandi-pebble font-medium truncate leading-relaxed tracking-wide">{summaryText || `${custOrders.reduce((sum, o) => sum + o.items.length, 0)} 個品項`}</p>
+                                  )
+                                )}
+                              </div>
                             </div>
-                            {!isExpanded && (<p className="text-xs text-morandi-pebble font-medium truncate leading-relaxed tracking-wide">{summaryText || `${custOrders.reduce((sum, o) => sum + o.items.length, 0)} 個品項`}</p>)}
-                          </div>
-                        </div>
-                        {isExpanded ? <ChevronUp className="w-5 h-5 text-morandi-pebble flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-morandi-pebble flex-shrink-0" />}
-                      </button>
-                      
-                      <AnimatePresence>
-                      {isExpanded && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="bg-morandi-oatmeal/20 border-t border-slate-100 overflow-hidden">
-                          <div className="p-5">
-                          {custOrders.map((order) => (
-                             <SwipeableOrderCard 
-                                key={order.id} 
-                                order={order} 
-                                products={products} 
-                                customers={customers}
-                                isSelectionMode={isSelectionMode}
-                                isSelected={selectedOrderIds.has(order.id)}
-                                onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
-                                onStatusChange={handleSwipeStatusChange} // Use Undo handler
-                                onDelete={() => requireAuth(() => handleDeleteOrder(order.id))}
-                                onShare={handleShareOrder}
-                                onMap={openGoogleMaps}
-                                onEdit={(orderId) => requireAuth(() => handleEditOrder(orderId))}
-                                onRetry={handleRetryOrder}
-                                onViewCustomer={setViewingCustomerProfile}
-                             />
-                          ))}
-                          <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
-                          <div className="flex gap-2 pt-2">
-                             <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => handleCopyOrder(custName, custOrders))} className="flex-1 py-3 px-4 rounded-[16px] bg-white text-morandi-pebble border border-slate-200 font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors shadow-sm tracking-wide"><Copy className="w-4 h-4" /> 複製</motion.button>
-                             <motion.button whileTap={buttonTap} onClick={() => openGoogleMaps(custName)} className="flex-1 py-3 px-4 rounded-[16px] bg-morandi-blue text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors shadow-lg shadow-morandi-blue/20 tracking-wide"><MapPin className="w-4 h-4" /> 導航</motion.button>
-                          </div>
-                          </div>
+                            {isExpanded ? <ChevronUp className="w-5 h-5 text-morandi-pebble flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-morandi-pebble flex-shrink-0" />}
+                          </button>
+                          
+                          <AnimatePresence>
+                          {isExpanded && (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="bg-morandi-oatmeal/20 border-t border-slate-100 overflow-hidden">
+                              <div className="p-5">
+                              {custOrders.map((order) => (
+                                 <SwipeableOrderCard 
+                                    key={order.id} 
+                                    order={order} 
+                                    productMap={productMap} 
+                                    customerMap={customerMap}
+                                    isSelectionMode={isSelectionMode}
+                                    isSelected={selectedOrderIds.has(order.id)}
+                                    onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
+                                    onStatusChange={handleSwipeStatusChange} // Use Undo handler
+                                    onDelete={() => requireAuth(() => handleDeleteOrder(order.id))}
+                                    onShare={handleShareOrder}
+                                    onMap={openGoogleMaps}
+                                    onEdit={(orderId) => requireAuth(() => handleEditOrder(orderId))}
+                                    onRetry={handleRetryOrder}
+                                    onViewCustomer={setViewingCustomerProfile}
+                                 />
+                              ))}
+                              <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
+                              <div className="flex gap-2 pt-2">
+                                 <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => handleCopyOrder(custName, custOrders))} className="flex-1 py-3 px-4 rounded-[16px] bg-white text-morandi-pebble border border-slate-200 font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors shadow-sm tracking-wide"><Copy className="w-4 h-4" /> 複製</motion.button>
+                                 <motion.button whileTap={buttonTap} onClick={() => openGoogleMaps(custName)} className="flex-1 py-3 px-4 rounded-[16px] bg-morandi-blue text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors shadow-lg shadow-morandi-blue/20 tracking-wide"><MapPin className="w-4 h-4" /> 導航</motion.button>
+                              </div>
+                              </div>
+                            </motion.div>
+                          )}
+                          </AnimatePresence>
                         </motion.div>
-                      )}
-                      </AnimatePresence>
-                    </motion.div>
-                  );
-                })
+                      </div>
+                    );
+                  })
               ) : (
                 <div className="py-20 flex flex-col items-center text-center gap-4">
                   <ClipboardList className="w-16 h-16 text-gray-200" />
@@ -1672,12 +1704,13 @@ const App: React.FC = () => {
                               </button>
                             )}
 
-                            {/* 下面是你原本的刪除趟數按鈕 */}
+                            {/* 下面是你原本的刪除趟數按鈕 
                             {trip !== '未分配' && (
                               <button onClick={() => handleDeleteTrip(trip)} className="ml-1 p-1 text-current opacity-50 hover:opacity-100 hover:bg-white/50 rounded-full transition-all">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
+                            */}
                           </h4>
                           {trip !== '未分配' && (
                             <div className="text-right">
@@ -1718,8 +1751,8 @@ const App: React.FC = () => {
                                   <div className="flex-1 pointer-events-none">
                                     <ScheduleOrderCard 
                                       order={order}
-                                      products={products}
-                                      customers={customers}
+                                      productMap={productMap}
+                                      customerMap={customerMap}
                                       isSelectionMode={isSelectionMode}
                                       isSelected={selectedOrderIds.has(order.id)}
                                       onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
@@ -1738,8 +1771,8 @@ const App: React.FC = () => {
                               <div key={order.id} className="relative">
                                 <ScheduleOrderCard 
                                   order={order}
-                                  products={products}
-                                  customers={customers}
+                                  productMap={productMap}
+                                  customerMap={customerMap}
                                   isSelectionMode={isSelectionMode}
                                   isSelected={selectedOrderIds.has(order.id)}
                                   onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
@@ -1769,6 +1802,7 @@ const App: React.FC = () => {
              <div className="px-1">
                <div className="flex justify-between items-center mb-4">
                  <h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Wallet className="w-5 h-5 text-morandi-blue" /> 帳務總覽</h2>
+                 {/* 暫停使用帳務頁面的建立訂單按鈕 
                  <motion.button 
                    whileTap={buttonTap} 
                    whileHover={buttonHover} 
@@ -1792,6 +1826,7 @@ const App: React.FC = () => {
                    <Plus className="w-5 h-5" />
                    <span className="text-xs font-bold">建立訂單</span>
                  </motion.button>
+                 */}
                </div>
                
                {/* Revenue Overview Cards */}
@@ -2529,8 +2564,8 @@ const App: React.FC = () => {
                 <SwipeableOrderCard 
                   key={order.id}
                   order={order} 
-                  products={products} 
-                  customers={customers}
+                  productMap={productMap} 
+                  customerMap={customerMap}
                   isSelectionMode={false}
                   isSelected={false}
                   onToggleSelection={() => {}}

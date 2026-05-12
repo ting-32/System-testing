@@ -229,28 +229,28 @@ function changePassword(data) {
   return true;
 }
 
+// 提取 getSheetData 以便共用，避免不必要的跨表全讀取導致逾時
+function getSheetData(sheet) {
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return []; // Only header or empty
+  
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const data = [];
+  for (let i = 1; i < values.length; i++) {
+    let obj = {};
+    for (let j = 0; j < headers.length; j++) {
+      obj[headers[j]] = formatCellValue(values[i][j]);
+    }
+    data.push(obj);
+  }
+  return data;
+}
+
 function getData(startDateStr) {
   const sheets = getSheets();
   
-  // Helpers to get data as array of objects
-  const getSheetData = (sheet) => {
-    if (!sheet) return [];
-    const lastRow = sheet.getLastRow();
-    if (lastRow <= 1) return []; // Only header or empty
-    
-    const values = sheet.getDataRange().getValues();
-    const headers = values[0];
-    const data = [];
-    for (let i = 1; i < values.length; i++) {
-      let obj = {};
-      for (let j = 0; j < headers.length; j++) {
-        obj[headers[j]] = formatCellValue(values[i][j]);
-      }
-      data.push(obj);
-    }
-    return data;
-  };
-
   const customers = getSheetData(sheets.CUSTOMERS).map(c => ({
     id: c.ID || c.id,
     name: c.Name || c.name || c.客戶名稱,
@@ -770,14 +770,27 @@ function generateTomorrowDefaultOrders() {
   // 👆 第 1 段結束 👆
   // ==========================================
 
-  const customers = getData().customers;
-  // --- 新增以下這段 ---
-  const products = getData().products;
+  // 取代原先的 getData()，避免全表(包含ORDERS)都被載入解析而導致逾時
+  const customers = getSheetData(sheets.CUSTOMERS).map(c => ({
+    name: c.Name || c.name || c.客戶名稱,
+    defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
+    offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
+    holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
+    deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
+    deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
+    defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
+    autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true
+  }));
+
+  const products = getSheetData(sheets.PRODUCTS).map(p => ({
+    id: p.ID || p.id,
+    name: p.Name || p.name || p.品項
+  }));
+  
   const productMap = {};
   products.forEach(p => {
     productMap[p.id] = p.name;
   });
-  // -------------------
   const newOrderRows = [];
   const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
   const lastUpdatedTs = new Date().getTime();

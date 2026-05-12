@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, RotateCcw, Clock, ChevronDown, ChevronUp, Share2, MapPin } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
@@ -7,8 +7,8 @@ import { buttonTap, triggerHaptic } from './animations';
 
 interface ScheduleOrderCardProps {
   order: Order;
-  products: Product[];
-  customers: Customer[];
+  productMap: Record<string, Product>;
+  customerMap: Record<string, Customer>;
   isSelectionMode: boolean;
   isSelected: boolean;
   onToggleSelection: () => void;
@@ -19,7 +19,7 @@ interface ScheduleOrderCardProps {
 }
 
 export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({ 
-  order, products, customers, isSelectionMode, isSelected, onToggleSelection, 
+  order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
   onStatusChange, onShare, onMap, hideActions
 }) => {
   const x = useMotionValue(0);
@@ -31,11 +31,11 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
   
   const statusConfig = getStatusStyles(order.status || OrderStatus.PENDING);
   
-  const totalAmount = (() => { 
-    const customer = customers.find(c => c.name === order.customerName); 
+  const totalAmount = useMemo(() => { 
+    const customer = customerMap[order.customerName]; 
     let total = 0; 
     order.items.forEach(item => { 
-      const product = products.find(p => p.id === item.productId || p.name === item.productId); 
+      const product = productMap[item.productId] || productMap[item.name as string]; // fallback if item.name was somehow used instead of id
       const priceItem = customer?.priceList?.find(pl => pl.productId === (product?.id || item.productId)); 
       const unitPrice = priceItem ? priceItem.price : (product?.price || 0); 
       if (item.unit === '元') { 
@@ -45,10 +45,10 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
       } 
     }); 
     return total; 
-  })();
+  }, [order.items, order.customerName, customerMap, productMap]);
   
   const itemSummary = order.items.map(item => { 
-    const p = products.find(prod => prod.id === item.productId || prod.name === item.productId); 
+    const p = productMap[item.productId] || productMap[item.name as string]; 
     return `${p?.name || item.productId} ${item.quantity}${item.unit || '斤'}`; 
   }).join('、');
   
@@ -136,7 +136,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
                 <div className="pt-3 mt-3 border-t border-dashed border-gray-200"> 
                   <div className="space-y-1.5 mb-3"> 
                     {order.items.map((item, idx) => { 
-                      const p = products.find(prod => prod.id === item.productId || prod.name === item.productId); 
+                      const p = productMap[item.productId] || productMap[item.name as string]; 
                       return ( 
                         <div key={idx} className="flex justify-between items-center text-xs"> 
                           <span className="text-slate-600 font-medium">{p?.name || item.productId}</span> 

@@ -79,10 +79,5 @@ export const PRODUCT_CATEGORIES = [
 
 const ENV_URL = (import.meta as any).env?.VITE_API_URL;
 
-// 增加一層防呆機制 (UX/DX 優化)
-// 如果開發者忘記設定 .env，在 console 跳出警告，避免程式直接掛掉不知原因
-if (!ENV_URL) {
-  console.error("警告: 未設定 VITE_API_URL 環境變數，API 連線將會失敗。");
-}
-
-export const GAS_URL = ENV_URL || '';
+// 增加一隻防呆機制，若沒有真實網址，就預設使用 mock api
+export const GAS_URL = ENV_URL || 'https://mock-api.local';

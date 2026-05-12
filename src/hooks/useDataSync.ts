@@ -1,7 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import localforage from 'localforage';
+import { debounce } from 'lodash';
 import { Customer, Product, Order, OrderStatus, GASResponse, ToastType } from '../types';
 import { GAS_URL as DEFAULT_GAS_URL } from '../constants';
 import { formatDateStr, normalizeDate, safeJsonArray } from '../utils';
+
+localforage.config({
+  name: 'NMR_App_DB',
+  storeName: 'nmr_cache_store'
+});
+
+const debouncedSaveData = debounce(async (key: string, data: any) => {
+  try {
+    await localforage.setItem(key, data);
+  } catch (error) {
+    console.error(`背景快取儲存失敗 [${key}]:`, error);
+  }
+}, 800);
 
 export const useDataSync = (addToast: (msg: string, type: ToastType) => void) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -18,37 +33,42 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     return DEFAULT_GAS_URL;
   });
 
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('nm_cache_customers');
-      return cached ? JSON.parse(cached) : [];
-    }
-    return [];
-  });
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [trips, setTrips] = useState<string[]>(['第一趟', '第二趟', '未分配']);
   
-  const [products, setProducts] = useState<Product[]>(() => {
+  // 2. 利用組件掛載 (Mount) 時觸發的 useEffect，建立非同步提取快取的方法
+  useEffect(() => {
+    const loadInitialCacheFromDB = async () => {
+      try {
+        const pCustomers = localforage.getItem<Customer[]>('nm_cache_customers');
+        const pProducts = localforage.getItem<Product[]>('nm_cache_products');
+        const pOrders = localforage.getItem<Order[]>('nm_cache_orders');
+        const pTrips = localforage.getItem<string[]>('availableTrips');
+
+        // 為了畫面順暢，推薦用 Promise.all 平行一次把所有資料拉回來
+        const [cachedCust, cachedProd, cachedOrd, cachedTrips] = await Promise.all([pCustomers, pProducts, pOrders, pTrips]);
+
+        let hasAnyCache = false;
+
+        if (cachedCust && cachedCust.length > 0) { setCustomers(cachedCust); hasAnyCache = true; }
+        if (cachedProd && cachedProd.length > 0) { setProducts(cachedProd); hasAnyCache = true; }
+        if (cachedOrd && cachedOrd.length > 0) { setOrders(cachedOrd); hasAnyCache = true; }
+        if (cachedTrips && cachedTrips.length > 0) { setTrips(cachedTrips); hasAnyCache = true; }
+        
+        if (hasAnyCache) {
+          setIsInitialLoading(false);
+        }
+      } catch (error) {
+        console.error('從資料庫還原快取崩潰:', error);
+      }
+    };
+
     if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('nm_cache_products');
-      return cached ? JSON.parse(cached) : [];
+      loadInitialCacheFromDB();
     }
-    return [];
-  });
-  
-  const [orders, setOrders] = useState<Order[]>(() => {
-    if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('nm_cache_orders');
-      return cached ? JSON.parse(cached) : [];
-    }
-    return [];
-  });
-  
-  const [trips, setTrips] = useState<string[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('availableTrips');
-      if (saved) return JSON.parse(saved);
-    }
-    return ['第一趟', '第二趟', '未分配'];
-  });
+  }, []);
   
   // 👇 新增這段：用 useRef 隨時追蹤最新的資料狀態，避開閉包陷阱
   const latestDataRef = useRef({ customers: [] as Customer[], products: [] as Product[], orders: [] as Order[], trips: [] as string[] });
@@ -58,36 +78,30 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('availableTrips', JSON.stringify(trips));
+      debouncedSaveData('availableTrips', trips);
     }
   }, [trips]);
   
   // NEW: Automator Effect to sink data to cache whenever it changes successfully
   useEffect(() => {
     if (typeof window !== 'undefined' && customers.length > 0) {
-      localStorage.setItem('nm_cache_customers', JSON.stringify(customers));
+      debouncedSaveData('nm_cache_customers', customers);
     }
   }, [customers]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && products.length > 0) {
-      localStorage.setItem('nm_cache_products', JSON.stringify(products));
+      debouncedSaveData('nm_cache_products', products);
     }
   }, [products]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && orders.length > 0) {
-      localStorage.setItem('nm_cache_orders', JSON.stringify(orders));
+      debouncedSaveData('nm_cache_orders', orders);
     }
   }, [orders]);
 
-  const [isInitialLoading, setIsInitialLoading] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const hasCache = !!localStorage.getItem('nm_cache_orders');
-      return !hasCache;
-    }
-    return true;
-  });
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -457,8 +471,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   // Initial Sync
   useEffect(() => { 
     if (isAuthenticated) { 
-      const hasCache = !!localStorage.getItem('nm_cache_orders');
-      syncData(hasCache); 
+      localforage.getItem('nm_cache_orders').then(cache => {
+        const hasCache = Array.isArray(cache) && cache.length > 0;
+        syncData(hasCache); 
+      });
     } 
   }, [isAuthenticated, syncData]);
 

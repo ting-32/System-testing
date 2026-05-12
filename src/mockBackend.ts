@@ -1,5 +1,6 @@
 export function setupMockBackend() {
-  if ((import.meta as any).env?.VITE_API_URL !== 'https://mock-api.local') return;
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl && envUrl !== 'https://mock-api.local') return;
 
   console.warn("啟用本地 Mock Backend (資料將儲存於 localStorage)");
 

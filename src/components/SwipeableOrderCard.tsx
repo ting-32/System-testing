@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo } from 'framer-motion';
 import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
@@ -8,8 +8,8 @@ import { buttonTap, triggerHaptic } from './animations';
 
 interface SwipeableOrderCardProps {
   order: Order;
-  products: Product[];
-  customers: Customer[];
+  productMap: Record<string, Product>;
+  customerMap: Record<string, Customer>;
   isSelectionMode: boolean;
   isSelected: boolean;
   onToggleSelection: () => void;
@@ -23,7 +23,7 @@ interface SwipeableOrderCardProps {
 }
 
 export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({ 
-  order, products, customers, isSelectionMode, isSelected, onToggleSelection, 
+  order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
   onStatusChange, onDelete, onShare, onMap, onEdit, onRetry, onViewCustomer
 }) => {
   const x = useMotionValue(0);
@@ -38,12 +38,13 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   }, []);
   
   const statusConfig = getStatusStyles(order.status || OrderStatus.PENDING);
+  const isLoadingProduct = Object.keys(productMap).length === 0;
   
-  const totalAmount = (() => { 
-    const customer = customers.find(c => c.name === order.customerName); 
+  const totalAmount = useMemo(() => { 
+    const customer = customerMap[order.customerName]; 
     let total = 0; 
     order.items.forEach(item => { 
-      const product = products.find(p => p.id === item.productId || p.name === item.productId); 
+      const product = productMap[item.productId]; 
       const priceItem = customer?.priceList?.find(pl => pl.productId === (product?.id || item.productId)); 
       const unitPrice = priceItem ? priceItem.price : (product?.price || 0); 
       if (item.unit === '元') { 
@@ -53,9 +54,9 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
       } 
     }); 
     return total; 
-  })();
+  }, [order.items, order.customerName, customerMap, productMap]);
   
-  const customer = customers.find(c => c.name === order.customerName);
+  const customer = customerMap[order.customerName];
   const habitLabel = ORDERING_HABITS.find(h => h.value === customer?.paymentTerm)?.label;
   const DRAG_THRESHOLD = 80;
   
@@ -200,10 +201,21 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
           </div> 
           <div className="space-y-2"> 
             {order.items.map((item, idx) => { 
-              const p = products.find(prod => prod.id === item.productId || prod.name === item.productId); 
+              const p = productMap[item.productId]; 
+              // 準備三種不同的寬度
+              const skeletonWidths = ['w-20', 'w-24', 'w-16']; 
+              // 根據 index 循環取用
+              const widthClass = skeletonWidths[idx % 3];
+
               return ( 
                 <div key={idx} className="flex justify-between items-center py-2 px-3 bg-white/60 rounded-[16px] border border-black/5"> 
-                  <span className="text-sm font-bold text-slate-600 tracking-wide">{p?.name || item.productId}</span> 
+                  {isLoadingProduct ? (
+                    <div className={`h-4 ${widthClass} bg-slate-200 animate-pulse rounded`}></div>
+                  ) : (
+                    <span className="text-sm font-bold text-slate-600 tracking-wide">
+                      {p?.name || item.productId}
+                    </span>
+                  )}
                   <div className="flex items-baseline gap-1"><span className="font-black text-lg text-slate-800">{item.quantity}</span><span className="text-[10px] font-bold text-gray-400">{item.unit || p?.unit || '斤'}</span></div> 
                 </div> 
               ); 
@@ -241,3 +253,4 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
     </div> 
   ); 
 };
+

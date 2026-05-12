@@ -4,14 +4,14 @@ import { Order, Product, Customer } from '../types';
 interface GridCardProps {
   orders: Order[];
   customerName: string;
-  products: Product[];
-  customers: Customer[];
+  productMap: Record<string, Product>;
+  customerMap: Record<string, Customer>;
   onClick: (customerName: string) => void;
 }
 
-export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerName, products, customers, onClick }) => {
+export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerName, productMap, customerMap, onClick }) => {
   let totalAmount = 0;
-  const currentCustomer = customers.find(c => c.name === customerName);
+  const currentCustomer = customerMap[customerName];
   
   // Aggregate items
   const itemTotals: Record<string, { quantity: number, unit: string }> = {};
@@ -33,7 +33,8 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
         totalAmount += item.quantity;
       } else {
         const priceInfo = currentCustomer?.priceList?.find(pl => pl.productId === item.productId);
-        const price = priceInfo ? priceInfo.price : 0;
+        const product = productMap[item.productId];
+        const price = priceInfo ? priceInfo.price : (product?.price || 0);
         totalAmount += Math.round(item.quantity * price);
       }
     });
@@ -78,7 +79,7 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
             <>
               {displayItems.map(([key, data]) => {
                 const productId = key.split('-')[0];
-                const product = products.find(p => p.id === productId);
+                const product = productMap[productId];
                 const productName = product?.name || productId;
                 return (
                   <div key={key} className="flex justify-between text-[10px] text-gray-500 leading-tight">

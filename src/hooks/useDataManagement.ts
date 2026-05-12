@@ -45,7 +45,7 @@ export const useDataManagement = ({
     if (!customerForm.name || isSaving) return; 
     setIsSaving(true); 
     
-    const isDuplicateName = customers.some(c => c.name.trim() === (customerForm.name || '').trim() && c.id !== (isEditingCustomer === 'new' ? null : isEditingCustomer)); 
+    const isDuplicateName = customers.some(c => String(c.name || '').trim() === String(customerForm.name || '').trim() && c.id !== (isEditingCustomer === 'new' ? null : isEditingCustomer)); 
     if (isDuplicateName) { addToast('客戶名稱不可重複！', 'error'); setIsSaving(false); return; } 
     
     // Validate coordinates
@@ -58,7 +58,7 @@ export const useDataManagement = ({
       }
     }
 
-    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: (customerForm.name || '').trim(), phone: (customerForm.phone || '').trim(), address: (customerForm.address || '').trim(), coordinates: (customerForm.coordinates || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '', autoOrderEnabled: customerForm.autoOrderEnabled || false }; 
+    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: String(customerForm.name || '').trim(), phone: String(customerForm.phone || '').trim(), address: String(customerForm.address || '').trim(), coordinates: String(customerForm.coordinates || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '', autoOrderEnabled: customerForm.autoOrderEnabled || false }; 
     
     // Backup old list for revert
     const previousCustomers = [...customers];
