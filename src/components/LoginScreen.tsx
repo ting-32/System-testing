@@ -1,12 +1,28 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Lock } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Lock, X, Share } from 'lucide-react';
 import { buttonTap } from './animations';
 
 export const LoginScreen: React.FC<{ onLogin: (pwd: string) => Promise<boolean> }> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [showPwaBanner, setShowPwaBanner] = useState(false);
+
+  useEffect(() => {
+    // Only show banner if not already dismissed and not already standalone
+    const isDismissed = localStorage.getItem('hide_pwa_banner');
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+    
+    if (!isDismissed && !isStandalone) {
+      setShowPwaBanner(true);
+    }
+  }, []);
+
+  const dismissBanner = () => {
+    setShowPwaBanner(false);
+    localStorage.setItem('hide_pwa_banner', 'true');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,7 +37,31 @@ export const LoginScreen: React.FC<{ onLogin: (pwd: string) => Promise<boolean> 
   };
 
   return (
-    <div className="min-h-screen bg-morandi-oatmeal flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen relative bg-morandi-oatmeal flex flex-col items-center justify-center p-4">
+      <AnimatePresence>
+        {showPwaBanner && (
+          <motion.div
+            initial={{ opacity: 0, y: -50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="absolute top-4 left-4 right-4 z-50 bg-white shadow-lg rounded-2xl p-4 border border-slate-100 flex items-start gap-3 max-w-sm mx-auto"
+          >
+            <div className="bg-blue-50 p-2 rounded-xl text-blue-500 shrink-0">
+              <Share className="w-5 h-5" />
+            </div>
+            <div className="flex-1 text-sm font-medium text-slate-600 leading-relaxed pt-1">
+              📱 想獲得更棒的全螢幕專屬體驗嗎？點擊瀏覽器底部的 <strong className="text-slate-800">[分享]</strong> ➔ <strong className="text-slate-800">[加入主畫面]</strong> 就能建立捷徑囉！
+            </div>
+            <button 
+              onClick={dismissBanner}
+              className="p-1.5 hover:bg-slate-50 text-slate-400 rounded-lg shrink-0 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

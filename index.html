@@ -5,6 +5,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Noodle Factory Manager</title>
+    <!-- 引入 pwa 的 manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- 專為 iOS (Safari) 的設定，允許隱藏網址列 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
+    <!-- 控制 iOS 畫面上方時間與電量那條狀態列的風格 (可選 default, black, black-translucent) -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+    <!-- iOS 的 App Icon 對應來源 -->
+    <link rel="apple-touch-icon" href="/icon-192.png">
+
+    <!-- Android Chrome 導覽列的背景色 -->
+    <meta name="theme-color" content="#ffffff" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
