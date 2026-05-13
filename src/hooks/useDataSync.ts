@@ -178,7 +178,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
               items: [], 
               note: o.備註 || o.note || '', 
               status: (o.狀態 || o.status as OrderStatus) || OrderStatus.PENDING, 
-              source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 系統自動生成' : ''),
+              source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
               deliveryMethod: o.配送方式 || o.deliveryMethod || '',
               trip: o.趟次 || o.trip || '',
               lastUpdated: Number(o.lastUpdated) || 0,

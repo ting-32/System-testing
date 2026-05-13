@@ -771,8 +771,8 @@ function generateTomorrowDefaultOrders() {
     const rowNote = existingOrders[i][7]; // 第 8 欄 (Index 7) 是備註
     const rowSource = existingOrders[i][sourceColIdx]; // 資料來源
     
-    // 如果日期是今天，且備註包含「🤖 系統自動生成」 或 資料來源包含「系統自動生成」
-    if (rowDate === targetDateStr && (String(rowNote).includes("🤖 系統自動生成") || String(rowSource).includes("系統自動生成"))) {
+    // 如果日期是今天，且備註包含「🤖 系統自動生成」或「🤖 自動建單」 或 資料來源包含「系統自動生成」
+    if (rowDate === targetDateStr && (String(rowNote).includes("🤖 系統自動生成") || String(rowNote).includes("🤖 自動建單") || String(rowSource).includes("系統自動生成") || String(rowSource).includes("自動建單"))) {
       alreadyGeneratedCustomers.add(rowCustomer); // 將客戶名稱加入已建單名單
     }
   }
@@ -850,7 +850,7 @@ function generateTomorrowDefaultOrders() {
       row[10] = item.unit || "斤";
       row[lastUpdatedColIdx] = lastUpdatedTs;
       row[tripColIdx] = c.defaultTrip || "";
-      row[sourceColIdx] = "🤖 系統自動生成";
+      row[sourceColIdx] = "🤖 自動建單";
       
       newOrderRows.push(row);
     });

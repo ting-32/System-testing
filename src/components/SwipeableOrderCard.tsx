@@ -195,7 +195,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border tracking-wide
                     ${order.source.includes('LINE') 
                       ? 'bg-[#06C755]/10 text-[#06C755] border-[#06C755]/20'
-                      : order.source.includes('系統')
+                      : (order.source.includes('系統') || order.source.includes('自動建單'))
                         ? 'bg-purple-50 text-purple-600 border-purple-100'
                         : 'bg-gray-50 text-gray-500 border-gray-200'
                     }

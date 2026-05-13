@@ -76,7 +76,7 @@ export interface Order {
   items: OrderItem[];
   note: string;
   status: OrderStatus;
-  source?: string; // 新增：資料來源 (例如："🤖 系統自動生成")
+  source?: string; // 新增：資料來源 (例如："🤖 自動建單")
   deliveryMethod?: string; // 新增：訂單的配送方式
   trip?: string; // 新增：趟次標籤
   sortOrder?: number; // 排序順序
