@@ -550,6 +550,44 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     return () => clearInterval(pollInterval);
   }, [isAuthenticated, apiEndpoint, syncData]);
 
+  // 🔔 Firebase Realtime Database 門鈴監聽器
+  useEffect(() => {
+    // 只有在登入成功後才開啟監聽
+    if (!isAuthenticated) return;
+
+    const firebaseUrl = 'https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app/sync.json';
+    let eventSource: EventSource | null = null;
+
+    try {
+      // 使用原生 EventSource 訂閱 Firebase 的 Server-Sent Events (SSE)
+      eventSource = new EventSource(firebaseUrl);
+      
+      // 聽到 'put' 廣播時，代表試算表更新了
+      eventSource.addEventListener('put', (event: any) => {
+        if (event && event.data) {
+          const parsed = JSON.parse(event.data);
+          
+          // 如果解析到的數據內有 lastUpdateTime，就觸動背景同步
+          if (parsed && parsed.data && parsed.data.lastUpdateTime) {
+            console.log('🔔 收到試算表編輯訊號！準備背景同步...');
+            
+            // 觸發靜默更新機制 (isSilent = true)
+            syncData(true); 
+          }
+        }
+      });
+    } catch (err) {
+      console.warn('門鈴連線中斷', err);
+    }
+
+    // 當使用者關閉網頁或登出時，拔除監聽器以節省資源
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [isAuthenticated, syncData]);
+
   return {
     isAuthenticated, setIsAuthenticated,
     apiEndpoint, setApiEndpoint,

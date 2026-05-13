@@ -951,3 +951,27 @@ function generateTomorrowDefaultOrders() {
     orderSheet.getRange(lastRow + 1, 1, newOrderRows.length, maxCol).setValues(newOrderRows);
   }
 }
+
+// 🏠 門鈴發送器：負責發送 PATCH 請求到 Firebase
+function notifyFirebase() {
+  const firebaseUrl = "https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app/sync.json";
+  const payload = {
+    lastUpdateTime: new Date().getTime()
+  };
+  const options = {
+    method: "patch",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+  try {
+    UrlFetchApp.fetch(firebaseUrl, options);
+  } catch (e) {
+    console.error("按門鈴失敗", e);
+  }
+}
+
+// 監聽手動編輯事件：將會綁定到觸發器上
+function onSpreadsheetEdit(e) {
+  notifyFirebase();
+}
