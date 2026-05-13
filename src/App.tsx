@@ -145,6 +145,8 @@ const App: React.FC = () => {
     return map;
   }, [customers]);
 
+  const isLoadingProducts = isBackgroundSyncing && products.length === 0;
+
   const productMap = useMemo(() => {
     const map: Record<string, Product> = {};
     products.forEach(p => {
@@ -1287,6 +1289,7 @@ const App: React.FC = () => {
                       orders={custOrders} 
                       productMap={productMap}
                       customerMap={customerMap}
+                      isLoadingProducts={isLoadingProducts}
                       onClick={handleGridCardClick} 
                     />
                   ))
@@ -1370,6 +1373,7 @@ const App: React.FC = () => {
                                     order={order} 
                                     productMap={productMap} 
                                     customerMap={customerMap}
+                                    isLoadingProducts={isLoadingProducts}
                                     isSelectionMode={isSelectionMode}
                                     isSelected={selectedOrderIds.has(order.id)}
                                     onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
@@ -1742,6 +1746,7 @@ const App: React.FC = () => {
                                       order={order}
                                       productMap={productMap}
                                       customerMap={customerMap}
+                                      isLoadingProducts={isLoadingProducts}
                                       isSelectionMode={isSelectionMode}
                                       isSelected={selectedOrderIds.has(order.id)}
                                       onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
@@ -1762,6 +1767,7 @@ const App: React.FC = () => {
                                   order={order}
                                   productMap={productMap}
                                   customerMap={customerMap}
+                                  isLoadingProducts={isLoadingProducts}
                                   isSelectionMode={isSelectionMode}
                                   isSelected={selectedOrderIds.has(order.id)}
                                   onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
@@ -2555,6 +2561,7 @@ const App: React.FC = () => {
                   order={order} 
                   productMap={productMap} 
                   customerMap={customerMap}
+                  isLoadingProducts={isLoadingProducts}
                   isSelectionMode={false}
                   isSelected={false}
                   onToggleSelection={() => {}}

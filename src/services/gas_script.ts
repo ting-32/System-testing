@@ -41,7 +41,8 @@ function getSheets() {
 
 function doGet(e) {
   const startDateStr = e.parameter.startDate;
-  const data = getData(startDateStr);
+  const since = Number(e.parameter.since) || 0;
+  const data = getData(startDateStr, since);
   return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -104,6 +105,12 @@ function doPost(e) {
       default:
         throw new Error("Unknown action: " + action);
     }
+    
+    // Invalidate Cache for entities that don't change often but changed now
+    if (["reorderProducts", "updateCustomer", "deleteCustomer", "updateProduct", "deleteProduct", "saveTrips"].includes(action)) {
+      try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
+    }
+
     return ContentService.createTextOutput(JSON.stringify({ success: true, data: result }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
@@ -248,51 +255,130 @@ function getSheetData(sheet) {
   return data;
 }
 
-function getData(startDateStr) {
+function getData(startDateStr, since = 0) {
   const sheets = getSheets();
+  const cache = CacheService.getScriptCache();
+  const CACHE_KEY = "APP_CACHE_CPT";
   
-  const customers = getSheetData(sheets.CUSTOMERS).map(c => ({
-    id: c.ID || c.id,
-    name: c.Name || c.name || c.客戶名稱,
-    phone: c.Phone || c.phone || c.電話,
-    address: c.Address || c.address || c.地址 || '',
-    coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
-    deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
-    defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
-    priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
-    offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
-    holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
-    deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
-    paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
-    defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
-    autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
-    lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
-  }));
+  let customers = null;
+  let products = null;
+  let trips = null;
+  
+  const cachedData = cache.get(CACHE_KEY);
+  if (cachedData) {
+    try {
+      const parsed = JSON.parse(cachedData);
+      customers = parsed.customers;
+      products = parsed.products;
+      trips = parsed.trips;
+    } catch (e) {}
+  }
+  
+  if (!customers || !products || !trips) {
+    try {
+      if (typeof Sheets !== 'undefined') {
+        const spreadsheetId = SS.getId();
+        const ranges = [
+          sheets.CUSTOMERS.getName() + "!A:Z",
+          sheets.PRODUCTS.getName() + "!A:Z",
+          sheets.TRIPS.getName() + "!A:Z"
+        ];
+        const res = Sheets.Spreadsheets.Values.batchGet(spreadsheetId, { ranges: ranges });
+        
+        const parseBatch = (valRange, mapper) => {
+          const values = valRange.values || [];
+          if (values.length <= 1) return [];
+          const headers = values[0];
+          const data = [];
+          for (let i = 1; i < values.length; i++) {
+            let obj = {};
+            for (let j = 0; j < headers.length; j++) obj[headers[j]] = formatCellValue(values[i][j]);
+            data.push(mapper(obj));
+          }
+          return data;
+        };
 
-  const products = getSheetData(sheets.PRODUCTS).map(p => ({
-    id: p.ID || p.id,
-    name: p.Name || p.name || p.品項,
-    unit: p.Unit || p.unit || p.單位,
-    price: p.Price || p.price || p.單價,
-    category: p.Category || p.category || p.分類,
-    lastUpdated: p.LastUpdated ? new Date(p.LastUpdated).getTime() : 0
-  }));
+        customers = parseBatch(res.valueRanges[0], c => ({
+          id: c.ID || c.id,
+          name: c.Name || c.name || c.客戶名稱,
+          phone: c.Phone || c.phone || c.電話,
+          address: c.Address || c.address || c.地址 || '',
+          coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
+          deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
+          defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
+          priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
+          offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
+          holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
+          deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
+          paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
+          defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
+          autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+          lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
+        }));
 
-  const getTripsData = (sheet) => {
-    if (!sheet) return [];
-    const lastRow = sheet.getLastRow();
-    if (lastRow <= 1) return [];
-    
-    const values = sheet.getDataRange().getValues();
-    const trips = [];
-    for (let i = 1; i < values.length; i++) {
-      if (values[i][0]) {
-        trips.push(String(values[i][0]).trim());
+        products = parseBatch(res.valueRanges[1], p => ({
+          id: p.ID || p.id,
+          name: p.Name || p.name || p.品項,
+          unit: p.Unit || p.unit || p.單位,
+          price: p.Price || p.price || p.單價,
+          category: p.Category || p.category || p.分類,
+          lastUpdated: p.LastUpdated ? new Date(p.LastUpdated).getTime() : 0
+        }));
+
+        const values = res.valueRanges[2].values || [];
+        trips = [];
+        for (let i = 1; i < values.length; i++) {
+          if (values[i][0]) trips.push(String(values[i][0]).trim());
+        }
+      } else {
+        throw new Error("No Sheets API");
       }
+    } catch(e) {
+      customers = getSheetData(sheets.CUSTOMERS).map(c => ({
+        id: c.ID || c.id,
+        name: c.Name || c.name || c.客戶名稱,
+        phone: c.Phone || c.phone || c.電話,
+        address: c.Address || c.address || c.地址 || '',
+        coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
+        deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
+        defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
+        priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
+        offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
+        holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
+        deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
+        paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
+        defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
+        autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+        lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
+      }));
+
+      products = getSheetData(sheets.PRODUCTS).map(p => ({
+        id: p.ID || p.id,
+        name: p.Name || p.name || p.品項,
+        unit: p.Unit || p.unit || p.單位,
+        price: p.Price || p.price || p.單價,
+        category: p.Category || p.category || p.分類,
+        lastUpdated: p.LastUpdated ? new Date(p.LastUpdated).getTime() : 0
+      }));
+
+      const getTripsData = (sheet) => {
+        if (!sheet) return [];
+        const lastRow = sheet.getLastRow();
+        if (lastRow <= 1) return [];
+        const values = sheet.getDataRange().getValues();
+        const tr = [];
+        for (let i = 1; i < values.length; i++) {
+          if (values[i][0]) tr.push(String(values[i][0]).trim());
+        }
+        return tr;
+      };
+      trips = getTripsData(sheets.TRIPS);
     }
-    return trips;
-  };
-  const trips = getTripsData(sheets.TRIPS);
+    
+    try {
+      cache.put(CACHE_KEY, JSON.stringify({ customers, products, trips }), 1800);
+    } catch(err) {}
+  }
 
   const ordersRaw = getSheetData(sheets.ORDERS);
   let orders = ordersRaw.map(o => ({
@@ -317,7 +403,11 @@ function getData(startDateStr) {
     orders = orders.filter(o => new Date(o.deliveryDate) >= start);
   }
 
-  return { customers, products, orders, trips };
+  if (since > 0) {
+    orders = orders.filter(o => o.lastUpdated > since);
+  }
+
+  return { customers, products, orders, trips, serverGlobalTs: new Date().getTime() };
 }
 
 function saveTrips(data) {

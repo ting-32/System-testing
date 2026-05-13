@@ -16,11 +16,12 @@ interface ScheduleOrderCardProps {
   onShare: (order: Order) => void;
   onMap: (name: string) => void;
   hideActions?: boolean;
+  isLoadingProducts?: boolean;
 }
 
 export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({ 
   order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
-  onStatusChange, onShare, onMap, hideActions
+  onStatusChange, onShare, onMap, hideActions, isLoadingProducts
 }) => {
   const x = useMotionValue(0);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -122,10 +123,20 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
               </div> 
               <div className="flex items-center gap-2"> 
                 <h4 className="font-bold text-slate-800 text-base truncate">{order.customerName}</h4> 
-                {!isExpanded && <span className="text-xs font-bold text-morandi-charcoal">${totalAmount.toLocaleString()}</span>} 
+                {!isExpanded && (
+                  isLoadingProducts ? (
+                    <div className="h-4 w-12 bg-slate-200/70 animate-pulse rounded"></div>
+                  ) : (
+                    <span className="text-xs font-bold text-morandi-charcoal">${totalAmount.toLocaleString()}</span>
+                  )
+                )} 
               </div> 
               {!isExpanded && ( 
-                <p className="text-[10px] text-gray-400 truncate">{itemSummary}</p> 
+                isLoadingProducts ? (
+                  <div className="h-3 w-32 bg-slate-200/70 animate-pulse rounded mt-1"></div>
+                ) : (
+                  <p className="text-[10px] text-gray-400 truncate">{itemSummary}</p> 
+                )
               )} 
             </div> 
             {isExpanded ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />} 
@@ -139,15 +150,27 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
                       const p = productMap[item.productId] || productMap[item.name as string]; 
                       return ( 
                         <div key={idx} className="flex justify-between items-center text-xs"> 
-                          <span className="text-slate-600 font-medium">{item.productName || p?.name || item.productId}</span> 
-                          <span className="font-bold text-slate-800">{item.quantity} {item.unit || '斤'}</span> 
+                          {isLoadingProducts ? (
+                            <div className="h-4 w-16 bg-slate-200/70 animate-pulse rounded"></div>
+                          ) : (
+                            <span className="text-slate-600 font-medium">{item.productName || p?.name || item.productId}</span> 
+                          )}
+                          {isLoadingProducts ? (
+                            <div className="h-4 w-10 bg-slate-200/70 animate-pulse rounded"></div>
+                          ) : (
+                            <span className="font-bold text-slate-800">{item.quantity} {item.unit || '斤'}</span> 
+                          )}
                         </div> 
                       ) 
                     })} 
                   </div> 
                   <div className="flex justify-between items-center pt-2 border-t border-gray-100 mb-3"> 
                     <span className="text-xs font-bold text-gray-400">總金額</span> 
-                    <span className="text-lg font-black text-morandi-charcoal">${totalAmount.toLocaleString()}</span> 
+                    {isLoadingProducts ? (
+                      <div className="h-6 w-16 bg-slate-200/70 animate-pulse rounded"></div>
+                    ) : (
+                      <span className="text-lg font-black text-morandi-charcoal">${totalAmount.toLocaleString()}</span> 
+                    )}
                   </div> 
                   {order.note && ( 
                     <div className="text-[10px] font-bold text-gray-500 bg-gray-50 px-3 py-2 rounded-lg mb-3 break-words"> 

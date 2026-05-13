@@ -7,9 +7,10 @@ interface GridCardProps {
   productMap: Record<string, Product>;
   customerMap: Record<string, Customer>;
   onClick: (customerName: string) => void;
+  isLoadingProducts?: boolean;
 }
 
-export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerName, productMap, customerMap, onClick }) => {
+export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerName, productMap, customerMap, onClick, isLoadingProducts }) => {
   let totalAmount = 0;
   const currentCustomer = customerMap[customerName];
   
@@ -83,8 +84,16 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
                 const productName = product?.name || productId;
                 return (
                   <div key={key} className="flex justify-between text-[10px] text-gray-500 leading-tight">
-                    <span className="truncate w-full">{productName}</span>
-                    <span className="font-mono ml-0.5">x{data.quantity}</span>
+                    {isLoadingProducts ? (
+                      <div className="h-3 w-16 bg-slate-200/70 animate-pulse rounded"></div>
+                    ) : (
+                      <span className="truncate w-full">{productName}</span>
+                    )}
+                    {isLoadingProducts ? (
+                      <div className="h-3 w-6 bg-slate-200/70 animate-pulse rounded ml-1"></div>
+                    ) : (
+                      <span className="font-mono ml-0.5">x{data.quantity}</span>
+                    )}
                   </div>
                 );
               })}
@@ -99,8 +108,12 @@ export const GridCard: React.FC<GridCardProps> = React.memo(({ orders, customerN
       </div>
 
       {/* 3. 金額 */}
-      <div className="mt-auto pt-1 border-t border-dashed border-gray-200 text-right font-bold text-gray-900 z-10 relative">
-        ${totalAmount.toLocaleString()}
+      <div className="mt-auto pt-1 border-t border-dashed border-gray-200 text-right flex justify-end font-bold text-gray-900 z-10 relative">
+        {isLoadingProducts ? (
+          <div className="h-4 w-12 bg-slate-200/70 animate-pulse rounded"></div>
+        ) : (
+          `$${totalAmount.toLocaleString()}`
+        )}
       </div>
     </div>
   );

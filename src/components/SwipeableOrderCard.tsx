@@ -20,11 +20,12 @@ interface SwipeableOrderCardProps {
   onEdit: (order: Order) => void;
   onRetry?: (id: string) => void;
   onViewCustomer?: (customerName: string) => void;
+  isLoadingProducts?: boolean;
 }
 
 export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({ 
   order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
-  onStatusChange, onDelete, onShare, onMap, onEdit, onRetry, onViewCustomer
+  onStatusChange, onDelete, onShare, onMap, onEdit, onRetry, onViewCustomer, isLoadingProducts
 }) => {
   const x = useMotionValue(0);
   
@@ -210,15 +211,32 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
                 </span>
               )}
             </div>
-            <div className="flex flex-col items-end"><span className="font-mono font-black text-xl text-morandi-charcoal tracking-tight"><span className="text-sm text-gray-400 mr-1">$</span>{totalAmount.toLocaleString()}</span></div> 
+            <div className="flex flex-col items-end">
+              {isLoadingProducts ? (
+                <div className="h-6 w-16 bg-slate-200/70 animate-pulse rounded-md mt-1"></div>
+              ) : (
+                <span className="font-mono font-black text-xl text-morandi-charcoal tracking-tight"><span className="text-sm text-gray-400 mr-1">$</span>{totalAmount.toLocaleString()}</span>
+              )}
+            </div> 
           </div> 
           <div className="space-y-2"> 
             {order.items.map((item, idx) => { 
               const p = productMap[item.productId]; 
               return ( 
                 <div key={idx} className="flex justify-between items-center py-2 px-3 bg-white/60 rounded-[16px] border border-black/5"> 
-                  <span className="text-sm font-bold text-slate-600 tracking-wide">{item.productName || p?.name || item.productId}</span> 
-                  <div className="flex items-baseline gap-1"><span className="font-black text-lg text-slate-800">{item.quantity}</span><span className="text-[10px] font-bold text-gray-400">{item.unit || p?.unit || '斤'}</span></div> 
+                  {isLoadingProducts ? (
+                    <div className="h-[18px] w-20 bg-slate-200/70 animate-pulse rounded"></div>
+                  ) : (
+                    <span className="text-sm font-bold text-slate-600 tracking-wide">{item.productName || p?.name || item.productId}</span> 
+                  )}
+                  <div className="flex items-baseline gap-1">
+                    <span className="font-black text-lg text-slate-800">{item.quantity}</span>
+                    {isLoadingProducts ? (
+                      <div className="h-3 w-4 bg-slate-200/70 animate-pulse rounded ml-1"></div>
+                    ) : (
+                      <span className="text-[10px] font-bold text-gray-400">{item.unit || p?.unit || '斤'}</span>
+                    )}
+                  </div> 
                 </div> 
               ); 
             })} 

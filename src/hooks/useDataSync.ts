@@ -58,13 +58,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         if (cachedTrips && cachedTrips.length > 0) { setTrips(cachedTrips); hasAnyCache = true; }
         
         if (hasAnyCache) {
-          // 若有訂單快取但沒有商品快取，這表示資料可能不完整，
-          // 不要提早解除 Loading，避免畫面上短暫顯示出商品 ID
-          if (cachedOrd && cachedOrd.length > 0 && (!cachedProd || cachedProd.length === 0)) {
-            // 保留 remains isInitialLoading = true，等待網路同步完畢
-          } else {
-            setIsInitialLoading(false);
-          }
+          setIsInitialLoading(false);
         }
       } catch (error) {
         console.error('從資料庫還原快取崩潰:', error);
@@ -131,9 +125,24 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       const startDate = new Date(); 
       startDate.setDate(startDate.getDate() - 60); 
       const startDateStr = formatDateStr(startDate); 
-      const res = await fetch(`${apiEndpoint}?type=init&startDate=${startDateStr}`); 
+      
+      const lastSyncStr = localStorage.getItem('nm_last_sync_ts');
+      const since = lastSyncStr && isSilent ? Number(lastSyncStr) : 0;
+      
+      const endpointParams = new URLSearchParams({
+        type: since > 0 ? 'sync_delta' : 'init',
+        startDate: startDateStr,
+        ...(since > 0 && { since: String(since) })
+      });
+
+      const res = await fetch(`${apiEndpoint}?${endpointParams.toString()}`); 
       const result: GASResponse<any> = await res.json(); 
+      
       if (result.success && result.data) { 
+        if (result.data.serverGlobalTs) {
+           localStorage.setItem('nm_last_sync_ts', String(result.data.serverGlobalTs));
+        }
+
         const mappedCustomers: Customer[] = (result.data.customers || []).map((c: any) => { 
           const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
           return { 
@@ -154,6 +163,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
             lastUpdated: Number(c.lastUpdated) || 0
           }; 
         }); 
+        
         const mappedProducts: Product[] = (result.data.products || []).map((p: any) => ({ 
           id: String(p.ID || p.id), 
           name: p.品項 || p.name, 
@@ -162,6 +172,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
           category: p.分類 || p.category || 'other',
           lastUpdated: Number(p.lastUpdated) || 0
         })); 
+        
         const rawOrders = result.data.orders || []; 
         const orderMap: { [key: string]: Order } = {}; 
         rawOrders.forEach((o: any) => { 
@@ -182,47 +193,72 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
               deliveryMethod: o.配送方式 || o.deliveryMethod || '',
               trip: o.趟次 || o.trip || '',
               lastUpdated: Number(o.lastUpdated) || 0,
-              syncStatus: 'synced' // Default to synced for fetched data
+              syncStatus: 'synced' 
             }; 
           } 
           const prodName = o.品項 || o.productName; 
-          const prod = mappedProducts.find(p => p.name === prodName); 
+          
+          // Try to map using delta mapping products, fallback to global products context...
+          let prod = mappedProducts.find(p => p.name === prodName);
+          if (!prod) {
+             const currentProducts = latestDataRef.current.products || [];
+             prod = currentProducts.find(p => p.name === prodName);
+          }
+           
           orderMap[oid].items.push({ productId: prod ? prod.id : prodName, quantity: Number(o.數量 || o.quantity) || 0, unit: o.unit || prod?.unit || '斤' }); 
         }); 
         
         const newOrders = Object.values(orderMap);
-
-        // SILENT AND MANUAL NOW USE THE SAME AUTO-MERGE LOGIC
         const fetchedTrips = result.data.trips || [];
         
-        // State isolation check is not handled here but merging logic is
-        setCustomers(mappedCustomers);
-        setProducts(mappedProducts);
-        if (fetchedTrips.length > 0) {
-            setTrips(fetchedTrips);
+        if (since > 0 && result.data.serverGlobalTs) {
+           // 💡 訂單依然做增量合併，但字典檔 (客戶/商品) 採用全量覆蓋
+           if (mappedCustomers.length > 0) {
+              setCustomers(mappedCustomers);
+           }
+           if (mappedProducts.length > 0) {
+              setProducts(mappedProducts);
+           }
+           if (fetchedTrips.length > 0) {
+              setTrips(fetchedTrips);
+           }
+           if (newOrders.length > 0) {
+              setOrders(currentOrders => {
+                 const mergedMap = new Map();
+                 currentOrders.forEach(o => mergedMap.set(o.id, o));
+                 newOrders.forEach(o => mergedMap.set(o.id, o));
+                 return Array.from(mergedMap.values());
+              });
+           }
+        } else {
+           // Full replacement
+           setCustomers(mappedCustomers);
+           setProducts(mappedProducts);
+           if (fetchedTrips.length > 0) {
+               setTrips(fetchedTrips);
+           }
+           
+           setOrders(currentOrders => {
+             const mergedOrders = [...newOrders];
+             
+             currentOrders.forEach(localOrder => {
+                 if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
+                     const index = mergedOrders.findIndex(o => o.id === localOrder.id);
+                     if (index !== -1) {
+                         mergedOrders[index] = localOrder;
+                     } else {
+                         mergedOrders.push(localOrder);
+                     }
+                 }
+             });
+             return mergedOrders;
+           });
         }
-        
-        setOrders(currentOrders => {
-          const mergedOrders = [...newOrders];
-          
-          currentOrders.forEach(localOrder => {
-              // Preserve locally modified items that haven't been successfully synced
-              if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
-                  const index = mergedOrders.findIndex(o => o.id === localOrder.id);
-                  if (index !== -1) {
-                      mergedOrders[index] = localOrder;
-                  } else {
-                      mergedOrders.push(localOrder);
-                  }
-              }
-          });
-          return mergedOrders;
-      });
 
         if (!isSilent) {
           addToast('雲端資料已同步完成 (近60天)', 'success');
         } else {
-          addToast('已更新至最新資料', 'success');
+          addToast(`已更新至最新資料`, 'success');
         }
       } 
     } catch (e) { 
