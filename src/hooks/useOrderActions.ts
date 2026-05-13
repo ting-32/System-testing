@@ -105,7 +105,10 @@ export const useOrderActions = ({
 
   const applyLastOrder = () => {
     if (!lastOrderCandidate) return;
-    setOrderForm((prev: any) => ({ ...prev, items: lastOrderCandidate.items.map((i: any) => ({...i})) }));
+    setOrderForm((prev: any) => ({ ...prev, items: lastOrderCandidate.items.map((item: any) => ({
+      ...item,
+      productName: item.productName || products.find((p:Product) => p.id === item.productId)?.name
+    })) }));
     setLastOrderCandidate(null);
     addToast(`已帶入${lastOrderCandidate.sourceLabel || '上次'}訂單內容`, 'success');
   };
@@ -183,6 +186,7 @@ export const useOrderActions = ({
       deliveryDate: selectedDate,
       deliveryTime: deliveryTime,
       deliveryMethod: deliveryMethod,
+      source: '', // 快速追加不設定特定來源，或是看需求
       items: processedItems,
       note: '追加單',
       status: OrderStatus.PENDING
@@ -192,7 +196,7 @@ export const useOrderActions = ({
       if (apiEndpoint) {
         const uploadItems = processedItems.map((item: any) => {
           const p = products.find(prod => prod.id === item.productId);
-          return { productName: p?.name || item.productId, quantity: item.quantity, unit: item.unit };
+          return { productName: item.productName || p?.name || item.productId, quantity: item.quantity, unit: item.unit };
         });
         const res = await fetch(apiEndpoint, {
           method: 'POST',
@@ -463,7 +467,7 @@ export const useOrderActions = ({
     ordersToCopy.forEach(o => {
       o.items.forEach(item => {
         const p = products.find(prod => prod.id === item.productId);
-        const pName = p?.name || item.productId;
+        const pName = item.productName || p?.name || item.productId;
         const unit = item.unit || p?.unit || '斤';
         let itemPrice = 0;
 
@@ -517,7 +521,7 @@ export const useOrderActions = ({
 
     order.items.forEach(item => {
       const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
-      text += `- ${p?.name || item.productId}: ${item.quantity} ${item.unit}\n`;
+      text += `- ${item.productName || p?.name || item.productId}: ${item.quantity} ${item.unit}\n`;
     });
 
     if (order.note) text += `\n📝 備註: ${order.note}\n`;
@@ -629,6 +633,7 @@ export const useOrderActions = ({
       deliveryTime: formatTimeForInput(order.deliveryTime),
       deliveryMethod: order.deliveryMethod || cust?.deliveryMethod || '',
       trip: order.trip || cust?.defaultTrip || '', // 👈 新增這行：優先使用訂單原本的趟數，否則使用客戶預設
+      source: order.source || '', // 保留原有的 source
       items: order.items.map(i => ({ ...i })),
       note: order.note,
       date: order.deliveryDate
@@ -647,6 +652,7 @@ export const useOrderActions = ({
         deliveryTime: formatTimeForInput(c.deliveryTime),
         deliveryMethod: c.deliveryMethod || '',
         trip: c.defaultTrip || '',
+        source: '', // 手動建立
         items: c.defaultItems && c.defaultItems.length > 0 ? c.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }],
         note: '',
         date: selectedDate
@@ -731,6 +737,7 @@ export const useOrderActions = ({
       deliveryTime: deliveryTime,
       deliveryMethod: orderForm.deliveryMethod,
       trip: orderForm.trip || '未分配',
+      source: orderForm.source || '',
       items: processedItems,
       note: orderForm.note,
       status: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.status || OrderStatus.PENDING) : OrderStatus.PENDING,
@@ -748,7 +755,7 @@ export const useOrderActions = ({
 
     setIsAddingOrder(false);
     setEditingOrderId(null);
-    setOrderForm({ customerType: 'existing', customerId: '', customerName: '', deliveryTime: '', deliveryMethod: '', trip: '', items: [{ productId: '', quantity: 10, unit: '斤' }], note: '', date: '' });
+    setOrderForm({ customerType: 'existing', customerId: '', customerName: '', deliveryTime: '', deliveryMethod: '', trip: '', source: '', items: [{ productId: '', quantity: 10, unit: '斤' }], note: '', date: '' });
     setIsSaving(false);
     
     if (orderForm.date && orderForm.date !== selectedDate) {

@@ -134,7 +134,7 @@ export const useOrderCalculations = ({
 
   // 4. Schedule Tab Orders
   const scheduleOrders = useMemo(() => {
-    return orders.filter(o => {
+    const rawOrders = orders.filter(o => {
       if (o.deliveryDate !== scheduleDate) return false;
       if (scheduleDeliveryMethodFilter.length > 0) {
         const customer = customers.find(c => c.name === o.customerName);
@@ -144,6 +144,13 @@ export const useOrderCalculations = ({
       return true;
     }).sort((a, b) => {
       return a.deliveryTime.localeCompare(b.deliveryTime);
+    });
+
+    const seen = new Set();
+    return rawOrders.filter(o => {
+      if (seen.has(o.id)) return false;
+      seen.add(o.id);
+      return true;
     });
   }, [orders, scheduleDate, scheduleDeliveryMethodFilter, customers]);
 
@@ -258,13 +265,20 @@ export const useOrderCalculations = ({
       });
     }
 
-    dayOrders.forEach(o => {
+    const seenOrders = new Set();
+    const uniqueDayOrders = dayOrders.filter(o => {
+      if (seenOrders.has(o.id)) return false;
+      seenOrders.add(o.id);
+      return true;
+    });
+
+    uniqueDayOrders.forEach(o => {
       if (!groups[o.customerName]) {
         groups[o.customerName] = [];
       }
       groups[o.customerName].push(o);
     });
-    return { groups, dayOrders };
+    return { groups, dayOrders: uniqueDayOrders };
   }, [orders, selectedDate, orderSearch, orderDeliveryFilter, customers]);
 
   // 9. Filtered Customers (Customer List)
@@ -278,6 +292,14 @@ export const useOrderCalculations = ({
   const workSheetData = useMemo(() => {
     let filtered = orders.filter(o => workDates.includes(o.deliveryDate));
     
+    // Deduplicate
+    const seen = new Set();
+    filtered = filtered.filter(o => {
+      if (seen.has(o.id)) return false;
+      seen.add(o.id);
+      return true;
+    });
+
     if (workCustomerFilter) filtered = filtered.filter(o => o.customerName.includes(workCustomerFilter));
     
     if (workDeliveryMethodFilter.length > 0) {
@@ -293,7 +315,7 @@ export const useOrderCalculations = ({
     filtered.forEach(o => {
       o.items.forEach(item => {
         const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
-        const pName = p?.name || item.productId;
+        const pName = item.productName || p?.name || item.productId;
         const unit = item.unit || p?.unit || '斤';
         const key = `${pName}::${unit}`; 
 

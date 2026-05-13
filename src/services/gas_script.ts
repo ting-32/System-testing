@@ -307,6 +307,7 @@ function getData(startDateStr) {
     note: o.Note || o.note || o.備註,
     status: o.Status || o.status || o.狀態,
     deliveryMethod: o.DeliveryMethod || o.deliveryMethod || o.配送方式,
+    source: o.Source || o.source || o.資料來源 || '',
     lastUpdated: o.LastUpdated ? new Date(o.LastUpdated).getTime() : 0,
     trip: o.Trip || o.trip || o.趟次 || ''
   }));
@@ -361,8 +362,9 @@ function createOrder(orderData) {
   // Ensure we have enough columns and headers
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
   const tripColIdx = ensureHeader(sheet, "Trip");
+  const sourceColIdx = ensureHeader(sheet, "資料來源");
   
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx) + 1;
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
   if (sheet.getMaxColumns() < maxCol) {
     sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
   }
@@ -385,6 +387,7 @@ function createOrder(orderData) {
     row[10] = item.unit || "斤";
     row[lastUpdatedColIdx] = lastUpdatedTs;
     row[tripColIdx] = orderData.trip || "";
+    row[sourceColIdx] = orderData.source || "";
     return row;
   });
   
@@ -399,9 +402,10 @@ function updateOrderContent(orderData) {
   const sheet = getSheets().ORDERS;
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated"); // 0-based index
   const tripColIdx = ensureHeader(sheet, "Trip");
+  const sourceColIdx = ensureHeader(sheet, "資料來源");
   const values = sheet.getDataRange().getValues();
   
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx) + 1;
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
   if (sheet.getMaxColumns() < maxCol) {
     sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
   }
@@ -455,6 +459,7 @@ function updateOrderContent(orderData) {
     row[10] = item.unit || "斤";
     row[lastUpdatedColIdx] = newLastUpdatedTs;
     row[tripColIdx] = orderData.trip || "";
+    row[sourceColIdx] = orderData.source || "";
     return row;
   });
 
@@ -740,6 +745,10 @@ function generateTomorrowDefaultOrders() {
   const sheets = getSheets();
   const orderSheet = sheets.ORDERS;
   
+  const sourceColIdx = ensureHeader(orderSheet, "資料來源");
+  const lastUpdatedColIdx = ensureHeader(orderSheet, "LastUpdated");
+  const tripColIdx = ensureHeader(orderSheet, "Trip");
+  
   const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
   const today = new Date();
   
@@ -760,9 +769,10 @@ function generateTomorrowDefaultOrders() {
     const rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
     const rowCustomer = existingOrders[i][2]; // 第 3 欄 (Index 2) 是客戶名稱
     const rowNote = existingOrders[i][7]; // 第 8 欄 (Index 7) 是備註
+    const rowSource = existingOrders[i][sourceColIdx]; // 資料來源
     
-    // 如果日期是今天，且備註包含「🤖 系統自動生成」
-    if (rowDate === targetDateStr && String(rowNote).includes("🤖 系統自動生成")) {
+    // 如果日期是今天，且備註包含「🤖 系統自動生成」 或 資料來源包含「系統自動生成」
+    if (rowDate === targetDateStr && (String(rowNote).includes("🤖 系統自動生成") || String(rowSource).includes("系統自動生成"))) {
       alreadyGeneratedCustomers.add(rowCustomer); // 將客戶名稱加入已建單名單
     }
   }
@@ -795,9 +805,7 @@ function generateTomorrowDefaultOrders() {
   const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
   const lastUpdatedTs = new Date().getTime();
 
-  const lastUpdatedColIdx = ensureHeader(orderSheet, "LastUpdated");
-  const tripColIdx = ensureHeader(orderSheet, "Trip");
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx) + 1;
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
   if (orderSheet.getMaxColumns() < maxCol) {
     orderSheet.insertColumnsAfter(orderSheet.getMaxColumns(), maxCol - orderSheet.getMaxColumns());
   }
@@ -836,12 +844,13 @@ function generateTomorrowDefaultOrders() {
       row[4] = c.deliveryTime || "08:00";
       row[5] = productMap[item.productId] || item.productName || item.productId;
       row[6] = item.quantity || 1;
-      row[7] = "🤖 系統自動生成";
+      row[7] = ""; // 備註先留空
       row[8] = "PENDING";
       row[9] = c.deliveryMethod || "";
       row[10] = item.unit || "斤";
       row[lastUpdatedColIdx] = lastUpdatedTs;
       row[tripColIdx] = c.defaultTrip || "";
+      row[sourceColIdx] = "🤖 系統自動生成";
       
       newOrderRows.push(row);
     });

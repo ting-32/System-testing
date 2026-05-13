@@ -49,7 +49,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
   
   const itemSummary = order.items.map(item => { 
     const p = productMap[item.productId] || productMap[item.name as string]; 
-    return `${p?.name || item.productId} ${item.quantity}${item.unit || '斤'}`; 
+    return `${item.productName || p?.name || item.productId} ${item.quantity}${item.unit || '斤'}`; 
   }).join('、');
   
   const handleDragEnd = (_event: any, info: PanInfo) => { 
@@ -139,7 +139,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
                       const p = productMap[item.productId] || productMap[item.name as string]; 
                       return ( 
                         <div key={idx} className="flex justify-between items-center text-xs"> 
-                          <span className="text-slate-600 font-medium">{p?.name || item.productId}</span> 
+                          <span className="text-slate-600 font-medium">{item.productName || p?.name || item.productId}</span> 
                           <span className="font-bold text-slate-800">{item.quantity} {item.unit || '斤'}</span> 
                         </div> 
                       ) 
