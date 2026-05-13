@@ -119,5 +119,14 @@
 <body>
     <div id="root"></div>
 <script type="module" src="/src/index.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(error => {
+            console.log('Service Worker registration failed:', error);
+          });
+        });
+      }
+    </script>
 </body>
 </html>
