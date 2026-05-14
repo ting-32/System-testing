@@ -111,6 +111,8 @@ function doPost(e) {
       try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
     }
 
+    notifyFirebase();
+
     return ContentService.createTextOutput(JSON.stringify({ success: true, data: result }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {

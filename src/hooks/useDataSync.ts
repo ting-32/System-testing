@@ -562,8 +562,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       // 使用原生 EventSource 訂閱 Firebase 的 Server-Sent Events (SSE)
       eventSource = new EventSource(firebaseUrl);
       
-      // 聽到 'put' 廣播時，代表試算表更新了
-      eventSource.addEventListener('put', (event: any) => {
+      // 我們把處理邏輯抽出來變成一個獨立的函數
+      const handleFirebaseEvent = (event: any) => {
         if (event && event.data) {
           const parsed = JSON.parse(event.data);
           
@@ -573,13 +573,17 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
             (parsed && parsed.path === '/lastUpdateTime') ||
             (parsed && parsed.path === '/')
           ) {
-            console.log('🔔 收到試算表編輯訊號！準備背景同步...');
+            console.log(`🔔 收到 Firebase 門鈴訊號 (${event.type})！準備背景同步...`);
             
             // 觸發靜默更新機制 (isSilent = true)
             syncData(true); 
           }
         }
-      });
+      };
+
+      // 同時拿它來接聽 put 和 patch 兩種廣播
+      eventSource.addEventListener('put', handleFirebaseEvent);
+      eventSource.addEventListener('patch', handleFirebaseEvent);
     } catch (err) {
       console.warn('門鈴連線中斷', err);
     }
