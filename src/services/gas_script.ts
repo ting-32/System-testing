@@ -973,5 +973,38 @@ function notifyFirebase() {
 
 // 監聽手動編輯事件：將會綁定到觸發器上
 function onSpreadsheetEdit(e) {
+  try {
+    // 確保有事件物件 e 以及範圍 range
+    if (e && e.range) {
+      const sheet = e.range.getSheet();
+      const sheetName = sheet.getName();
+      
+      // 只有當編輯這三個會被同步的表單時，才去更新 LastUpdated
+      if (["ORDERS", "CUSTOMERS", "PRODUCTS"].includes(sheetName)) {
+        // 抓取第一列的標題，來找出 LastUpdated 在第幾個直行
+        const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+        const lastUpdatedColIdx = headers.indexOf("LastUpdated");
+        
+        // 如果有成功找到這個欄位
+        if (lastUpdatedColIdx !== -1) {
+          const startRow = e.range.getRow();
+          const numRows = e.range.getNumRows();
+          const modifiedCol = e.range.getColumn();
+          
+          // 確保您改的不是標題列 (startRow > 1)
+          // 確保修改的不是 LastUpdated 欄位自己 (避免無限迴圈)
+          if (startRow > 1 && modifiedCol !== (lastUpdatedColIdx + 1)) {
+            const currentTs = new Date().getTime();
+            // 自動把被編輯的那一列的 LastUpdated 更新為當下的時間戳記！
+            sheet.getRange(startRow, lastUpdatedColIdx + 1, numRows, 1).setValue(currentTs);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("自動更新 LastUpdated 發生錯誤:", err);
+  }
+
+  // 做完時間戳記更新後，如同往常一樣按門鈴發送推播通知給前端
   notifyFirebase();
 }

@@ -568,7 +568,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
           const parsed = JSON.parse(event.data);
           
           // 如果解析到的數據內有 lastUpdateTime，就觸動背景同步
-          if (parsed && parsed.data && parsed.data.lastUpdateTime) {
+          if (
+            (parsed && parsed.data && parsed.data.lastUpdateTime) || 
+            (parsed && parsed.path === '/lastUpdateTime') ||
+            (parsed && parsed.path === '/')
+          ) {
             console.log('🔔 收到試算表編輯訊號！準備背景同步...');
             
             // 觸發靜默更新機制 (isSilent = true)
