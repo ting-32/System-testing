@@ -34,7 +34,6 @@ import {
   Wallet,
   Mic, // New Import
   List,
-  Grid,
   Filter,
   Check,
   GripVertical,
@@ -64,7 +63,6 @@ import { ToastNotification } from './components/ToastNotification';
 import { NavItem } from './components/NavItem';
 import { SortableProductItem } from './components/SortableProductItem';
 import { SwipeableOrderCard } from './components/SwipeableOrderCard';
-import { GridCard } from './components/GridCard';
 import { SkeletonCard } from './components/SkeletonCard';
 import { ScheduleOrderCard } from './components/ScheduleOrderCard';
 import { LoginScreen } from './components/LoginScreen';
@@ -349,7 +347,6 @@ const App: React.FC = () => {
   const [productForm, setProductForm] = useState<Partial<Product>>({});
   const [customerSearch, setCustomerSearch] = useState('');
   
-  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
   
   const [isScrollingDown, setIsScrollingDown] = useState(false);
@@ -531,10 +528,6 @@ const App: React.FC = () => {
 
   // NEW: Effect for dynamic loading text
   // (Moved to useVoiceAssistant)
-
-  const handleGridCardClick = useCallback((custName: string) => {
-    setSelectedCustomerForModal(custName);
-  }, []);
 
   // ... (Computed values moved to useOrderCalculations) ...
   const {
@@ -1217,21 +1210,6 @@ const App: React.FC = () => {
                        </span>
                      )}
                    </button>
-
-                   <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl h-12">
-                     <button 
-                       onClick={() => setViewMode('list')}
-                       className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                     >
-                       <List className="w-4 h-4" />
-                     </button>
-                     <button 
-                       onClick={() => setViewMode('grid')}
-                       className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                     >
-                       <Grid className="w-4 h-4" />
-                     </button>
-                   </div>
                  </div>
 
                  {/* 展開的篩選選項區塊 */}
@@ -1279,27 +1257,8 @@ const App: React.FC = () => {
               <div className="flex items-center justify-between px-2 mb-2">
                 <h2 className="text-sm font-bold text-morandi-pebble flex items-center gap-2 uppercase tracking-widest"><Layers className="w-4 h-4" /> 配送列表 [{selectedDate}] ({Object.keys(groupedOrders).length} 家)</h2>
               </div>
-              <motion.div variants={containerVariants} initial="hidden" animate="show" className={viewMode === 'grid' ? "grid grid-cols-2 sm:grid-cols-3 gap-2 p-1.5" : ""}>
-              {viewMode === 'grid' ? (
-                Object.keys(groupedOrders).length > 0 ? (
-                  Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => (
-                    <GridCard 
-                      key={custName} 
-                      customerName={custName}
-                      orders={custOrders} 
-                      productMap={productMap}
-                      customerMap={customerMap}
-                      isLoadingProducts={isLoadingProducts}
-                      onClick={handleGridCardClick} 
-                    />
-                  ))
-                ) : (
-                  <div className="col-span-3 text-center py-10">
-                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3"><Package className="w-8 h-8 text-slate-300" /></div>
-                    <p className="text-slate-400 font-medium">尚無訂單</p>
-                  </div>
-                )
-              ) : Object.keys(groupedOrders).length > 0 ? (
+              <motion.div variants={containerVariants} initial="hidden" animate="show">
+              {Object.keys(groupedOrders).length > 0 ? (
                 Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders], index) => {
                     const isExpanded = expandedCustomer === custName;
                     const currentCustomer = customerMap[custName];
@@ -2196,7 +2155,7 @@ const App: React.FC = () => {
       
       {/* (Modal closing tags are here in original code) */}
       <ConfirmModal isOpen={confirmConfig.isOpen} title={confirmConfig.title} message={confirmConfig.message} onConfirm={confirmConfig.onConfirm} onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))} />
-      {holidayEditorId && (<HolidayCalendar storeName={isEditingCustomer ? (customerForm.name || '') : ''} holidays={customerForm.holidayDates || []} offDays={customerForm.offDays || []} onToggle={(date) => { const current = customerForm.holidayDates || []; const newHolidays = current.includes(date) ? current.filter(d => d !== date) : [...current, date]; setCustomerForm({...customerForm, holidayDates: newHolidays}); }} onClose={() => setHolidayEditorId(null)} />)}
+      {holidayEditorId && (<HolidayCalendar storeName={isEditingCustomer ? (customerForm.name || '') : ''} holidays={customerForm.holidayDates || []} offDays={customerForm.offDays || []} onToggle={(date) => { setCustomerForm(prev => { const current = prev.holidayDates || []; const newHolidays = current.includes(date) ? current.filter(d => d !== date) : [...current, date]; return {...prev, holidayDates: newHolidays}; }); }} onClose={() => setHolidayEditorId(null)} />)}
       
       <AnimatePresence>
         {directHolidayCustomer && (
@@ -2226,8 +2185,12 @@ const App: React.FC = () => {
               
               if (apiEndpoint && originalCustomer) {
                 try {
-                  // 2. 補上 originalLastUpdated
-                  const payload = { ...updatedCustomer, originalLastUpdated: originalCustomer.lastUpdated };
+                  // 2. 補上 originalLastUpdated 與強制覆蓋屬性
+                  const payload = { 
+                    ...updatedCustomer, 
+                    originalLastUpdated: originalCustomer.lastUpdated, 
+                    force: true  // 👉 新增這行，讓後端放行公休狀態的單點更新
+                  };
                   const res = await fetch(apiEndpoint, {
                     method: 'POST',
                     body: JSON.stringify({ action: 'updateCustomer', data: payload })

@@ -110,10 +110,13 @@ export const safeJsonArray = (val: any) => {
     if (trimmed === '' || trimmed === '""') return [];
     try {
       const parsed = JSON.parse(val);
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? parsed : [parsed];
     } catch (e) {
-      console.warn("JSON Parse error for value:", val);
-      return [];
+      // Fallback: if not valid JSON, try to split by comma
+      if (trimmed.includes(',')) {
+        return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      return [trimmed];
     }
   }
   return [];

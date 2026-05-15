@@ -28,7 +28,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const [apiEndpoint, setApiEndpoint] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('nm_gas_url');
-      if (saved && saved !== 'undefined' && saved !== 'null') return saved;
+      if (saved && saved !== 'undefined' && saved !== 'null') return saved.trim();
     }
     return DEFAULT_GAS_URL;
   });
@@ -132,10 +132,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       const endpointParams = new URLSearchParams({
         type: since > 0 ? 'sync_delta' : 'init',
         startDate: startDateStr,
+        _t: Date.now().toString(),
         ...(since > 0 && { since: String(since) })
       });
 
-      const res = await fetch(`${apiEndpoint}?${endpointParams.toString()}`); 
+      const res = await fetch(`${apiEndpoint}?${endpointParams.toString()}`, { redirect: 'follow' }); 
       const result: GASResponse<any> = await res.json(); 
       
       if (result.success && result.data) { 
@@ -158,7 +159,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
             defaultItems: safeJsonArray(c.預設品項JSON || c.預設品項 || c.defaultItems), 
             priceList: safeJsonArray(c[priceListKey] || c.priceList).map((pl: any) => ({ productId: pl.productId, price: Number(pl.price) || 0, unit: pl.unit || '斤' })), 
             offDays: safeJsonArray(c.公休日週期JSON || c.公休日週期 || c.offDays), 
-            holidayDates: safeJsonArray(c.特定公休日JSON || c.特定公休日 || c.holidayDates),
+            holidayDates: safeJsonArray(c.特定公休日JSON || c.特定公休日 || c.holidayDates).map((d: any) => normalizeDate(d)),
             autoOrderEnabled: c.autoOrderEnabled === true || String(c.autoOrderEnabled).trim().toLowerCase() === 'true' || String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
             lastUpdated: Number(c.lastUpdated) || 0
           }; 
@@ -263,7 +264,13 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       } 
     } catch (e) { 
       console.error("無法連線至雲端:", e); 
-      if (!isSilent) addToast("同步失敗，請檢查網路連線", 'error'); 
+      if (!isSilent) {
+        let errMsg = "同步失敗，請檢查網路連線";
+        if (e instanceof Error && e.message === 'Failed to fetch') {
+          errMsg = "雲端連線失敗 (CORS / 網址無效)。請確認 Apps Script 部署 URL 是否正確、權限是否為「所有人」，或程式碼是否有錯。";
+        }
+        addToast(errMsg, 'error'); 
+      }
     } finally { 
       setIsInitialLoading(false); 
       setIsBackgroundSyncing(false);
@@ -281,7 +288,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       return false; 
     } 
     try { 
-      const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'login', data: { password: pwd } }) }); 
+      const res = await fetch(apiEndpoint, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'login', data: { password: pwd } }) }); 
       const json = await res.json(); 
       if (json.success && json.data === true) { 
         setIsAuthenticated(true); 
@@ -307,7 +314,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const handleChangePassword = async (oldPwd: string, newPwd: string) => { 
     if (!apiEndpoint) return false; 
     try { 
-      const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'changePassword', data: { oldPassword: oldPwd, newPassword: newPwd } }) }); 
+      const res = await fetch(apiEndpoint, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'changePassword', data: { oldPassword: oldPwd, newPassword: newPwd } }) }); 
       const json = await res.json(); 
       if (json.success && json.data === true) { 
         return true; 
@@ -320,8 +327,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   };
 
   const handleSaveApiUrl = (newUrl: string) => { 
-    localStorage.setItem('nm_gas_url', newUrl); 
-    setApiEndpoint(newUrl); 
+    localStorage.setItem('nm_gas_url', newUrl.trim()); 
+    setApiEndpoint(newUrl.trim()); 
   };
 
   const handleForceRetry = async () => {
@@ -333,6 +340,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     try {
       const res = await fetch(apiEndpoint, { 
         method: 'POST', 
+        redirect: 'follow',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ action: conflictData.action, data: newPayload }) 
       });
       const json = await res.json();
@@ -377,6 +386,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     try {
       const res = await fetch(apiEndpoint, {
         method: 'POST',
+        redirect: 'follow',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ action: 'saveTrips', data: { trips: newTrips } })
       });
       const json = await res.json();
@@ -431,6 +442,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
                 const res = await fetch(apiEndpoint, {
                     method: 'POST',
+                    redirect: 'follow',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                     body: JSON.stringify({ action: actionName, data: payload })
                 });
                 const json = await res.json();
@@ -442,6 +455,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                             // Fetch latest data silently
                             const latestRes = await fetch(apiEndpoint, {
                                 method: 'POST',
+                                redirect: 'follow',
+                                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                                 body: JSON.stringify({ action: 'getOrder', data: { id: orderId } })
                             });
                             const latestJson = await latestRes.json();
@@ -452,6 +467,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                                     const retryPayload = { ...payload, originalLastUpdated: latestOrder.lastUpdated };
                                     const retryRes = await fetch(apiEndpoint, {
                                         method: 'POST',
+                                        redirect: 'follow',
+                                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                                         body: JSON.stringify({ action: actionName, data: retryPayload })
                                     });
                                     const retryJson = await retryRes.json();
@@ -467,7 +484,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                             onError('自動合併失敗，請重新整理畫面');
                         } catch (e) {
                             console.error("Auto-retry failed:", e);
-                            onError('自動合併發生錯誤，請檢查網路');
+                            let errMsg = '自動合併發生錯誤，請檢查網路';
+                            if (e instanceof Error && e.message === 'Failed to fetch') {
+                                errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
+                            }
+                            onError(errMsg);
                         }
                     } else {
                         onError(json.error || 'Unknown error');
@@ -530,6 +551,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       try {
         const res = await fetch(apiEndpoint, {
           method: 'POST',
+          redirect: 'follow',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ action: 'checkUpdates', data: {} })
         });
         const json = await res.json();

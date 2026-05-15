@@ -58,7 +58,7 @@ export const useDataManagement = ({
       }
     }
 
-    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: String(customerForm.name || '').trim(), phone: String(customerForm.phone || '').trim(), address: String(customerForm.address || '').trim(), coordinates: String(customerForm.coordinates || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '', autoOrderEnabled: customerForm.autoOrderEnabled || false }; 
+    const finalCustomer: Customer = { id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), name: String(customerForm.name || '').trim(), phone: String(customerForm.phone || '').trim(), address: String(customerForm.address || '').trim(), coordinates: String(customerForm.coordinates || '').trim(), deliveryTime: customerForm.deliveryTime || '08:00', deliveryMethod: customerForm.deliveryMethod || '', paymentTerm: customerForm.paymentTerm || 'regular', defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), priceList: (customerForm.priceList || []), offDays: customerForm.offDays || [], holidayDates: customerForm.holidayDates || [], defaultTrip: customerForm.defaultTrip || '', autoOrderEnabled: customerForm.autoOrderEnabled || false, lastUpdated: Date.now() }; 
     
     // Backup old list for revert
     const previousCustomers = [...customers];
@@ -73,9 +73,10 @@ export const useDataManagement = ({
     try { 
       if (apiEndpoint) { 
         const payload = finalCustomer;
-        // 如果是編輯，加上原始版本號
+        // 如果是編輯，加上原始版本號與強制覆蓋，因為這類設定直接以最後操作為主
         if (isEditingCustomer !== 'new') {
            (payload as any).originalLastUpdated = editingVersionRef.current;
+           (payload as any).force = true;
         }
 
         const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateCustomer', data: payload }) }); 
@@ -110,7 +111,7 @@ export const useDataManagement = ({
   const handleSaveProduct = async () => { 
     if (!productForm.name || isSaving) return; 
     setIsSaving(true); 
-    const finalProduct = { id: isEditingProduct === 'new' ? 'p' + Date.now() : (isEditingProduct as string), name: productForm.name || '', unit: productForm.unit || '斤', price: Number(productForm.price) || 0, category: productForm.category || 'other' }; 
+    const finalProduct = { id: isEditingProduct === 'new' ? 'p' + Date.now() : (isEditingProduct as string), name: productForm.name || '', unit: productForm.unit || '斤', price: Number(productForm.price) || 0, category: productForm.category || 'other', lastUpdated: Date.now() }; 
     
     const previousProducts = [...products];
     if (isEditingProduct === 'new') setProducts([...products, finalProduct]); 

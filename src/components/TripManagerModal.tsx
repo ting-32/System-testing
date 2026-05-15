@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion, Reorder } from 'framer-motion';
+import { motion, Reorder, useDragControls, AnimatePresence } from 'framer-motion';
 import { X, Plus, Edit2, Trash2, Check, GripVertical, ArrowUpDown } from 'lucide-react';
 import { Order } from '../types';
 
@@ -27,13 +27,19 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
   const [editTripName, setEditTripName] = useState('');
   const [tripToDelete, setTripToDelete] = useState<string | null>(null);
   const [isReorderMode, setIsReorderMode] = useState(false);
+  const [localTrips, setLocalTrips] = useState<string[]>([]);
 
-  // 加上 React.useMemo 確保陣列參考穩定，防止 Reorder.Group 誤判資料變更
-  const trips = React.useMemo(() => availableTrips.filter(t => t !== '未分配'), [availableTrips]);
+  // 2. 監聽外部資料：沒在拖拉的時候保持同步，一旦進入調整模式就斷開外部連動
+  React.useEffect(() => {
+    if (!isReorderMode) {
+      setLocalTrips(availableTrips.filter(t => t !== '未分配'));
+    }
+  }, [availableTrips, isReorderMode]);
+
+  const trips = localTrips;
 
   const handleReorder = (newOrder: string[]) => {
-    const newTrips = [...newOrder, '未分配'];
-    setAvailableTrips(newTrips); // 拖曳時只更新本地畫面，保持 60fps 滑順度
+    setLocalTrips(newOrder); // 拖曳時，真的只更新本地陣列，保證 60fps 如絲般順滑
   };
 
   const handleAddTrip = () => {
@@ -116,32 +122,37 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
           order.trip === tripToDelete ? { ...order, trip: '未分配', syncStatus: 'pending', pendingAction: 'update' } : order
         ));
         
-        // 2. 解決渲染風暴
-        Promise.all(idsToUpdate.map(id => {
-          return new Promise(resolve => {
-            const order = orders.find(o => o.id === id);
-            if (order) {
-              saveOrderToCloud(
-                { ...order, trip: '未分配' }, 
-                'updateOrderContent', 
-                order.lastUpdated, 
-                (updatedOrder) => resolve({ id, success: true, updatedOrder }), 
-                (errMsg) => resolve({ id, success: false, errMsg })
-              );
-            } else {
-              resolve({ id, success: false });
+        // 2. 避免 GAS 併發寫入問題與渲染風暴 (循序執行)
+        const updateSequentially = async () => {
+          for (const id of idsToUpdate) {
+            // 用 callback 的方式取得最新 state，避免丟失在這期間的其他修改（如同步數量更新等）
+            let latestOrder: Order | undefined;
+            setOrders(prev => {
+              latestOrder = prev.find(o => o.id === id);
+              return prev;
+            });
+
+            if (latestOrder) {
+              await new Promise<void>(resolve => {
+                saveOrderToCloud(
+                  { ...latestOrder, trip: '未分配' }, 
+                  'updateOrderContent', 
+                  latestOrder.lastUpdated, 
+                  (updatedOrder) => {
+                    // 強制覆寫 trip: '未分配'，避免背景 polling 時被暫時蓋回去
+                    setOrders(prev => prev.map(o => o.id === id ? { ...o, trip: '未分配', syncStatus: 'synced', pendingAction: undefined, lastUpdated: updatedOrder?.lastUpdated } : o));
+                    resolve();
+                  }, 
+                  (errMsg) => {
+                    setOrders(prev => prev.map(o => o.id === id ? { ...o, trip: '未分配', syncStatus: 'error', errorMessage: errMsg } : o));
+                    resolve();
+                  }
+                );
+              });
             }
-          });
-        })).then((results: any[]) => {
-          setOrders(prev => prev.map(o => {
-            const res = results.find(r => r.id === o.id);
-            if (res) {
-              if (res.success) return { ...o, syncStatus: 'synced', pendingAction: undefined, lastUpdated: res.updatedOrder.lastUpdated };
-              else return { ...o, syncStatus: 'error', errorMessage: res.errMsg };
-            }
-            return o;
-          }));
-        });
+          }
+        };
+        updateSequentially();
       }
       
       setTripToDelete(null);
@@ -176,7 +187,9 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
                 onClick={() => {
                   if (isReorderMode) {
                     // 當使用者點擊「完成排序」退出模式時，才一次性儲存到雲端
-                    saveTripsToCloud([...trips, '未分配']);
+                    const finalTrips = [...trips, '未分配'];
+                    setAvailableTrips(finalTrips); // ★ 新增這行：這時候才去通知主畫面更新
+                    saveTripsToCloud(finalTrips);
                   }
                   setIsReorderMode(!isReorderMode);
                 }}
@@ -195,66 +208,21 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
             <div className="text-center text-gray-400 py-4 text-sm font-bold">目前沒有自訂趟數</div>
           ) : (
             <Reorder.Group axis="y" values={trips} onReorder={handleReorder} className="space-y-3">
-              {trips.map(trip => (
-                <Reorder.Item 
-                  key={trip} 
-                  value={trip} 
-                  dragListener={isReorderMode}
-                  className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl border shadow-sm transition-all ${
-                    isReorderMode ? 'border-morandi-blue/30 cursor-grab active:cursor-grabbing' : 'border-gray-100'
-                  }`}
-                >
-                  {editingTrip === trip ? (
-                    <div className="flex items-center gap-2 flex-1">
-                      <input
-                        type="text"
-                        value={editTripName}
-                        onChange={(e) => setEditTripName(e.target.value)}
-                        className="flex-1 bg-white border border-gray-300 rounded-lg px-2 py-1 text-sm font-bold text-morandi-charcoal outline-none focus:border-morandi-blue"
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleEditTrip(trip);
-                          if (e.key === 'Escape') setEditingTrip(null);
-                        }}
-                      />
-                      <button onClick={() => handleEditTrip(trip)} className="p-1.5 text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors">
-                        <Check className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => setEditingTrip(null)} className="p-1.5 text-gray-400 hover:bg-gray-200 rounded-lg transition-colors">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-3 flex-1">
-                        {isReorderMode && (
-                          <GripVertical className="w-4 h-4 text-gray-400" />
-                        )}
-                        <span className="font-bold text-morandi-charcoal text-sm">{trip}</span>
-                      </div>
-                      {!isReorderMode && (
-                        <div className="flex items-center gap-1">
-                          <button 
-                            onClick={() => {
-                              setEditingTrip(trip);
-                              setEditTripName(trip);
-                            }} 
-                            className="p-1.5 text-gray-400 hover:text-morandi-blue hover:bg-blue-50 rounded-lg transition-colors"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={() => setTripToDelete(trip)} 
-                            className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </Reorder.Item>
-              ))}
+              <AnimatePresence>
+                {trips.map(trip => (
+                  <TripReorderItem
+                    key={trip}
+                    trip={trip}
+                    isReorderMode={isReorderMode}
+                    editingTrip={editingTrip}
+                    editTripName={editTripName}
+                    setEditTripName={setEditTripName}
+                    handleEditTrip={handleEditTrip}
+                    setEditingTrip={setEditingTrip}
+                    setTripToDelete={setTripToDelete}
+                  />
+                ))}
+              </AnimatePresence>
             </Reorder.Group>
           )}
         </div>
@@ -316,5 +284,92 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
         </div>
       )}
     </motion.div>
+  );
+};
+
+const TripReorderItem = ({ 
+  trip, 
+  isReorderMode, 
+  editingTrip, 
+  editTripName, 
+  setEditTripName, 
+  handleEditTrip, 
+  setEditingTrip, 
+  setTripToDelete 
+}: any) => {
+  // 1. 建立此項目的拖曳控制器
+  const dragControls = useDragControls(); 
+
+  return (
+    <Reorder.Item 
+      value={trip} 
+      // 2. 徹底關閉整張卡片的預設拖曳範圍
+      dragListener={false} 
+      // 3. 交由自訂的控制器接管
+      dragControls={dragControls} 
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0, overflow: 'hidden' }}
+      className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl border shadow-sm transition-colors ${
+        isReorderMode ? 'border-morandi-blue/30' : 'border-gray-100'
+      }`}
+    >
+      {editingTrip === trip ? (
+        <div className="flex items-center gap-2 flex-1">
+          <input
+            type="text"
+            value={editTripName}
+            onChange={(e) => setEditTripName(e.target.value)}
+            className="flex-1 bg-white border border-gray-300 rounded-lg px-2 py-1 text-sm font-bold text-morandi-charcoal outline-none focus:border-morandi-blue"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleEditTrip(trip);
+              if (e.key === 'Escape') setEditingTrip(null);
+            }}
+          />
+          <button onClick={() => handleEditTrip(trip)} className="p-1.5 text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors">
+            <Check className="w-4 h-4" />
+          </button>
+          <button onClick={() => setEditingTrip(null)} className="p-1.5 text-gray-400 hover:bg-gray-200 rounded-lg transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-3 flex-1">
+            {isReorderMode && (
+              <div 
+                // 4. 在這裡觸發拖曳動作！
+                onPointerDown={(e) => dragControls.start(e)}
+                style={{ touchAction: 'none' }} // ★ 重要：防止手機觸控時畫面跟著捲動，導致拖曳卡頓
+                className="cursor-grab active:cursor-grabbing p-2 -ml-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <GripVertical className="w-5 h-5 text-gray-400" />
+              </div>
+            )}
+            <span className="font-bold text-morandi-charcoal text-sm">{trip}</span>
+          </div>
+          {!isReorderMode && (
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => {
+                  setEditingTrip(trip);
+                  setEditTripName(trip);
+                }} 
+                className="p-1.5 text-gray-400 hover:text-morandi-blue hover:bg-blue-50 rounded-lg transition-colors"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => setTripToDelete(trip)} 
+                className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </Reorder.Item>
   );
 };

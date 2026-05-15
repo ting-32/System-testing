@@ -692,64 +692,92 @@ function reorderProducts(orderedIds) {
 
 function updateCustomer(data) {
   const sheet = getSheets().CUSTOMERS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
-  const addressColIdx = ensureHeader(sheet, "地址");
-  const coordinatesColIdx = ensureHeader(sheet, "座標位置");
-  const autoOrderColIdx = ensureHeader(sheet, "自動建單開關");
   
+  // 動態抓取第一行的所有標題
+  const lastCol = sheet.getLastColumn();
+  const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  
+  // 幫忙找尋標題欄位位置的強大輔助函數 (找不到自動新增)
+  function getColIndex(aliases, defaultName) {
+    for (let i = 0; i < aliases.length; i++) {
+      let idx = headers.indexOf(aliases[i]);
+      if (idx !== -1) return idx;
+    }
+    // 如果都找不到，在最後面上一個新標題
+    let newIdx = headers.length;
+    headers.push(defaultName);
+    sheet.getRange(1, newIdx + 1).setValue(defaultName);
+    return newIdx;
+  }
+
+  // 自動對應你試算表現在的真實欄位位置 (相容英/中文標題)
+  const colId = getColIndex(["ID", "id"], "ID");
+  const colName = getColIndex(["Name", "name", "客戶名稱"], "Name");
+  const colPhone = getColIndex(["Phone", "phone", "電話"], "Phone");
+  const colAddress = getColIndex(["Address", "address", "地址"], "地址");
+  const colCoords = getColIndex(["Coordinates", "coordinates", "座標位置", "GoogleMapUrl"], "座標位置");
+  const colTime = getColIndex(["DeliveryTime", "deliveryTime", "配送時間"], "DeliveryTime");
+  const colMethod = getColIndex(["DeliveryMethod", "deliveryMethod", "配送方式"], "DeliveryMethod");
+  const colItems = getColIndex(["DefaultItems", "defaultItems", "預設品項JSON", "預設品項"], "DefaultItems");
+  const colPrice = getColIndex(["PriceList", "priceList", "價目表JSON", "價目表"], "PriceList");
+  const colOff = getColIndex(["OffDays", "offDays", "公休日週期JSON", "公休日週期"], "OffDays");
+  const colHol = getColIndex(["HolidayDates", "holidayDates", "特定公休日JSON", "特定公休日"], "HolidayDates");
+  const colTerm = getColIndex(["PaymentTerm", "paymentTerm", "付款週期"], "PaymentTerm");
+  const colTrip = getColIndex(["DefaultTrip", "defaultTrip", "預設趟數"], "DefaultTrip");
+  const colAuto = getColIndex(["自動建單開關", "autoOrderEnabled"], "自動建單開關");
+  const colLast = getColIndex(["LastUpdated"], "LastUpdated");
+
   const values = sheet.getDataRange().getValues();
   let rowIndex = -1;
   const targetId = String(data.id).trim();
   
   for (let i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim() === targetId) {
+    if (String(values[i][colId]).trim() === targetId) {
       rowIndex = i + 1;
-      if (!data.force) {
-        checkVersionConflict(values[i][lastUpdatedColIdx], data.originalLastUpdated);
+      if (!data.force) { // 對應了我們剛補上的 force 標籤
+        checkVersionConflict(values[i][colLast], data.originalLastUpdated);
       }
       break;
     }
   }
   
   const newLastUpdatedTs = new Date().getTime();
-
-  const baseRowData = [
-    data.id,
-    data.name,
-    data.phone,
-    data.deliveryTime,
-    data.deliveryMethod,
-    JSON.stringify(data.defaultItems || []),
-    JSON.stringify(data.priceList || []),
-    JSON.stringify(data.offDays || []),
-    JSON.stringify(data.holidayDates || []),
-    data.paymentTerm,
-    data.defaultTrip || '',
-    newLastUpdatedTs
-  ];
   
+  // 建立一筆與表格等寬的新資料集，預設先填充為空字串
+  const newRow = new Array(headers.length).fill('');
+  
+  // 若是更新既有店家，先將原本底層的整行資料拷貝過來，避免覆蓋掉沒修改的自訂欄位
   if (rowIndex > 0) {
-    sheet.getRange(rowIndex, 1, 1, baseRowData.length).setValues([baseRowData]);
-    sheet.getRange(rowIndex, addressColIdx + 1).setValue(data.address || '');
-    sheet.getRange(rowIndex, coordinatesColIdx + 1).setValue(data.coordinates || '');
-    
-    // 確保欄位存在，且前端有傳來這個變數
-    if (data.autoOrderEnabled !== undefined) {
-      sheet.getRange(rowIndex, autoOrderColIdx + 1).setValue(data.autoOrderEnabled);
+    const oldRow = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
+    for (let i = 0; i < oldRow.length; i++) {
+      newRow[i] = oldRow[i];
     }
+  }
+
+  // 根據標題的動態位置，精確塞入每一格的新資料
+  newRow[colId] = data.id;
+  newRow[colName] = data.name;
+  newRow[colPhone] = data.phone;
+  if(data.address !== undefined) newRow[colAddress] = data.address;
+  if(data.coordinates !== undefined) newRow[colCoords] = data.coordinates;
+  if(data.deliveryTime !== undefined) newRow[colTime] = data.deliveryTime;
+  if(data.deliveryMethod !== undefined) newRow[colMethod] = data.deliveryMethod;
+  if(data.defaultItems !== undefined) newRow[colItems] = JSON.stringify(data.defaultItems || []);
+  if(data.priceList !== undefined) newRow[colPrice] = JSON.stringify(data.priceList || []);
+  if(data.offDays !== undefined) newRow[colOff] = JSON.stringify(data.offDays || []);
+  if(data.holidayDates !== undefined) newRow[colHol] = JSON.stringify(data.holidayDates || []);
+  if(data.paymentTerm !== undefined) newRow[colTerm] = data.paymentTerm;
+  if(data.defaultTrip !== undefined) newRow[colTrip] = data.defaultTrip || '';
+  if(data.autoOrderEnabled !== undefined) newRow[colAuto] = data.autoOrderEnabled;
+  newRow[colLast] = newLastUpdatedTs;
+  
+  // 將動態組裝好的精確列寫入試算表
+  if (rowIndex > 0) {
+    sheet.getRange(rowIndex, 1, 1, newRow.length).setValues([newRow]);
   } else {
-    const maxCol = Math.max(baseRowData.length, addressColIdx + 1, coordinatesColIdx + 1, autoOrderColIdx + 1);
-    const newRow = new Array(maxCol).fill('');
-    for(let i=0; i<baseRowData.length; i++) newRow[i] = baseRowData[i];
-    newRow[addressColIdx] = data.address || '';
-    newRow[coordinatesColIdx] = data.coordinates || '';
-    
-    // 確保欄位存在，且前端有傳來這個變數
-    if (data.autoOrderEnabled !== undefined) {
-      newRow[autoOrderColIdx] = data.autoOrderEnabled;
-    }
     sheet.appendRow(newRow);
   }
+  
   return { lastUpdated: newLastUpdatedTs };
 }
 
@@ -1009,4 +1037,52 @@ function onSpreadsheetEdit(e) {
 
   // 做完時間戳記更新後，如同往常一樣按門鈴發送推播通知給前端
   notifyFirebase();
+}
+
+// 🔔 專門處理 API 或 LINE 機器人自動寫入的「變更」事件
+function onSpreadsheetChange(e) {
+  try {
+    const sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+    const currentTs = new Date().getTime();
+    let isUpdated = false;
+
+    // 巡視這三個需要同步的表單
+    ["ORDERS", "CUSTOMERS", "PRODUCTS"].forEach(sheetName => {
+      const sheet = sheets.find(s => s.getName() === sheetName);
+      if (!sheet) return;
+      
+      const lastRow = sheet.getLastRow();
+      const lastCol = sheet.getLastColumn();
+      if (lastRow <= 1 || lastCol === 0) return;
+
+      const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+      const lastUpdatedColIdx = headers.indexOf("LastUpdated");
+      
+      if (lastUpdatedColIdx !== -1) {
+        // 抓取整個 LastUpdated 欄道的值
+        const lastUpdatedValues = sheet.getRange(2, lastUpdatedColIdx + 1, lastRow - 1, 1).getValues();
+        let rowsToUpdate = [];
+        
+        // 找出所有 LastUpdated 是空白的列
+        for (let i = 0; i < lastUpdatedValues.length; i++) {
+          if (!lastUpdatedValues[i][0]) {
+            rowsToUpdate.push(i + 2); // 陣列索引從 0 開始，加上標題列與位移，剛好是 i + 2 列
+          }
+        }
+
+        // 把這些空白的列補上當前的時間戳記
+        rowsToUpdate.forEach(rowNum => {
+          sheet.getRange(rowNum, lastUpdatedColIdx + 1).setValue(currentTs);
+          isUpdated = true;
+        });
+      }
+    });
+
+    // 如果有幫任何一行補上時間戳記，或確實有新增資料的動作，就去按門鈴
+    if (isUpdated || (e && e.changeType === 'INSERT_ROW')) {
+      notifyFirebase();
+    }
+  } catch (err) {
+    console.error("自動檢查空白 LastUpdated 發生錯誤:", err);
+  }
 }
