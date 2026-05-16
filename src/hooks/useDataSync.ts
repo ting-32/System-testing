@@ -4,6 +4,8 @@ import { debounce } from 'lodash';
 import { Customer, Product, Order, OrderStatus, GASResponse, ToastType } from '../types';
 import { GAS_URL as DEFAULT_GAS_URL } from '../constants';
 import { formatDateStr, normalizeDate, safeJsonArray } from '../utils';
+import { container } from '../core/di/AppContainer';
+import { DataMapper } from '../core/mappers/DataMapper';
 
 localforage.config({
   name: 'NMR_App_DB',
@@ -54,7 +56,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
         if (cachedCust && cachedCust.length > 0) { setCustomers(cachedCust); hasAnyCache = true; }
         if (cachedProd && cachedProd.length > 0) { setProducts(cachedProd); hasAnyCache = true; }
-        if (cachedOrd && cachedOrd.length > 0) { setOrders(cachedOrd); hasAnyCache = true; }
+        if (cachedOrd && cachedOrd.length > 0) { 
+           // 偵測並清理「幽靈狀態」，將上次意外中斷而遺留的 pending 轉為 error
+           const cleanedOrders = cachedOrd.map(o => 
+             o.syncStatus === 'pending' 
+               ? { ...o, syncStatus: 'error' as const, errorMessage: '應用程式意外關閉或網路超時，請點擊重試' } 
+               : o
+           );
+           setOrders(cleanedOrders); 
+           hasAnyCache = true; 
+        }
         if (cachedTrips && cachedTrips.length > 0) { setTrips(cachedTrips); hasAnyCache = true; }
         
         if (hasAnyCache) {
@@ -126,25 +137,31 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       startDate.setDate(startDate.getDate() - 60); 
       const startDateStr = formatDateStr(startDate); 
       
-      const lastSyncStr = localStorage.getItem('nm_last_sync_ts');
+      let lastSyncStr = localStorage.getItem('nm_last_sync_ts');
+      
+      // 強制執行一次全量同步，確保近期人工新增但沒有 LastUpdated 的資料能被抓下來
+      if (localStorage.getItem('nm_force_full_sync_2') !== 'done') {
+        lastSyncStr = null;
+        localStorage.setItem('nm_force_full_sync_2', 'done');
+      }
+
       const since = lastSyncStr && isSilent ? Number(lastSyncStr) : 0;
       
-      const endpointParams = new URLSearchParams({
+      const endpointParams = {
         type: since > 0 ? 'sync_delta' : 'init',
         startDate: startDateStr,
         _t: Date.now().toString(),
         ...(since > 0 && { since: String(since) })
-      });
+      };
 
-      const res = await fetch(`${apiEndpoint}?${endpointParams.toString()}`, { redirect: 'follow' }); 
-      const result: GASResponse<any> = await res.json(); 
+      const result = await container.syncRepo.sync(endpointParams);
       
-      if (result.success && result.data) { 
-        if (result.data.serverGlobalTs) {
-           localStorage.setItem('nm_last_sync_ts', String(result.data.serverGlobalTs));
+      if (result) { 
+        if (result.serverGlobalTs) {
+           localStorage.setItem('nm_last_sync_ts', String(result.serverGlobalTs));
         }
 
-        const mappedCustomers: Customer[] = (result.data.customers || []).map((c: any) => { 
+        const mappedCustomers: Customer[] = (result.customers || []).map((c: any) => { 
           const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
           return { 
             id: String(c.ID || c.id || ''), 
@@ -165,7 +182,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
           }; 
         }); 
         
-        const mappedProducts: Product[] = (result.data.products || []).map((p: any) => ({ 
+        const mappedProducts: Product[] = (result.products || []).map((p: any) => ({ 
           id: String(p.ID || p.id), 
           name: p.品項 || p.name, 
           unit: p.單位 || p.unit, 
@@ -174,10 +191,14 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
           lastUpdated: Number(p.lastUpdated) || 0
         })); 
         
-        const rawOrders = result.data.orders || []; 
+        const rawOrders = result.orders || []; 
         const orderMap: { [key: string]: Order } = {}; 
-        rawOrders.forEach((o: any) => { 
-          const oid = String(o.訂單ID || o.id); 
+        rawOrders.forEach((o: any, idx: number) => { 
+          // 支援人工在試算表輸入時沒有給 ID 的狀況，使用複合鍵當作暫時 ID 分群
+          const fallbackId = `MIGRATED-${o.客戶名 || o.customerName}-${o.配送日期 || o.deliveryDate}-${o.配送時間 || o.deliveryTime || ''}`.trim();
+          let rawId = o.訂單ID || o.id;
+          if (rawId && typeof rawId === 'string' && rawId.trim() === '') rawId = null;
+          const oid = String(rawId || fallbackId); 
           if (!orderMap[oid]) { 
             const rawDate = o.配送日期 || o.deliveryDate; 
             const normalizedDate = normalizeDate(rawDate); 
@@ -210,9 +231,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         }); 
         
         const newOrders = Object.values(orderMap);
-        const fetchedTrips = result.data.trips || [];
+        const fetchedTrips = result.trips || [];
         
-        if (since > 0 && result.data.serverGlobalTs) {
+        if (since > 0 && result.serverGlobalTs) {
            // 💡 訂單依然做增量合併，但字典檔 (客戶/商品) 採用全量覆蓋
            if (mappedCustomers.length > 0) {
               setCustomers(mappedCustomers);
@@ -288,9 +309,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       return false; 
     } 
     try { 
-      const res = await fetch(apiEndpoint, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'login', data: { password: pwd } }) }); 
-      const json = await res.json(); 
-      if (json.success && json.data === true) { 
+      const isOk = await container.authRepo.login(pwd); 
+      if (isOk) { 
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
         return true; 
@@ -314,12 +334,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const handleChangePassword = async (oldPwd: string, newPwd: string) => { 
     if (!apiEndpoint) return false; 
     try { 
-      const res = await fetch(apiEndpoint, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'changePassword', data: { oldPassword: oldPwd, newPassword: newPwd } }) }); 
-      const json = await res.json(); 
-      if (json.success && json.data === true) { 
-        return true; 
-      } 
-      return false; 
+      const isOk = await container.authRepo.changePassword(oldPwd, newPwd);
+      return isOk;
     } catch (e) { 
       console.error("Change Password Error:", e); 
       return false; 
@@ -329,6 +345,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const handleSaveApiUrl = (newUrl: string) => { 
     localStorage.setItem('nm_gas_url', newUrl.trim()); 
     setApiEndpoint(newUrl.trim()); 
+    container.updateApiEndpoint(newUrl.trim());
   };
 
   const handleForceRetry = async () => {
@@ -338,42 +355,23 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     const newPayload = { ...conflictData.data, force: true };
     
     try {
-      const res = await fetch(apiEndpoint, { 
-        method: 'POST', 
-        redirect: 'follow',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: conflictData.action, data: newPayload }) 
-      });
-      const json = await res.json();
+      await container.apiClient.post(conflictData.action, newPayload);
       
-      if (json.success) {
-        addToast('強制覆蓋成功', 'success');
-        setConflictData(null);
-        syncData(true);
-        return true;
-      } else {
-        // -----------------------------------------------------------------
-        // [UX 優化重點 1]：處理「後端明確回傳失敗」的情況
-        // 原因：這不是網路斷線，而是伺服器邏輯拒絕了強制覆蓋。
-        // 動作：
-        // 1. 顯示 warning 顏色的提示，語氣改為「伺服器拒絕...」，避免誤導。
-        // 2. 強制關閉 Modal (setConflictData(null))，解除卡死狀態。
-        // 3. 強制重新抓取最新資料 (syncData(true))，讓畫面恢復到伺服器最新狀態。
-        // -----------------------------------------------------------------
+      addToast('強制覆蓋成功', 'success');
+      setConflictData(null);
+      syncData(true);
+      return true;
+    } catch (e: any) {
+      console.error(e);
+      // Backend error returned explicit success: false (GasApiClient throws an Error with errorCode if it fails)
+      if (e.errorCode || e.message !== 'Failed to fetch') {
         addToast('伺服器拒絕強制執行，已為您重新整理為最新資料', 'warning');
         setConflictData(null); 
         syncData(true);        
         return false;
       }
-    } catch (e) {
-      console.error(e);
-      // -----------------------------------------------------------------
-      // [UX 優化重點 2]：處理「真正的網路錯誤」(Fetch 失敗)
-      // 原因：使用者的網路真的斷了，連不到伺服器。
-      // 動作：
-      // 1. 顯示 error 顏色的提示，明確告知「連線失敗」。
-      // 2. 「不」關閉 Modal。保留視窗讓使用者在網路恢復後可以再次點擊重試。
-      // -----------------------------------------------------------------
+
+      // Real network error
       addToast('連線失敗，請檢查網路狀態', 'error');
       return false;
     } finally {
@@ -384,14 +382,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const saveTripsToCloud = async (newTrips: string[]) => {
     if (!apiEndpoint) return false;
     try {
-      const res = await fetch(apiEndpoint, {
-        method: 'POST',
-        redirect: 'follow',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'saveTrips', data: { trips: newTrips } })
-      });
-      const json = await res.json();
-      if (json.success) {
+      const isOk = await container.tripsRepo.saveTrips(newTrips);
+      if (isOk) {
         setTrips(newTrips);
         return true;
       }
@@ -414,121 +406,42 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     onSuccess: (updatedOrder?: Order) => void,
     onError: (msg: string) => void
   ) => {
-    const orderId = newOrder.id;
-    
-    // 1. Get the previous task from the queue. 
-    // If it doesn't exist, start with a resolved promise containing the originalLastUpdated passed by the caller.
-    const previousTask = queueRef.current[orderId] || Promise.resolve(originalLastUpdated);
-
-    const currentTask = previousTask.then(async (latestVersionFromPrevTask) => {
-        // 2. Determine which version to use.
-        // If the previous task returned a version (meaning it succeeded and got a new version), use it.
-        // Otherwise, fall back to the originalLastUpdated passed to this function call.
-        const versionToUse = latestVersionFromPrevTask !== undefined ? latestVersionFromPrevTask : originalLastUpdated;
-        
+    try {
+      // @ts-ignore
+      const savedOrder = await container.orderService.saveOrder(actionName, newOrder, products, originalLastUpdated);
+      setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, lastUpdated: savedOrder.lastUpdated } : o));
+      onSuccess(savedOrder);
+    } catch (e: any) {
+      console.error("Sync Failed:", e);
+      let errMsg = e instanceof Error ? e.message : String(e);
+      
+      // === 自動修復機制 (幽靈訂單 UPSERT) ===
+      // 如果後端說找不到訂單 (發生於本地建立失敗，但被使用者改了狀態後重試)
+      // 我們直接將它當作新的內容強制覆寫(UPSERT)回去！
+      if (errMsg.includes('Order not found')) {
         try {
-            if (apiEndpoint) {
-                const uploadItems = newOrder.items.map(item => {
-                    const p = products.find(prod => prod.id === item.productId);
-                    return { productName: item.productName || p?.name || item.productId, quantity: item.quantity, unit: item.unit };
-                });
-
-                const payload = { ...newOrder, items: uploadItems };
-                
-                // CRITICAL: Use the version from the chain, NOT just what was passed in.
-                if (versionToUse !== undefined) {
-                    (payload as any).originalLastUpdated = versionToUse;
-                }
-
-                const res = await fetch(apiEndpoint, {
-                    method: 'POST',
-                    redirect: 'follow',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: actionName, data: payload })
-                });
-                const json = await res.json();
-
-                if (!json.success) {
-                    if (json.errorCode === 'ERR_VERSION_CONFLICT') {
-                        console.log("Auto-resolving conflict for order:", orderId);
-                        try {
-                            // Fetch latest data silently
-                            const latestRes = await fetch(apiEndpoint, {
-                                method: 'POST',
-                                redirect: 'follow',
-                                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                                body: JSON.stringify({ action: 'getOrder', data: { id: orderId } })
-                            });
-                            const latestJson = await latestRes.json();
-                            if (latestJson.success && latestJson.data) {
-                                const latestOrder = latestJson.data;
-                                if (latestOrder && latestOrder.lastUpdated !== undefined) {
-                                    // Retry with the new lastUpdated
-                                    const retryPayload = { ...payload, originalLastUpdated: latestOrder.lastUpdated };
-                                    const retryRes = await fetch(apiEndpoint, {
-                                        method: 'POST',
-                                        redirect: 'follow',
-                                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                                        body: JSON.stringify({ action: actionName, data: retryPayload })
-                                    });
-                                    const retryJson = await retryRes.json();
-                                    if (retryJson.success) {
-                                        const newVersion = retryJson.data?.lastUpdated || latestOrder.lastUpdated;
-                                        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, lastUpdated: newVersion } : o));
-                                        onSuccess({ ...newOrder, lastUpdated: newVersion });
-                                        return newVersion;
-                                    }
-                                }
-                            }
-                            // If auto-retry fails, fallback to error
-                            onError('自動合併失敗，請重新整理畫面');
-                        } catch (e) {
-                            console.error("Auto-retry failed:", e);
-                            let errMsg = '自動合併發生錯誤，請檢查網路';
-                            if (e instanceof Error && e.message === 'Failed to fetch') {
-                                errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
-                            }
-                            onError(errMsg);
-                        }
-                    } else {
-                        onError(json.error || 'Unknown error');
-                    }
-                    // If failed, return the version we tried to use, so the next task uses it (or fails too)
-                    return versionToUse;
-                } else {
-                    // Success!
-                    const updatedData = json.data;
-                    let updatedOrder = { ...newOrder };
-                    let newVersion = versionToUse;
-
-                    if (updatedData && updatedData.lastUpdated) {
-                        newVersion = updatedData.lastUpdated;
-                        updatedOrder.lastUpdated = newVersion;
-                        
-                        // Update local state for UI consistency
-                        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, lastUpdated: newVersion } : o));
-                    }
-                    
-                    onSuccess(updatedOrder);
-                    
-                    // CRITICAL: Return the NEW version for the next task in the chain
-                    return newVersion;
-                }
-            }
-            return versionToUse;
-        } catch (e) {
-            console.error("Sync Failed:", e);
-            onError(e instanceof Error ? e.message : 'Network error');
-            // On network error, return the version we had, hoping next retry might work or just to keep chain alive
-            return versionToUse;
+          console.log("Order not found on backend. Falling back to upsert (updateOrderContent)...");
+          // @ts-ignore
+          const fallbackSavedOrder = await container.orderService.saveOrder('updateOrderContent', newOrder, products, undefined);
+          setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, lastUpdated: fallbackSavedOrder.lastUpdated } : o));
+          onSuccess(fallbackSavedOrder);
+          return; // 成功的話就結束，不要走到 onerror
+        } catch (fallbackErr: any) {
+          console.error("Fallback UPSERT Failed:", fallbackErr);
+          errMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
         }
-    }).catch(e => {
-        console.error("Queue Error:", e);
-        return originalLastUpdated;
-    });
-
-    // Update Queue
-    queueRef.current[orderId] = currentTask;
+      }
+      
+      if (e.name === 'AbortError' || (e.message && e.message.includes('aborted'))) {
+         errMsg = '請求連線逾時 (超過15秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
+      } else if (e.message === 'Failed to fetch') {
+         errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
+      }
+      if (e.errorCode === 'ERR_VERSION_CONFLICT') {
+         errMsg = '自動合併失敗，請重新整理畫面';
+      }
+      onError(errMsg);
+    }
   };
 
   // Initial Sync
@@ -549,21 +462,13 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
     const pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(apiEndpoint, {
-          method: 'POST',
-          redirect: 'follow',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'checkUpdates', data: {} })
-        });
-        const json = await res.json();
-        if (json.success && json.data) {
-          const serverGlobalTs = json.data.globalLastUpdated;
-          if (lastGlobalUpdateRef.current > 0 && serverGlobalTs > lastGlobalUpdateRef.current) {
-            console.log("Background updates detected, syncing silently...");
-            syncData(true);
-          }
-          lastGlobalUpdateRef.current = serverGlobalTs;
+        const { globalLastUpdated } = await container.syncRepo.checkUpdates();
+        const serverGlobalTs = globalLastUpdated;
+        if (lastGlobalUpdateRef.current > 0 && serverGlobalTs > lastGlobalUpdateRef.current) {
+          console.log("Background updates detected, syncing silently...");
+          syncData(true);
         }
+        lastGlobalUpdateRef.current = serverGlobalTs;
       } catch (e) {
         // Suppress polling error log to avoid console spam when offline or endpoint is invalid
         // console.error("Polling error:", e);

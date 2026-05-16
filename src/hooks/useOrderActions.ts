@@ -291,13 +291,23 @@ export const useOrderActions = ({
 
         try {
             if (apiEndpoint) {
-                const res = await fetch(apiEndpoint, {
-                    method: 'POST',
-                    body: JSON.stringify({ 
-                        action: 'batchUpdateOrders', 
-                        data: { updates: updatesToProcess } 
-                    })
-                });
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
+                
+                let res;
+                try {
+                    res = await fetch(apiEndpoint, {
+                        method: 'POST',
+                        body: JSON.stringify({ 
+                            action: 'batchUpdateOrders', 
+                            data: { updates: updatesToProcess } 
+                        }),
+                        signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+                
                 const json = await res.json();
 
                 if (!json.success) {
@@ -323,12 +333,37 @@ export const useOrderActions = ({
                     }));
                 }
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error("Batch Sync Failed:", e);
+            let errMsg = e instanceof Error ? e.message : String(e);
+
+            if (errMsg.includes('Order not found')) {
+                console.log("Order not found during batch update. Falling back to individual upserts...");
+                updatesToProcess.forEach(u => {
+                    const orderToFix = orders.find(o => o.id === u.id);
+                    if (orderToFix) {
+                        saveOrderToCloud(
+                           {...orderToFix, status: u.status}, 
+                           'updateOrderContent', 
+                           undefined, 
+                           () => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o)),
+                           (err: string) => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'error', errorMessage: err } : o))
+                        );
+                    }
+                });
+                return; // Let individual upsert handle it
+            }
+
+            if (e.name === 'AbortError' || (e.message && e.message.includes('aborted'))) {
+                errMsg = '請求連線逾時 (超過15秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
+            } else if (e.message === 'Failed to fetch') {
+                errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
+            }
+
             const updatedIds = updatesToProcess.map(u => u.id);
             setOrders((prev: Order[]) => prev.map(o => {
                 if (updatedIds.includes(o.id)) {
-                    return { ...o, syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error' };
+                    return { ...o, syncStatus: 'error', errorMessage: errMsg };
                 }
                 return o;
             }));
@@ -377,13 +412,23 @@ export const useOrderActions = ({
 
           try {
               if (apiEndpoint) {
-                  const res = await fetch(apiEndpoint, {
-                      method: 'POST',
-                      body: JSON.stringify({ 
-                          action: 'batchUpdateOrders', 
-                          data: { updates: updatesToProcess } 
-                      })
-                  });
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), 15000);
+                  
+                  let res;
+                  try {
+                      res = await fetch(apiEndpoint, {
+                          method: 'POST',
+                          body: JSON.stringify({ 
+                              action: 'batchUpdateOrders', 
+                              data: { updates: updatesToProcess } 
+                          }),
+                          signal: controller.signal
+                      });
+                  } finally {
+                      clearTimeout(timeoutId);
+                  }
+                  
                   const json = await res.json();
 
                   if (!json.success) {
@@ -410,12 +455,37 @@ export const useOrderActions = ({
                       addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
                   }
               }
-          } catch (e) {
+          } catch (e: any) {
               console.error("Batch Sync Failed:", e);
+              let errMsg = e instanceof Error ? e.message : String(e);
+
+              if (errMsg.includes('Order not found')) {
+                  console.log("Order not found during batch checkout. Falling back to individual upserts...");
+                  updatesToProcess.forEach(u => {
+                      const orderToFix = orders.find(o => o.id === u.id);
+                      if (orderToFix) {
+                          saveOrderToCloud(
+                             {...orderToFix, status: u.status}, 
+                             'updateOrderContent', 
+                             undefined, 
+                             () => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o)),
+                             (err: string) => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'error', errorMessage: err } : o))
+                          );
+                      }
+                  });
+                  return; // Let individual upsert handle it
+              }
+
+              if (e.name === 'AbortError' || (e.message && e.message.includes('aborted'))) {
+                  errMsg = '請求連線逾時 (超過15秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
+              } else if (e.message === 'Failed to fetch') {
+                  errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
+              }
+
               const updatedIds = updatesToProcess.map(u => u.id);
               setOrders((prev: Order[]) => prev.map(o => {
                   if (updatedIds.includes(o.id)) {
-                      return { ...o, syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error' };
+                      return { ...o, syncStatus: 'error', errorMessage: errMsg };
                   }
                   return o;
               }));
