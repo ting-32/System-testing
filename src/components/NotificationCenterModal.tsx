@@ -31,7 +31,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const [editingRule, setEditingRule] = useState<ReminderRule | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
+  const loadRulesFromStorage = () => {
     const saved = localStorage.getItem('nm_reminder_rules');
     if (saved) {
       try {
@@ -47,6 +47,18 @@ export const NotificationCenterModal: React.FC<Props> = ({
         setRules(parsedRules);
       } catch (e) {}
     }
+  };
+
+  useEffect(() => {
+    loadRulesFromStorage();
+
+    // 監聽來自背景同步的更新事件
+    const handleCloudUpdate = () => {
+      loadRulesFromStorage();
+    };
+    
+    window.addEventListener('rules_updated_from_cloud', handleCloudUpdate);
+    return () => window.removeEventListener('rules_updated_from_cloud', handleCloudUpdate);
   }, []);
 
   const saveToGas = async (currentRules: ReminderRule[], channelToken: string, userId: string) => {

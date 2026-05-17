@@ -242,6 +242,22 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         const newOrders = Object.values(orderMap);
         const fetchedTrips = result.trips || [];
         
+        // === 加入這段：每次輪詢時，將通知中心的設定存更新至本機快取 ===
+        if (result.settings) {
+           if (result.settings.rules) {
+               localStorage.setItem('nm_reminder_rules', JSON.stringify(result.settings.rules));
+           }
+           if (result.settings.lineChannelToken) {
+               localStorage.setItem('nm_line_token', result.settings.lineChannelToken);
+           }
+           if (result.settings.lineUserId) {
+               localStorage.setItem('nm_line_user_id', result.settings.lineUserId);
+           }
+           // 發送一個全域的更新事件，讓如果有開啟通知介面的人可以即時看到新資料
+           window.dispatchEvent(new Event('rules_updated_from_cloud'));
+        }
+        // ========================================================
+        
         if (since > 0 && result.serverGlobalTs) {
            // 💡 訂單依然做增量合併，但字典檔 (客戶/商品) 採用全量覆蓋
            if (mappedCustomers.length > 0) {
