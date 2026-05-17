@@ -86,6 +86,24 @@ export interface Order {
   pendingAction?: 'create' | 'update' | 'delete' | 'statusUpdate'; // 待處理動作
 }
 
+export interface ReminderCondition {
+  id?: string;
+  operator?: 'AND' | 'OR';
+  customers: string[]; // Customer IDs, empty means all
+  status: OrderStatus | 'UNORDERED' | 'PENDING'; // Added PENDING based on previous code
+  products: string[]; // Product names or IDs, empty means all
+}
+
+export interface ReminderRule {
+  id: string;
+  name: string;
+  schedule: string[]; // e.g. ["0", "1", "2"]
+  conditions: ReminderCondition[];
+  timeToNotify: string; 
+  isActive: boolean;
+  customMessage?: string;
+}
+
 export interface GASResponse<T> {
   success: boolean;
   data?: T;

@@ -115,6 +115,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = useRef(false);
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
 
   const [conflictData, setConflictData] = useState<{
     action: string;
@@ -124,6 +128,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
   // Sync Data Logic
   const syncData = useCallback(async (isSilent = false) => { 
+    if (isSavingRef.current) {
+      console.log("UX Block: Bypassing sync while user is saving data.");
+      return;
+    }
+
     if (!apiEndpoint) { 
       setIsInitialLoading(false); 
       return; 
@@ -248,7 +257,18 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
               setOrders(currentOrders => {
                  const mergedMap = new Map();
                  currentOrders.forEach(o => mergedMap.set(o.id, o));
-                 newOrders.forEach(o => mergedMap.set(o.id, o));
+                 newOrders.forEach(newOrder => {
+                    const existOrder = mergedMap.get(newOrder.id);
+                    if (existOrder) {
+                        if (existOrder.syncStatus === 'pending' || existOrder.syncStatus === 'error') {
+                            return; 
+                        }
+                        if ((existOrder.lastUpdated || 0) >= (newOrder.lastUpdated || 0)) {
+                            return;
+                        }
+                    }
+                    mergedMap.set(newOrder.id, newOrder);
+                 });
                  return Array.from(mergedMap.values());
               });
            }
@@ -264,11 +284,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
              const mergedOrders = [...newOrders];
              
              currentOrders.forEach(localOrder => {
-                 if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
-                     const index = mergedOrders.findIndex(o => o.id === localOrder.id);
-                     if (index !== -1) {
+                 const index = mergedOrders.findIndex(o => o.id === localOrder.id);
+                 if (index !== -1) {
+                     const cloudOrder = mergedOrders[index];
+                     if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
                          mergedOrders[index] = localOrder;
-                     } else {
+                     } else if ((localOrder.lastUpdated || 0) >= (cloudOrder.lastUpdated || 0)) {
+                         mergedOrders[index] = localOrder;
+                     }
+                 } else {
+                     if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
                          mergedOrders.push(localOrder);
                      }
                  }
@@ -359,7 +384,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       
       addToast('強制覆蓋成功', 'success');
       setConflictData(null);
-      syncData(true);
+      setTimeout(() => syncData(true), 100);
       return true;
     } catch (e: any) {
       console.error(e);
@@ -367,7 +392,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       if (e.errorCode || e.message !== 'Failed to fetch') {
         addToast('伺服器拒絕強制執行，已為您重新整理為最新資料', 'warning');
         setConflictData(null); 
-        syncData(true);        
+        setTimeout(() => syncData(true), 100);
         return false;
       }
 

@@ -22,10 +22,33 @@ function getConfigSheet() {
   if (!sheet) {
     sheet = SS.insertSheet("Config");
     sheet.getRange("A1").setValue("SystemPassword");
-    // 如果是新建的，預設密碼 8888 (字串格式)
     sheet.getRange("B1").setNumberFormat("@").setValue("8888"); 
   }
   return sheet;
+}
+
+function getSystemConfig(sheet, keyName) {
+  const values = sheet.getDataRange().getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][0] === keyName) {
+      return values[i][1];
+    }
+  }
+  return null;
+}
+
+function setSystemConfig(sheet, keyName, value) {
+  const values = sheet.getDataRange().getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][0] === keyName) {
+      sheet.getRange(i + 1, 2).setValue(value);
+      return;
+    }
+  }
+  // If not found, append to end
+  const lastRow = Math.max(sheet.getLastRow(), 1);
+  sheet.getRange(lastRow + 1, 1).setValue(keyName);
+  sheet.getRange(lastRow + 1, 2).setValue(value);
 }
 
 // Helper to get fresh references (avoiding top-level const caching issues)
@@ -50,6 +73,11 @@ function doGet(e) {
 function doPost(e) {
   try {
     const params = JSON.parse(e.postData.contents);
+    
+    if (params.events && Array.isArray(params.events)) {
+      return handleLineWebhook(params);
+    }
+    
     const action = params.action;
     let result = null;
 
@@ -101,6 +129,12 @@ function doPost(e) {
         break;
       case "saveTrips":
         result = saveTrips(params.data);
+        break;
+      case "saveSettings":
+        result = saveSettings(params.data);
+        break;
+      case "testLineMessage":
+        result = testLineMessage(params.data);
         break;
       default:
         throw new Error("Unknown action: " + action);
@@ -408,8 +442,64 @@ function getData(startDateStr, since = 0) {
   if (since > 0) {
     orders = orders.filter(o => o.lastUpdated > since);
   }
+  
+  // Get settings
+  const configSheet = getConfigSheet();
+  const settingsDataStr = getSystemConfig(configSheet, "AppSettings");
+  let settings = null;
+  try {
+    settings = JSON.parse(settingsDataStr || "{}");
+  } catch(e) {}
 
-  return { customers, products, orders, trips, serverGlobalTs: new Date().getTime() };
+  return { customers, products, orders, trips, settings, serverGlobalTs: new Date().getTime() };
+}
+
+function saveSettings(data) {
+  const configSheet = getConfigSheet();
+  setSystemConfig(configSheet, "AppSettings", JSON.stringify(data));
+  return true;
+}
+
+function testLineMessage(data) {
+  const channelToken = data.lineChannelToken;
+  const userIdStr = data.lineUserId;
+  
+  if (!channelToken || !userIdStr) {
+    throw new Error("Missing credentials for LINE API");
+  }
+
+  const userIds = userIdStr.split(',').map(id => id.trim()).filter(id => id);
+  if (userIds.length === 0) {
+    throw new Error("Invalid User IDs format");
+  }
+  
+  const endpoint = userIds.length === 1 
+    ? "https://api.line.me/v2/bot/message/push" 
+    : "https://api.line.me/v2/bot/message/multicast";
+    
+  const payloadTo = userIds.length === 1 ? userIds[0] : userIds;
+  
+  try {
+    const res = UrlFetchApp.fetch(endpoint, {
+      method: "post",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + channelToken 
+      },
+      payload: JSON.stringify({
+        to: payloadTo,
+        messages: [{ type: "text", text: "✅ 這是來自智能訂單系統的測試發送！您的 LINE (多群發送) 串接已成功。" }]
+      }),
+      muteHttpExceptions: true
+    });
+    
+    if (res.getResponseCode() !== 200) {
+      throw new Error("HTTP " + res.getResponseCode() + ": " + res.getContentText());
+    }
+  } catch(err) {
+    throw new Error("LINE Messaging API failed: " + err.message);
+  }
+  return true;
 }
 
 function saveTrips(data) {
@@ -1085,4 +1175,235 @@ function onSpreadsheetChange(e) {
   } catch (err) {
     console.error("自動檢查空白 LastUpdated 發生錯誤:", err);
   }
+}
+
+// 🔔 Notification Center Check (Intended for Time-Driven Trigger)
+// Runs periodically (e.g. hourly) to evaluate rules and send notifications
+function checkReminders() {
+  const configSheet = getConfigSheet();
+  const settingsDataStr = getSystemConfig(configSheet, "AppSettings");
+  if (!settingsDataStr) return;
+  
+  let settings = null;
+  try {
+    settings = JSON.parse(settingsDataStr);
+  } catch (e) {
+    return;
+  }
+  
+  const rules = settings.rules || [];
+  const channelToken = settings.lineChannelToken;
+  const userId = settings.lineUserId;
+  if (!rules.length || !channelToken || !userId) return;
+
+  const now = new Date();
+  
+  // === 新增以下這段轉換時間的邏輯 ===
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const dateStr = String(now.getDate()).padStart(2, '0');
+  const days = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+  const dayName = days[now.getDay()];
+  
+  let h = now.getHours();
+  const m = String(now.getMinutes()).padStart(2, '0');
+  let period = '凌晨';
+  if (h >= 6 && h < 12) period = '上午';
+  else if (h === 12) period = '中午';
+  else if (h > 12 && h < 18) period = '下午';
+  else if (h >= 18) period = '晚上';
+  let displayHour = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+  
+  // 組合出：2026-05-17(週日)晚上7:00
+  const formattedTimeStr = `${year}-${month}-${dateStr}(${dayName})${period}${displayHour}:${m}`;
+  // =================================
+
+  const currentDayStr = String(now.getDay()); // "0" to "6"
+  const currentDayNum = now.getDay();
+  const currentHour = String(now.getHours()).padStart(2, '0');
+  const currentTimeStr = `${currentHour}:00`; // Simplify to hour check for stability
+  
+  // Date format YYYY-MM-DD
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+  
+  const data = getData(todayStr, 0); // Only get orders from today onwards
+  const todayOrders = data.orders.filter(o => o.deliveryDate === todayStr);
+  const customers = data.customers || [];
+  
+  let notifications = [];
+  
+  rules.forEach(rule => {
+    if (!rule.isActive) return;
+    
+    // Check Date & Time match
+    let isTimeMatched = false;
+    if (Array.isArray(rule.schedule)) {
+      isTimeMatched = rule.schedule.includes(currentDayStr) && rule.timeToNotify.startsWith(currentHour);
+    } else {
+      if (rule.schedule === '每天') {
+        isTimeMatched = rule.timeToNotify.startsWith(currentHour); // rough match
+      } else {
+        isTimeMatched = (rule.schedule === currentDayStr) && (rule.timeToNotify.startsWith(currentHour));
+      }
+    }
+    
+    if (!isTimeMatched) return;
+    
+    // Evaluate per-customer
+    const activeCustomers = customers.filter(c => {
+      if (c.offDays && c.offDays.includes(currentDayNum)) return false;
+      if (c.holidayDates && c.holidayDates.includes(todayStr)) return false;
+      return true;
+    });
+
+    const triggeredCustomers = activeCustomers.filter(customer => {
+      let isRuleMatched = null;
+
+      rule.conditions.forEach(cond => {
+        let condAppliesToCustomer = true;
+        if (cond.customers && cond.customers.length > 0 && !cond.customers.includes(customer.id)) {
+          condAppliesToCustomer = false;
+        }
+
+        let condMatched = false;
+        if (condAppliesToCustomer) {
+          const targetProducts = (cond.products && cond.products.length) ? cond.products : data.products.map(p => p.name);
+          const relevantOrders = todayOrders.filter(o => 
+            o.customerName === customer.name && targetProducts.includes(o.productName || o.product?.name)
+          );
+
+          if (cond.status === 'UNORDERED') {
+            condMatched = relevantOrders.length === 0;
+          } else if (cond.status === 'PENDING') {
+            condMatched = relevantOrders.some(o => o.status === '待處理');
+          }
+        }
+        
+        if (isRuleMatched === null) {
+          isRuleMatched = condMatched;
+        } else {
+          if (cond.operator === 'AND') {
+            isRuleMatched = isRuleMatched && condMatched;
+          } else { // 'OR' or default
+            isRuleMatched = isRuleMatched || condMatched;
+          }
+        }
+      });
+
+      return isRuleMatched;
+    });
+
+    if (triggeredCustomers.length > 0) {
+      // 將觸發提醒的客戶名稱串接
+      const names = triggeredCustomers.map(c => c.name).join('、');
+      
+      // 嘗試組合「發生+品項」的文字，因為條件可能有多個，我們需要簡潔表達
+      // 您可以將所有條件的產品名稱與狀態彙整起來
+      const conditionTexts = rule.conditions.map(cond => {
+        const targetProducts = (cond.products && cond.products.length) ? cond.products.join('、') : '任何品項';
+        const statusText = cond.status === 'UNORDERED' ? '未訂購' : '訂單待處理';
+        return `${statusText} ${targetProducts}`;
+      });
+      
+      const formattedCondition = conditionTexts.join(' / ');
+
+      // === 修改這裡的組合順序 ===
+      // 1. 【規則名稱】:
+      let message = `【${rule.name}】:\n`;
+      // 2. 當下時間
+      message += `${formattedTimeStr}\n`;
+      // 3. 對象+發生+品項
+      message += `${names} ${formattedCondition}`;
+      
+      // 4. 提醒內容(純文字)
+      if (rule.customMessage) {
+        message += `\n\n${rule.customMessage}`; // 加一個空行區隔會比較乾淨
+      }
+      
+      notifications.push(message);
+    }
+  });
+  
+  // Actually send
+  if (notifications.length > 0) {
+    const message = notifications.join("\n\n");
+    const userIds = userId.split(',').map(id => id.trim()).filter(id => id);
+    
+    if (userIds.length === 0) return;
+    
+    const endpoint = userIds.length === 1 
+      ? "https://api.line.me/v2/bot/message/push" 
+      : "https://api.line.me/v2/bot/message/multicast";
+      
+    const payloadTo = userIds.length === 1 ? userIds[0] : userIds;
+    
+    try {
+      UrlFetchApp.fetch(endpoint, {
+        method: "post",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + channelToken 
+        },
+        payload: JSON.stringify({
+          to: payloadTo,
+          messages: [{ type: "text", text: message }]
+        })
+      });
+    } catch(err) {
+      console.log("LINE Messaging API failed: " + err.message);
+    }
+  }
+}
+
+function handleLineWebhook(payload) {
+  const configSheet = getConfigSheet();
+  const settingsStr = getSystemConfig(configSheet, "AppSettings");
+  let channelToken = "";
+  if (settingsStr) {
+    try {
+      const settings = JSON.parse(settingsStr);
+      channelToken = settings.lineChannelToken;
+    } catch (e) {}
+  }
+  
+  if (!channelToken) {
+    return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
+  }
+  
+  payload.events.forEach(function(event) {
+    if (event.type === 'message' && event.message.type === 'text') {
+      const text = event.message.text.trim();
+      const userId = event.source.userId;
+      const replyToken = event.replyToken;
+      
+      let replyText = "";
+      if (text === "查ID" || text === "我的ID") {
+        replyText = "您的 User ID 是：\n" + userId;
+      } else {
+        replyText = "您可以輸入「查ID」來獲取您的 User ID。";
+      }
+
+      try {
+        UrlFetchApp.fetch("https://api.line.me/v2/bot/message/reply", {
+          method: "post",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + channelToken
+          },
+          payload: JSON.stringify({
+            replyToken: replyToken,
+            messages: [{ type: "text", text: replyText }]
+          }),
+          muteHttpExceptions: true
+        });
+      } catch (err) {
+        // Ignore reply errors
+      }
+    }
+  });
+  
+  return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
 }
