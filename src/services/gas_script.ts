@@ -457,6 +457,15 @@ function getData(startDateStr, since = 0) {
 function saveSettings(data) {
   const configSheet = getConfigSheet();
   setSystemConfig(configSheet, "AppSettings", JSON.stringify(data));
+  
+  // === 新增這段：強制清除快取 ===
+  // 這樣背景輪詢時，才不會抓到舊的快取資料而覆蓋掉剛存的新設定
+  const cache = CacheService.getScriptCache();
+  if (cache) {
+    cache.remove("APP_CACHE_CPT");
+  }
+  // =============================
+  
   return true;
 }
 
