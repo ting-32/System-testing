@@ -207,7 +207,9 @@ const App: React.FC = () => {
     }
   };
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance'>(() => {
+    return (localStorage.getItem('nm_active_tab') as any) || 'orders';
+  });
   
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
@@ -527,6 +529,8 @@ const App: React.FC = () => {
     if (mainRef.current) {
       mainRef.current.scrollTop = 0;
     }
+    // 當分頁切換時，將目前的分頁名稱存入 localStorage
+    localStorage.setItem('nm_active_tab', activeTab);
   }, [activeTab]);
 
   useEffect(() => {
@@ -890,6 +894,11 @@ const App: React.FC = () => {
           .total-cell { font-size: 24px; font-weight: bold; } 
           .footer { margin-top: 40px; text-align: right; font-size: 14px; color: #999; border-top: 1px solid #eee; padding-top: 10px; } 
           
+          /* 移除瀏覽器預設列印頁首頁尾 */
+          @page {
+            margin: 0;
+          }
+          
           /* 僅在螢幕上顯示，列印時隱藏 */
           @media screen {
             .no-print {
@@ -912,6 +921,9 @@ const App: React.FC = () => {
             }
           }
           @media print {
+            body {
+              padding: 15mm;
+            }
             .no-print {
               display: none !important;
             }

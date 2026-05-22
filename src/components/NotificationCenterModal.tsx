@@ -140,20 +140,23 @@ export const NotificationCenterModal: React.FC<Props> = ({
 
   const calculatePreview = (rule: ReminderRule) => {
     if (!rule) return "";
-    let dayStr = '';
-    if (Array.isArray(rule.schedule)) {
-      dayStr = rule.schedule.length === 7 ? '每天' : `每週${rule.schedule.map(d => ['日', '一', '二', '三', '四', '五', '六'][parseInt(d)]).join('、')}`;
-    } else {
-      // Fallback for old rule type
-      dayStr = rule.schedule === '每天' ? '每天' : `每週${['日', '一', '二', '三', '四', '五', '六'][parseInt(rule.schedule as any)]}`;
-    }
-    
+
     // 預先產生一個預覽用的假時間
-    const fakeTime = `2026-05-17(週日)晚上7:00`;
+    const fakeTime = `2026-05-17(日)晚上7:00`;
     
-    // 【規則名稱】:
-    let desc = `系統將在 ${dayStr}的 ${rule.timeToNotify} 檢查：\n`;
-    desc += `【${rule.name || '未命名規則'}】:\n`;
+    let targetDayStr = '';
+    if (rule.targetOrderDays && rule.targetOrderDays.length > 0) {
+      // 組合出類似 5-19(日)、5-20(一) 的格式做為預覽
+      targetDayStr = rule.targetOrderDays.map(d => {
+         const dayWord = ['日', '一', '二', '三', '四', '五', '六'][parseInt(d)];
+         return `5-19(${dayWord})`; 
+      }).join('、');
+    } else {
+      targetDayStr = '5-19(一)'; // 預設帶入一個假預覽時間
+    }
+
+    // 只有【規則名稱】 和 當下時間作為開頭
+    let desc = `【${rule.name || '未命名規則'}】:\n`;
     desc += `${fakeTime}\n`; // 顯示當下時間
     
     rule.conditions.forEach((cond, idx) => {
@@ -162,10 +165,11 @@ export const NotificationCenterModal: React.FC<Props> = ({
       const statusStr = cond.status === 'UNORDERED' ? '沒有訂購' : '狀態為待處理';
       
       const opStr = idx > 0 ? (cond.operator === 'AND' ? '【且】' : '【或】') : '';
-      desc += `${opStr}${custNames} ${statusStr} ${prodNames}\n`;
+      
+      // 更新組合為： 對象 + 發生 + 時間點 + 品項
+      desc += `${opStr}${custNames} ${statusStr} ${targetDayStr} ${prodNames}\n`;
     });
 
-    // 提醒內容 (如果有填寫的話，直接接在下一行)
     if (rule.customMessage) {
       desc += `\n${rule.customMessage}`;
     }
@@ -351,6 +355,16 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
     setRule({...rule, schedule: curr});
   };
 
+  const toggleTargetDay = (dayStr: string) => {
+    let curr = [...(rule.targetOrderDays || [])];
+    if (curr.includes(dayStr)) {
+      curr = curr.filter(d => d !== dayStr);
+    } else {
+      curr.push(dayStr);
+    }
+    setRule({...rule, targetOrderDays: curr});
+  };
+
   const toggleItem = (cIdx: number, type: 'customers' | 'products', val: string) => {
     const newConds = [...rule.conditions];
     let arr = [...(newConds[cIdx][type] || [])];
@@ -397,6 +411,26 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
                     key={d.val}
                     onClick={() => toggleDay(d.val)}
                     className={`w-10 h-10 rounded-full font-bold text-sm transition-colors ${isActive ? 'bg-amber-500 text-white shadow-sm' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1.5 flex items-center gap-1">檢查訂單日期 (多選)</label>
+            <div className="text-[10px] text-slate-400 mb-2 leading-snug">
+              選擇要檢查哪幾天的訂單(尋找條件內接下來的第一個符合日期)。若不選，預設為「隔天」。
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {daysList.map(d => {
+                const isActive = rule.targetOrderDays?.includes(d.val);
+                return (
+                  <button
+                    key={'target_'+d.val}
+                    onClick={() => toggleTargetDay(d.val)}
+                    className={`w-10 h-10 rounded-full font-bold text-sm transition-colors ${isActive ? 'bg-indigo-500 text-white shadow-sm' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
                   >
                     {d.label}
                   </button>

@@ -450,21 +450,107 @@ function getData(startDateStr, since = 0) {
   try {
     settings = JSON.parse(settingsDataStr || "{}");
   } catch(e) {}
+  
+  if (!settings) settings = {};
+  settings.rules = getRemindRulesFromSheet();
 
   return { customers, products, orders, trips, settings, serverGlobalTs: new Date().getTime() };
 }
 
+function getRemindRulesSheet() {
+  let sheet = SS.getSheetByName("RemindRules");
+  if (!sheet) {
+    sheet = SS.insertSheet("RemindRules");
+    sheet.appendRow(["規則ID", "規則名稱", "檢查週期", "檢查訂單日期", "提醒時間", "是否啟用", "自訂提醒內容", "判斷條件(包含AND/OR等詳細設定)"]);
+    sheet.getRange(1, 1, 1, 8).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function saveRemindRulesToSheet(rules) {
+  const sheet = getRemindRulesSheet();
+  
+  // Clear existing content except header
+  const lastRow = Math.max(1, sheet.getLastRow()); // ensure we don't crash
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, 8).clearContent();
+  }
+  
+  if (!rules || rules.length === 0) return;
+  
+  const dataToRows = rules.map(rule => [
+    rule.id || "",
+    rule.name || "",
+    Array.isArray(rule.schedule) ? rule.schedule.join(',') : (rule.schedule || ""),
+    Array.isArray(rule.targetOrderDays) ? rule.targetOrderDays.join(',') : (rule.targetOrderDays || ""),
+    rule.timeToNotify || "",
+    rule.isActive === false ? false : true,
+    rule.customMessage || "",
+    JSON.stringify(rule.conditions || [])
+  ]);
+  
+  sheet.getRange(2, 1, dataToRows.length, 8).setValues(dataToRows);
+}
+
+function getRemindRulesFromSheet() {
+  const sheet = getRemindRulesSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+  
+  const values = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  const rules = [];
+  
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const id = row[0];
+    if (!id) continue;
+    
+    let conditions = [];
+    try {
+      conditions = row[7] ? JSON.parse(row[7]) : [];
+    } catch (e) {}
+    
+    rules.push({
+      id: String(id),
+      name: String(row[1] || ""),
+      schedule: row[2] ? String(row[2]).split(',') : [],
+      targetOrderDays: row[3] ? String(row[3]).split(',') : [],
+      timeToNotify: String(row[4] || ""),
+      isActive: row[5] === "" ? true : Boolean(row[5]),
+      customMessage: String(row[6] || ""),
+      conditions: conditions
+    });
+  }
+  
+  return rules;
+}
+
 function saveSettings(data) {
   const configSheet = getConfigSheet();
+  
+  // === 【資料分離邏輯說明】 =======================================
+  // 目的：避免 Config 分頁的 AppSettings 儲存格因寫入不斷增加的「提醒規則」而導致資料過長或難以維護。
+  // 作法：在此扮演「資料攔截」的角色。
+  //      若前端傳來的 data 包含 rules 屬性，則將該屬性獨立抽離，
+  //      轉交給 saveRemindRulesToSheet() 專屬函數寫入 "RemindRules" 表單。
+  //      保存完畢後，使用 delete 刪除該屬性，使得後續寫入 AppSettings 
+  //      的 JSON 設定中，只會留下輕量的一般參數 (例如 lineUserId、Token 等)。
+  // =============================================================
+  if (data.rules !== undefined) {
+    saveRemindRulesToSheet(data.rules); 
+    delete data.rules; // 抽離：將 rules 從原物件中剔除
+  }
+  
+  // 將「已剔除 rules」的剩餘一般設定覆寫回 Config 分頁
   setSystemConfig(configSheet, "AppSettings", JSON.stringify(data));
   
-  // === 新增這段：強制清除快取 ===
-  // 這樣背景輪詢時，才不會抓到舊的快取資料而覆蓋掉剛存的新設定
+  // === 強制清除快取 ===
+  // 確保背景輪詢時，不會一直抓到被快取的舊設定
   const cache = CacheService.getScriptCache();
   if (cache) {
     cache.remove("APP_CACHE_CPT");
   }
-  // =============================
   
   return true;
 }
@@ -985,14 +1071,18 @@ function generateTomorrowDefaultOrders() {
   
   // 從第 2 列開始迴圈 (跳過標題列)
   for (let i = 1; i < existingOrders.length; i++) {
-    const rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
+    let rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
     const rowCustomer = existingOrders[i][2]; // 第 3 欄 (Index 2) 是客戶名稱
-    const rowNote = existingOrders[i][7]; // 第 8 欄 (Index 7) 是備註
-    const rowSource = existingOrders[i][sourceColIdx]; // 資料來源
     
-    // 如果日期是今天，且備註包含「🤖 系統自動生成」或「🤖 自動建單」 或 資料來源包含「系統自動生成」
-    if (rowDate === targetDateStr && (String(rowNote).includes("🤖 系統自動生成") || String(rowNote).includes("🤖 自動建單") || String(rowSource).includes("系統自動生成") || String(rowSource).includes("自動建單"))) {
-      alreadyGeneratedCustomers.add(rowCustomer); // 將客戶名稱加入已建單名單
+    // 【修改 1：統一型別】避免 Google Sheets 欄位為純 Date 物件，導致嚴格等於(===)比對失敗
+    if (rowDate instanceof Date) {
+      rowDate = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
+    }
+    
+    // 【修改 2：邏輯加強】只要明天 (targetDateStr) 已經有該客戶的訂單 (不論是手動建好的還是自動的)，
+    // 就將他記到「已建單名單」，接下來就不會再幫這間店新增訂單了。
+    if (rowDate === targetDateStr) {
+      alreadyGeneratedCustomers.add(rowCustomer); 
     }
   }
   // ==========================================
@@ -1200,7 +1290,7 @@ function checkReminders() {
     return;
   }
   
-  const rules = settings.rules || [];
+  const rules = getRemindRulesFromSheet();
   const channelToken = settings.lineChannelToken;
   const userId = settings.lineUserId;
   if (!rules.length || !channelToken || !userId) return;
@@ -1211,8 +1301,8 @@ function checkReminders() {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const dateStr = String(now.getDate()).padStart(2, '0');
-  const days = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
-  const dayName = days[now.getDay()];
+  const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
+  const dayName = shortDays[now.getDay()]; // 短星期的字眼
   
   let h = now.getHours();
   const m = String(now.getMinutes()).padStart(2, '0');
@@ -1223,7 +1313,7 @@ function checkReminders() {
   else if (h >= 18) period = '晚上';
   let displayHour = h > 12 ? h - 12 : (h === 0 ? 12 : h);
   
-  // 組合出：2026-05-17(週日)晚上7:00
+  // 組合出格式如：2026-05-17(日)晚上7:00
   const formattedTimeStr = `${year}-${month}-${dateStr}(${dayName})${period}${displayHour}:${m}`;
   // =================================
 
@@ -1239,7 +1329,6 @@ function checkReminders() {
   const todayStr = `${yyyy}-${mm}-${dd}`;
   
   const data = getData(todayStr, 0); // Only get orders from today onwards
-  const todayOrders = data.orders.filter(o => o.deliveryDate === todayStr);
   const customers = data.customers || [];
   
   let notifications = [];
@@ -1261,12 +1350,46 @@ function checkReminders() {
     
     if (!isTimeMatched) return;
     
-    // Evaluate per-customer
-    const activeCustomers = customers.filter(c => {
-      if (c.offDays && c.offDays.includes(currentDayNum)) return false;
-      if (c.holidayDates && c.holidayDates.includes(todayStr)) return false;
-      return true;
+    // === 支援多天檢查未來的訂單 ===
+    let targetDatesInfo = [];
+    const shortDaysArr = ['日', '一', '二', '三', '四', '五', '六'];
+    
+    if (rule.targetOrderDays && rule.targetOrderDays.length > 0) {
+      for (let i = 1; i <= 7; i++) {
+        let checkDay = (currentDayNum + i) % 7;
+        if (rule.targetOrderDays.includes(String(checkDay))) {
+          const tDate = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
+          targetDatesInfo.push(tDate);
+        }
+      }
+    } else {
+      targetDatesInfo.push(new Date(now.getTime() + 24 * 60 * 60 * 1000)); // 預設檢查明天
+    }
+
+    // 將目標日期轉換成 YYYY-MM-DD 以便篩選訂單
+    const targetDateStrings = targetDatesInfo.map(d => {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     });
+
+    // 格式化所有的短日期 (用於推播訊息中的文字：例如 5-19(二))
+    const targetShortStrings = targetDatesInfo.map(d => {
+      return `${d.getMonth() + 1}-${d.getDate()}(${shortDaysArr[d.getDay()]})`;
+    });
+    const targetDatesText = targetShortStrings.join('、');
+    
+    // 取得「包含這些目標日期」的所有訂單
+    const targetOrders = data.orders.filter(o => targetDateStrings.includes(o.deliveryDate));
+    
+    // 過濾客戶 (如果客戶在"所有"勾選的目標日期都是休息或特休，才略過他)
+    const activeCustomers = customers.filter(c => {
+      const hasWorkingDay = targetDatesInfo.some(d => {
+        const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const isOff = (c.offDays && c.offDays.includes(d.getDay())) || (c.holidayDates && c.holidayDates.includes(dStr));
+        return !isOff; // 有任何一天不是休假，就把他加進檢查名單
+      });
+      return hasWorkingDay;
+    });
+    // =================================
 
     const triggeredCustomers = activeCustomers.filter(customer => {
       let isRuleMatched = null;
@@ -1280,7 +1403,7 @@ function checkReminders() {
         let condMatched = false;
         if (condAppliesToCustomer) {
           const targetProducts = (cond.products && cond.products.length) ? cond.products : data.products.map(p => p.name);
-          const relevantOrders = todayOrders.filter(o => 
+          const relevantOrders = targetOrders.filter(o => 
             o.customerName === customer.name && targetProducts.includes(o.productName || o.product?.name)
           );
 
@@ -1313,8 +1436,10 @@ function checkReminders() {
       // 您可以將所有條件的產品名稱與狀態彙整起來
       const conditionTexts = rule.conditions.map(cond => {
         const targetProducts = (cond.products && cond.products.length) ? cond.products.join('、') : '任何品項';
-        const statusText = cond.status === 'UNORDERED' ? '未訂購' : '訂單待處理';
-        return `${statusText} ${targetProducts}`;
+        let statusStr = cond.status === 'UNORDERED' ? '沒有訂購' : '狀態為待處理';
+        
+        // === 將 targetDatesText 組裝進來 ===
+        return `${statusStr} ${targetDatesText} ${targetProducts}`;
       });
       
       const formattedCondition = conditionTexts.join(' / ');

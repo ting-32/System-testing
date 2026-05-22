@@ -96,6 +96,12 @@
         * {
             -webkit-tap-highlight-color: transparent;
         }
+
+        /* Print styles */
+        @media print {
+            @page { margin: 0; }
+            body { padding: 1.5cm; } /* ensure the content doesn't hit the physical page edge */
+        }
     </style>
 <script type="importmap">
 {

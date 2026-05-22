@@ -98,6 +98,7 @@ export interface ReminderRule {
   id: string;
   name: string;
   schedule: string[]; // e.g. ["0", "1", "2"]
+  targetOrderDays?: string[]; // e.g. ["0", "1", "2"] checking orders for next matching day
   conditions: ReminderCondition[];
   timeToNotify: string; 
   isActive: boolean;
