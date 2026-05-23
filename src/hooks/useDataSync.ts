@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import localforage from 'localforage';
 import { debounce } from 'lodash';
-import { Customer, Product, Order, OrderStatus, GASResponse, ToastType } from '../types';
+import { Customer, Product, Order, OrderStatus, ToastType } from '../types';
 import { GAS_URL as DEFAULT_GAS_URL } from '../constants';
-import { formatDateStr, normalizeDate, safeJsonArray } from '../utils';
+import { formatDateStr, normalizeDate, safeNumber } from '../utils';
 import { container } from '../core/di/AppContainer';
 import { DataMapper } from '../core/mappers/DataMapper';
 
@@ -170,39 +170,12 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            localStorage.setItem('nm_last_sync_ts', String(result.serverGlobalTs));
         }
 
-        const mappedCustomers: Customer[] = (result.customers || []).map((c: any) => { 
-          const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
-          return { 
-            id: String(c.ID || c.id || ''), 
-            name: c.客戶名稱 || c.name || '', 
-            phone: c.電話 || c.phone || '', 
-            address: c.地址 || c.address || '',
-            coordinates: c.座標位置 || c.coordinates || c.GoogleMap網址 || c.googleMapUrl || '',
-            deliveryTime: c.配送時間 || c.deliveryTime || '', 
-            deliveryMethod: c.配送方式 || c.deliveryMethod || '', 
-            defaultTrip: c.預設趟數 || c.defaultTrip || '',
-            paymentTerm: c.付款週期 || c.paymentTerm || 'daily', 
-            defaultItems: safeJsonArray(c.預設品項JSON || c.預設品項 || c.defaultItems), 
-            priceList: safeJsonArray(c[priceListKey] || c.priceList).map((pl: any) => ({ productId: pl.productId, price: Number(pl.price) || 0, unit: pl.unit || '斤' })), 
-            offDays: safeJsonArray(c.公休日週期JSON || c.公休日週期 || c.offDays), 
-            holidayDates: safeJsonArray(c.特定公休日JSON || c.特定公休日 || c.holidayDates).map((d: any) => normalizeDate(d)),
-            autoOrderEnabled: c.autoOrderEnabled === true || String(c.autoOrderEnabled).trim().toLowerCase() === 'true' || String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
-            lastUpdated: Number(c.lastUpdated) || 0
-          }; 
-        }); 
-        
-        const mappedProducts: Product[] = (result.products || []).map((p: any) => ({ 
-          id: String(p.ID || p.id), 
-          name: p.品項 || p.name, 
-          unit: p.單位 || p.unit, 
-          price: Number(p.單價 || p.price) || 0, 
-          category: p.分類 || p.category || 'other',
-          lastUpdated: Number(p.lastUpdated) || 0
-        })); 
+        const mappedCustomers: Customer[] = DataMapper.mapCustomers(result.customers || []);
+        const mappedProducts: Product[] = DataMapper.mapProducts(result.products || []);
         
         const rawOrders = result.orders || []; 
         const orderMap: { [key: string]: Order } = {}; 
-        rawOrders.forEach((o: any, idx: number) => { 
+        rawOrders.forEach((o: any) => { 
           // 支援人工在試算表輸入時沒有給 ID 的狀況，使用複合鍵當作暫時 ID 分群
           const fallbackId = `MIGRATED-${o.客戶名 || o.customerName}-${o.配送日期 || o.deliveryDate}-${o.配送時間 || o.deliveryTime || ''}`.trim();
           let rawId = o.訂單ID || o.id;
@@ -223,7 +196,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
               source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
               deliveryMethod: o.配送方式 || o.deliveryMethod || '',
               trip: o.趟次 || o.trip || '',
-              lastUpdated: Number(o.lastUpdated) || 0,
+              lastUpdated: safeNumber(o.lastUpdated, 0, `Order ${oid} lastUpdated`),
               syncStatus: 'synced' 
             }; 
           } 
@@ -236,7 +209,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
              prod = currentProducts.find(p => p.name === prodName);
           }
            
-          orderMap[oid].items.push({ productId: prod ? prod.id : prodName, quantity: Number(o.數量 || o.quantity) || 0, unit: o.unit || prod?.unit || '斤' }); 
+          orderMap[oid].items.push({ productId: prod ? prod.id : prodName, quantity: safeNumber(o.數量 || o.quantity, 0, `Order ${oid} item ${prodName} quantity`), unit: o.unit || prod?.unit || '斤' }); 
         }); 
         
         const newOrders = Object.values(orderMap);
@@ -435,22 +408,18 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     }
   };
 
-  // Request Queue
-  // Stores a promise that resolves to the latest lastUpdated version (number) or undefined if failed/unknown
-  const queueRef = useRef<{ [orderId: string]: Promise<number | undefined> }>({});
-
   // Helper for saving orders to cloud with Queue
   const saveOrderToCloud = async (
     newOrder: Order, 
     actionName: string, 
-    originalLastUpdated: number | undefined,
+    originalVersion: number | undefined,
     onSuccess: (updatedOrder?: Order) => void,
     onError: (msg: string) => void
   ) => {
     try {
       // @ts-ignore
-      const savedOrder = await container.orderService.saveOrder(actionName, newOrder, products, originalLastUpdated);
-      setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, lastUpdated: savedOrder.lastUpdated } : o));
+      const savedOrder = await container.orderService.saveOrder(actionName, newOrder, products, originalVersion);
+      setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, version: savedOrder.version } : o));
       onSuccess(savedOrder);
     } catch (e: any) {
       console.error("Sync Failed:", e);
@@ -464,7 +433,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
           console.log("Order not found on backend. Falling back to upsert (updateOrderContent)...");
           // @ts-ignore
           const fallbackSavedOrder = await container.orderService.saveOrder('updateOrderContent', newOrder, products, undefined);
-          setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, lastUpdated: fallbackSavedOrder.lastUpdated } : o));
+          setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, version: fallbackSavedOrder.version } : o));
           onSuccess(fallbackSavedOrder);
           return; // 成功的話就結束，不要走到 onerror
         } catch (fallbackErr: any) {
@@ -478,8 +447,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       } else if (e.message === 'Failed to fetch') {
          errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
       }
-      if (e.errorCode === 'ERR_VERSION_CONFLICT') {
-         errMsg = '自動合併失敗，請重新整理畫面';
+      if (e.errorCode === 'VERSION_CONFLICT' || errMsg.includes('ERR_VERSION_CONFLICT')) {
+         errMsg = '此訂單已被其他設備更新，請重新整理頁面。';
       }
       onError(errMsg);
     }

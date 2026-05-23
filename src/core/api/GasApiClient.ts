@@ -58,7 +58,7 @@ export class GasApiClient implements ApiClient {
     return json.data as R;
   }
 
-  async get<R>(url: string, params?: Record<string, string>): Promise<R> {
+  async get<R>(_: string, params?: Record<string, string>): Promise<R> {
     if (!this.baseConfig.endpoint) {
       throw new Error('API Endpoint is not configured');
     }

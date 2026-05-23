@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, BellRing, Settings as SettingsIcon, Trash2, ArrowRight, Save, MessageCircle, AlertCircle } from 'lucide-react';
-import { Customer, Product, ReminderRule, ReminderCondition } from '../types';
+import { X, Plus, BellRing, Trash2, Save, MessageCircle, AlertCircle } from 'lucide-react';
+import { Customer, Product, ReminderRule } from '../types';
 
 interface Props {
   isOpen: boolean;

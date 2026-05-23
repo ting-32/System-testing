@@ -248,7 +248,7 @@ export const useOrderActions = ({
     await saveOrderToCloud(
       order,
       realActionName,
-      order.lastUpdated, // Use current lastUpdated
+      order.version, // Use current version
       () => {
         setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
         addToast('重試同步成功', 'success');
@@ -261,7 +261,7 @@ export const useOrderActions = ({
   };
 
   const batchTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const pendingUpdatesRef = React.useRef<Map<string, { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }>>(new Map());
+  const pendingUpdatesRef = React.useRef<Map<string, { id: string, status: OrderStatus, version: number, force: boolean }>>(new Map());
 
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus, showDefaultToast: boolean = true) => {
     const orderToUpdate = orders.find(o => o.id === orderId);
@@ -274,7 +274,7 @@ export const useOrderActions = ({
     pendingUpdatesRef.current.set(orderId, {
       id: orderId,
       status: newStatus,
-      originalLastUpdated: orderToUpdate.lastUpdated || 0,
+      version: orderToUpdate.version || 1,
       force: true // Force update for status changes to avoid conflicts
     });
 
@@ -283,7 +283,7 @@ export const useOrderActions = ({
     }
 
     batchTimeoutRef.current = setTimeout(async () => {
-        const updatesToProcess: { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
+        const updatesToProcess: { id: string, status: OrderStatus, version: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
         pendingUpdatesRef.current.clear(); // Clear the map for future updates
         batchTimeoutRef.current = null;
 
@@ -322,12 +322,12 @@ export const useOrderActions = ({
                     }
                 } else {
                     // Success!
-                    const newVersion = json.data.newLastUpdatedTs;
+                    const newVersion = json.data.newLastUpdatedTs; // new version would just be previous + 1, wait backend returns newLastUpdatedTs maybe should return newVersion
                     const updatedIds = updatesToProcess.map(u => u.id);
                     
                     setOrders((prev: Order[]) => prev.map(o => {
                         if (updatedIds.includes(o.id)) {
-                            return { ...o, syncStatus: 'synced', pendingAction: undefined, lastUpdated: newVersion };
+                            return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newVersion };
                         }
                         return o;
                     }));
@@ -388,7 +388,7 @@ export const useOrderActions = ({
         pendingUpdatesRef.current.set(orderId, {
           id: orderId,
           status: OrderStatus.PAID,
-          originalLastUpdated: orderToUpdate.lastUpdated || 0,
+          originalVersion: orderToUpdate.version || 1,
           force: true
         });
       }
@@ -448,7 +448,7 @@ export const useOrderActions = ({
                       
                       setOrders((prev: Order[]) => prev.map(o => {
                           if (updatedIds.includes(o.id)) {
-                              return { ...o, syncStatus: 'synced', pendingAction: undefined, lastUpdated: newVersion };
+                              return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newVersion };
                           }
                           return o;
                       }));
@@ -693,7 +693,7 @@ export const useOrderActions = ({
 
   const handleEditOrder = (order: Order) => {
     setEditingOrderId(order.id);
-    editingVersionRef.current = order.lastUpdated;
+    editingVersionRef.current = order.version;
 
     const cust = customers.find(c => c.name === order.customerName);
     setOrderForm({
@@ -811,7 +811,7 @@ export const useOrderActions = ({
       items: processedItems,
       note: orderForm.note,
       status: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.status || OrderStatus.PENDING) : OrderStatus.PENDING,
-      lastUpdated: editingOrderId ? editingVersionRef.current : undefined,
+      version: editingOrderId ? editingVersionRef.current : undefined,
       syncStatus: 'pending',
       pendingAction: editingOrderId ? 'update' : 'create'
     };
@@ -868,7 +868,7 @@ export const useOrderActions = ({
     setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId)); 
     try { 
       if (apiEndpoint) { 
-        const payload = { id: orderId, originalLastUpdated: orderBackup.lastUpdated };
+        const payload = { id: orderId, version: orderBackup.version };
         const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
         const json = await res.json();
         if (!json.success) {
@@ -913,7 +913,7 @@ export const useOrderActions = ({
         await saveOrderToCloud(
           order,
           'updateOrderContent',
-          order.lastUpdated,
+          order.version,
           () => {
              setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
           },

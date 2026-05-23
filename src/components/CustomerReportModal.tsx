@@ -1,12 +1,12 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Calendar, Download, Building2 } from 'lucide-react';
+import { X, Printer, Calendar, FileText, Building2 } from 'lucide-react';
 import { Customer, Order, Product } from '../types';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, BarChart, Bar 
 } from 'recharts';
-import { formatTimeDisplay, getStatusStyles } from '../utils';
+import { formatTimeDisplay } from '../utils';
 
 const COLORS = ['#5b7a8c', '#a8b8c2', '#d9e0e5', '#899da9', '#cbd5db', '#718c9e'];
 
@@ -341,7 +341,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                             dataKey="value"
                             stroke="none"
                           >
-                            {kpis.donutData.map((entry, index) => (
+                            {kpis.donutData.map((_, index) => (
                               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                             ))}
                           </Pie>

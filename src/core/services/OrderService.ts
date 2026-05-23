@@ -24,10 +24,9 @@ export class OrderService {
     action: 'createOrder' | 'updateOrderContent' | 'updateOrderStatus' | 'deleteOrder',
     order: Order,
     products: Product[],
-    originalLastUpdated?: number
+    originalVersion?: number
   ): Promise<Order> {
     const doSave = async (versionToUse?: number): Promise<number | undefined> => {
-      try {
         const payload = this.mapOrderToDto(order, products);
         
         let result: Order;
@@ -43,32 +42,20 @@ export class OrderService {
             break;
           case 'deleteOrder':
             await this.orderRepo.deleteOrder(order.id, versionToUse);
-            result = { ...order }; // return mock order on delete
+            result = { ...order, version: undefined }; // return mock order on delete
             break;
         }
         
-        // Return new version
-        return result.lastUpdated !== undefined ? result.lastUpdated : versionToUse;
-
-      } catch (e: any) {
-        if (e.errorCode === 'ERR_VERSION_CONFLICT') {
-          console.log("Auto-resolving conflict for order:", order.id);
-          const latestOrder = await this.orderRepo.getOrder(order.id);
-          
-          if (latestOrder && latestOrder.lastUpdated !== undefined) {
-             return doSave(latestOrder.lastUpdated); // Retry with new version
-          }
-        }
-        throw e;
-      }
+        // Return new version (not lastUpdated, we use version)
+        return result.version !== undefined ? result.version : (action === 'deleteOrder' ? undefined : versionToUse);
     };
 
     const newVersion = await this.queue.enqueue<number | undefined>(
       order.id, 
-      originalLastUpdated, 
+      originalVersion, 
       (prevVersion) => doSave(prevVersion)
     );
 
-    return { ...order, lastUpdated: newVersion };
+    return { ...order, version: newVersion };
   }
 }

@@ -34,7 +34,6 @@ import {
   CheckSquare,
   Wallet,
   Mic, // New Import
-  List,
   Filter,
   Check,
   GripVertical,
@@ -128,7 +127,6 @@ const App: React.FC = () => {
     conflictData, setConflictData,
     syncData,
     handleLogin,
-    handleLogout,
     handleChangePassword,
     handleSaveApiUrl,
     handleForceRetry,
@@ -608,7 +606,7 @@ const App: React.FC = () => {
         saveOrderToCloud(
           updatedOrder,
           'updateOrderContent',
-          order.lastUpdated,
+          order.version,
           () => {
             setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
           },
@@ -662,6 +660,7 @@ const App: React.FC = () => {
     window.open(url, '_blank');
   };
 
+  // @ts-ignore
   const handleDeleteTrip = (tripToDelete: string) => {
     if (window.confirm(`確定要刪除「${tripToDelete}」嗎？\n該趟次的訂單將會被移至「未分配」。`)) {
       // Update orders
@@ -671,7 +670,7 @@ const App: React.FC = () => {
         idsToUpdate.forEach(id => {
           const order = orders.find(o => o.id === id);
           if (order) {
-            saveOrderToCloud({ ...order, trip: '未分配' }, 'updateOrderContent', order.lastUpdated, () => {
+            saveOrderToCloud({ ...order, trip: '未分配' }, 'updateOrderContent', order.version, () => {
               setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
             }, (errMsg: string) => {
               setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
@@ -1287,7 +1286,7 @@ const App: React.FC = () => {
               </div>
               <motion.div variants={containerVariants} initial="hidden" animate="show">
               {Object.keys(groupedOrders).length > 0 ? (
-                Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders], index) => {
+                Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => {
                     const isExpanded = expandedCustomer === custName;
                     const currentCustomer = customerMap[custName];
                     
@@ -1609,7 +1608,7 @@ const App: React.FC = () => {
                           if (reorderedOrderIds.size > 0) {
                             const ordersToSync = orders.filter(o => reorderedOrderIds.has(o.id));
                             ordersToSync.forEach(order => {
-                              saveOrderToCloud(order, 'updateOrderContent', order.lastUpdated, () => {
+                              saveOrderToCloud(order, 'updateOrderContent', order.version, () => {
                                 setOrders((prev: Order[]) => prev.map(o => o.id === order.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
                               }, (errMsg: string) => {
                                 setOrders((prev: Order[]) => prev.map(o => o.id === order.id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));

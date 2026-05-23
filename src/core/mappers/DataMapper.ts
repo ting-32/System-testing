@@ -1,5 +1,5 @@
 import { Customer, Order, Product, OrderStatus } from '../../types';
-import { safeJsonArray, normalizeDate } from '../../utils';
+import { safeJsonArray, normalizeDate, safeNumber } from '../../utils';
 
 export class DataMapper {
   static mapCustomers(rawCustomers: any[]): Customer[] {
@@ -16,11 +16,11 @@ export class DataMapper {
         defaultTrip: c.預設趟數 || c.defaultTrip || '',
         paymentTerm: c.付款週期 || c.paymentTerm || 'daily', 
         defaultItems: safeJsonArray(c.預設品項JSON || c.預設品項 || c.defaultItems), 
-        priceList: safeJsonArray(c[priceListKey] || c.priceList).map((pl: any) => ({ productId: pl.productId, price: Number(pl.price) || 0, unit: pl.unit || '斤' })), 
+        priceList: safeJsonArray(c[priceListKey] || c.priceList).map((pl: any) => ({ productId: pl.productId, price: safeNumber(pl.price, 0, `Customer ${c.name} priceList.price`), unit: pl.unit || '斤' })), 
         offDays: safeJsonArray(c.公休日週期JSON || c.公休日週期 || c.offDays), 
         holidayDates: safeJsonArray(c.特定公休日JSON || c.特定公休日 || c.holidayDates).map((d: any) => normalizeDate(d)),
         autoOrderEnabled: c.autoOrderEnabled === true || String(c.autoOrderEnabled).trim().toLowerCase() === 'true' || String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
-        lastUpdated: Number(c.lastUpdated) || 0
+        lastUpdated: safeNumber(c.lastUpdated, 0, `Customer ${c.name} lastUpdated`)
       };
     });
   }
@@ -30,9 +30,9 @@ export class DataMapper {
       id: String(p.ID || p.id), 
       name: p.品項 || p.name, 
       unit: p.單位 || p.unit, 
-      price: Number(p.單價 || p.price) || 0, 
+      price: safeNumber(p.單價 || p.price, 0, `Product ${p.name} price`), 
       category: p.分類 || p.category || 'other',
-      lastUpdated: Number(p.lastUpdated) || 0
+      lastUpdated: safeNumber(p.lastUpdated, 0, `Product ${p.name} lastUpdated`)
     }));
   }
 
@@ -55,7 +55,8 @@ export class DataMapper {
           source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
           deliveryMethod: o.配送方式 || o.deliveryMethod || '',
           trip: o.趟次 || o.trip || '',
-          lastUpdated: Number(o.lastUpdated) || 0,
+          lastUpdated: safeNumber(o.lastUpdated, 0, `Order ${oid} lastUpdated`),
+          version: safeNumber(o.version || o.Version, 1, `Order ${oid} version`),
           syncStatus: 'synced' 
         }; 
       } 
@@ -64,7 +65,7 @@ export class DataMapper {
         orderMap[oid].items.push({ 
           productId: o.產品ID || o.productId || o.品項名 || o.productName, 
           productName: o.品項名 || o.productName, 
-          quantity: Number(o.數量 || o.quantity) || 0, 
+          quantity: safeNumber(o.數量 || o.quantity, 0, `Order ${oid} item ${o.productName} quantity`), 
           unit: o.單位 || o.unit || '斤' 
         }); 
       } 

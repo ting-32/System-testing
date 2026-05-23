@@ -71,7 +71,17 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  const lock = LockService.getScriptLock();
   try {
+    try {
+      lock.waitLock(15000);
+    } catch (err) {
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: false, 
+        error: "伺服器忙碌中，請稍後再試 (Lock Timeout)" 
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     const params = JSON.parse(e.postData.contents);
     
     if (params.events && Array.isArray(params.events)) {
@@ -151,14 +161,24 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     Logger.log("Error in doPost: " + error.toString());
-    // 如果是版本衝突，回傳特定的 errorCode
+    // 如果是版本衝突，回傳指定的格式
     const isConflict = error.toString().includes("ERR_VERSION_CONFLICT");
+    if (isConflict) {
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: false, 
+        error: "VERSION_CONFLICT",
+        message: "此訂單已被其他設備更新，請重新整理頁面。",
+        errorCode: "VERSION_CONFLICT"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     return ContentService.createTextOutput(JSON.stringify({ 
       success: false, 
       error: error.toString(),
-      errorCode: isConflict ? "ERR_VERSION_CONFLICT" : "UNKNOWN_ERROR"
-    }))
-      .setMimeType(ContentService.MimeType.JSON);
+      errorCode: "UNKNOWN_ERROR"
+    })).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -623,6 +643,13 @@ function ensureHeader(sheet, headerName) {
   return index;
 }
 
+// Helper to check version conflict for Orders (樂觀鎖)
+function checkOrderVersionStrict(currentVersion, expectedVersion) {
+  if (expectedVersion !== undefined && currentVersion !== "" && Number(currentVersion) !== Number(expectedVersion)) {
+    throw new Error("ERR_VERSION_CONFLICT: Data has been modified by another user.");
+  }
+}
+
 // Helper to check version conflict
 function checkVersionConflict(currentLastUpdated, originalLastUpdated) {
   if (!currentLastUpdated) return; // No previous version, safe to write
@@ -640,8 +667,9 @@ function createOrder(orderData) {
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
   const tripColIdx = ensureHeader(sheet, "Trip");
   const sourceColIdx = ensureHeader(sheet, "資料來源");
+  const versionColIdx = ensureHeader(sheet, "Version");
   
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
   if (sheet.getMaxColumns() < maxCol) {
     sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
   }
@@ -665,6 +693,7 @@ function createOrder(orderData) {
     row[lastUpdatedColIdx] = lastUpdatedTs;
     row[tripColIdx] = orderData.trip || "";
     row[sourceColIdx] = orderData.source || "";
+    row[versionColIdx] = 1; // 首次建立 version 為 1
     return row;
   });
   
@@ -672,7 +701,7 @@ function createOrder(orderData) {
     const lastRow = sheet.getLastRow();
     sheet.getRange(lastRow + 1, 1, rows.length, maxCol).setValues(rows);
   }
-  return { lastUpdated: lastUpdatedTs };
+  return { lastUpdated: lastUpdatedTs, version: 1 };
 }
 
 function updateOrderContent(orderData) {
@@ -680,102 +709,128 @@ function updateOrderContent(orderData) {
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated"); // 0-based index
   const tripColIdx = ensureHeader(sheet, "Trip");
   const sourceColIdx = ensureHeader(sheet, "資料來源");
-  const values = sheet.getDataRange().getValues();
+  const versionColIdx = ensureHeader(sheet, "Version");
   
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
-  if (sheet.getMaxColumns() < maxCol) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
-  }
+  const maxColReq = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
+    if (sheet.getMaxColumns() < maxColReq) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), maxColReq - sheet.getMaxColumns());
+    }
 
-  const targetId = String(orderData.id).trim();
-  let originalCreatedAt = "";
-  
-  // 1. Conflict Detection Phase
-  // Find ALL rows related to this order first to check timestamps
-  // Since an order splits into multiple rows (items), checking one valid row is enough.
-  for (let i = values.length - 1; i >= 1; i--) {
-    const sheetId = String(values[i][1]).trim();
-    if (sheetId === targetId) {
-      const currentLastUpdated = values[i][lastUpdatedColIdx];
-      // Only check conflict if force is not true
-      if (!orderData.force) {
-        checkVersionConflict(currentLastUpdated, orderData.originalLastUpdated);
+    const lastRow = sheet.getLastRow();
+    const totalCols = sheet.getMaxColumns();
+
+    let values = [];
+    if (lastRow > 1) {
+      values = sheet.getDataRange().getValues();
+    }
+    
+    const targetId = String(orderData.id).trim();
+    let originalCreatedAt = "";
+    
+    // 1. Conflict Detection Phase (In-Memory)
+    let currentVersion = 0;
+    if (lastRow > 1) {
+      for (let i = values.length - 1; i >= 1; i--) {
+        const sheetId = String(values[i][1]).trim();
+        if (sheetId === targetId) {
+          const sheetVersion = values[i][versionColIdx];
+          currentVersion = Number(sheetVersion || 0);
+          if (!orderData.force) {
+            checkOrderVersionStrict(sheetVersion, orderData.version);
+          }
+          if (!originalCreatedAt) originalCreatedAt = values[i][0];
+        }
       }
-      // If we are here, no conflict for this row.
-      // Capture creation time to preserve it
-      if (!originalCreatedAt) originalCreatedAt = values[i][0];
     }
-  }
 
-  // 2. Deletion Phase (Safe to delete now)
-  for (let i = values.length - 1; i >= 1; i--) {
-    const sheetId = String(values[i][1]).trim();
-    if (sheetId === targetId) {
-      sheet.deleteRow(i + 1);
+    let timestamp = formatCellValue(originalCreatedAt);
+    if (!timestamp) {
+      timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
     }
-  }
+    const newLastUpdatedTs = new Date().getTime();
 
-  let timestamp = formatCellValue(originalCreatedAt);
-  if (!timestamp) {
-    timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
-  }
-  const newLastUpdatedTs = new Date().getTime();
+    // 2. Filter out old rows (In-Memory Deletion)
+    const newRows = [];
+    if (lastRow > 1) {
+      for (let i = 1; i < values.length; i++) {
+        if (String(values[i][1]).trim() !== targetId) {
+          const r = values[i].slice();
+          while (r.length < totalCols) r.push("");
+          newRows.push(r.slice(0, totalCols));
+        }
+      }
+    }
 
-  const rows = orderData.items.map(item => {
-    const row = new Array(maxCol).fill("");
-    row[0] = timestamp;
-    row[1] = orderData.id;
-    row[2] = orderData.customerName;
-    row[3] = orderData.deliveryDate;
-    row[4] = orderData.deliveryTime;
-    row[5] = item.productName || item.productId;
-    row[6] = item.quantity;
-    row[7] = orderData.note || "";
-    row[8] = orderData.status || "PENDING";
-    row[9] = orderData.deliveryMethod || "";
-    row[10] = item.unit || "斤";
-    row[lastUpdatedColIdx] = newLastUpdatedTs;
-    row[tripColIdx] = orderData.trip || "";
-    row[sourceColIdx] = orderData.source || "";
-    return row;
-  });
-
-  if (rows.length > 0) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, maxCol).setValues(rows);
+    // 3. Append new rows
+    orderData.items.forEach(item => {
+      const row = new Array(totalCols).fill("");
+      row[0] = timestamp;
+      row[1] = orderData.id;
+      row[2] = orderData.customerName;
+      row[3] = orderData.deliveryDate;
+      row[4] = orderData.deliveryTime;
+      row[5] = item.productName || item.productId;
+      row[6] = item.quantity;
+      row[7] = orderData.note || "";
+      row[8] = orderData.status || "PENDING";
+      row[9] = orderData.deliveryMethod || "";
+      row[10] = item.unit || "斤";
+      row[lastUpdatedColIdx] = newLastUpdatedTs;
+      row[tripColIdx] = orderData.trip || "";
+      row[sourceColIdx] = orderData.source || "";
+      row[versionColIdx] = currentVersion + 1; // 每次更新遞增 version
+      newRows.push(row);
+    });
+    
+    // 4. Batch Write Back
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
+    }
+    
+  if (newRows.length > 0) {
+    sheet.getRange(2, 1, newRows.length, totalCols).setValues(newRows);
   }
-  return { lastUpdated: newLastUpdatedTs };
+  
+  return { lastUpdated: newLastUpdatedTs, version: currentVersion + 1 };
 }
 
 function updateOrderStatus(data) {
   const sheet = getSheets().ORDERS;
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const versionColIdx = ensureHeader(sheet, "Version");
   const values = sheet.getDataRange().getValues();
   let updated = false;
+  let newVersion = 0;
   const targetId = String(data.id).trim();
   const newLastUpdatedTs = new Date().getTime();
   
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][1]).trim() === targetId) {
       // Conflict check if provided and not forced
-      if (data.originalLastUpdated !== undefined && !data.force) {
-         checkVersionConflict(values[i][lastUpdatedColIdx], data.originalLastUpdated);
+      const currentVersion = values[i][versionColIdx];
+      if (data.version !== undefined && !data.force) {
+         checkOrderVersionStrict(currentVersion, data.version);
       }
+      
+      newVersion = Number(currentVersion || 0) + 1;
       
       sheet.getRange(i + 1, 9).setValue(data.status); // Status column
       sheet.getRange(i + 1, lastUpdatedColIdx + 1).setValue(newLastUpdatedTs); // Update timestamp
+      sheet.getRange(i + 1, versionColIdx + 1).setValue(newVersion); // bump version
       updated = true;
     }
   }
   
   if (!updated) throw new Error("Order not found: " + targetId);
-  return { lastUpdated: newLastUpdatedTs };
+  return { lastUpdated: newLastUpdatedTs, version: newVersion };
 }
 
 function batchUpdateOrders(data) {
   const sheet = getSheets().ORDERS;
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const versionColIdx = ensureHeader(sheet, "Version");
   const values = sheet.getDataRange().getValues();
-  const updates = data.updates; // Array of { id: string, status: string, originalLastUpdated: number }
+  const updates = data.updates; // Array of { id: string, status: string, version: number }
   const newLastUpdatedTs = new Date().getTime();
   let updatedCount = 0;
   
@@ -787,14 +842,16 @@ function batchUpdateOrders(data) {
     const rowId = String(values[i][1]).trim();
     if (updateMap.has(rowId)) {
       const updateData = updateMap.get(rowId);
+      const currentVersion = values[i][versionColIdx];
       
       // Conflict check if provided and not forced
-      if (!updateData.force && updateData.originalLastUpdated !== undefined) {
-         checkVersionConflict(values[i][lastUpdatedColIdx], updateData.originalLastUpdated);
+      if (!updateData.force && updateData.version !== undefined) {
+         checkOrderVersionStrict(currentVersion, updateData.version);
       }
       
       sheet.getRange(i + 1, 9).setValue(updateData.status); // Status column
       sheet.getRange(i + 1, lastUpdatedColIdx + 1).setValue(newLastUpdatedTs);
+      sheet.getRange(i + 1, versionColIdx + 1).setValue(Number(currentVersion || 0) + 1); // bump version
       updatedCount++;
     }
   }
@@ -821,24 +878,51 @@ function batchUpdatePaymentStatus(data) {
 
 function deleteOrder(data) {
   const sheet = getSheets().ORDERS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
-  const values = sheet.getDataRange().getValues();
-  const targetId = String(data.id).trim();
+  const lastRow = sheet.getLastRow();
   
-  // Check conflict first
-  for (let i = values.length - 1; i >= 1; i--) {
-    if (String(values[i][1]).trim() === targetId) {
-       if (!data.force && data.originalLastUpdated !== undefined) {
-         checkVersionConflict(values[i][lastUpdatedColIdx], data.originalLastUpdated);
-       }
+  // 防禦邊界：如果只有標頭或空白
+  if (lastRow <= 1) {
+      return false; // 無資料可刪除
     }
-  }
 
-  for (let i = values.length - 1; i >= 1; i--) {
-    if (String(values[i][1]).trim() === targetId) {
-      sheet.deleteRow(i + 1);
+    const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+    const versionColIdx = ensureHeader(sheet, "Version");
+    const totalCols = sheet.getMaxColumns();
+    const values = sheet.getDataRange().getValues();
+    const targetId = String(data.id).trim();
+    
+    // 1. Check conflict
+    let found = false;
+    for (let i = values.length - 1; i >= 1; i--) {
+      if (String(values[i][1]).trim() === targetId) {
+         found = true;
+         if (!data.force && data.version !== undefined) {
+           checkOrderVersionStrict(values[i][versionColIdx], data.version);
+         }
+      }
     }
+
+    if (!found) return false;
+
+    // 2. Filter out deleted rows
+    const newRows = [];
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][1]).trim() !== targetId) {
+        const r = values[i].slice();
+        while (r.length < totalCols) r.push("");
+        newRows.push(r.slice(0, totalCols));
+      }
+    }
+
+    // 3. Batch Write Back
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
+    }
+    
+  if (newRows.length > 0) {
+    sheet.getRange(2, 1, newRows.length, totalCols).setValues(newRows);
   }
+  
   return true;
 }
 
@@ -1047,8 +1131,17 @@ function safeJsonArray(val) {
 }
 
 function generateTomorrowDefaultOrders() {
-  const sheets = getSheets();
-  const orderSheet = sheets.ORDERS;
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (err) {
+    console.error("排程伺服器忙碌中，放棄執行自動建單");
+    return;
+  }
+  
+  try {
+    const sheets = getSheets();
+    const orderSheet = sheets.ORDERS;
   
   const sourceColIdx = ensureHeader(orderSheet, "資料來源");
   const lastUpdatedColIdx = ensureHeader(orderSheet, "LastUpdated");
@@ -1168,6 +1261,10 @@ function generateTomorrowDefaultOrders() {
   if (newOrderRows.length > 0) {
     const lastRow = orderSheet.getLastRow();
     orderSheet.getRange(lastRow + 1, 1, newOrderRows.length, maxCol).setValues(newOrderRows);
+  }
+  
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -1317,9 +1414,11 @@ function checkReminders() {
   const formattedTimeStr = `${year}-${month}-${dateStr}(${dayName})${period}${displayHour}:${m}`;
   // =================================
 
-  const currentDayStr = String(now.getDay()); // "0" to "6"
-  const currentDayNum = now.getDay();
-  const currentHour = String(now.getHours()).padStart(2, '0');
+  const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
+  // u 會回傳 1(一) 到 7(日)，因此對 7 取餘數就能完美變回 JavaScript 習慣的 0(日)到 6(六)
+  const currentDayNum = parseInt(Utilities.formatDate(now, timeZone, "u"), 10) % 7; 
+  const currentDayStr = String(currentDayNum);
+  const currentHour = Utilities.formatDate(now, timeZone, "HH");
   const currentTimeStr = `${currentHour}:00`; // Simplify to hour check for stability
   
   // Date format YYYY-MM-DD
@@ -1378,7 +1477,15 @@ function checkReminders() {
     const targetDatesText = targetShortStrings.join('、');
     
     // 取得「包含這些目標日期」的所有訂單
-    const targetOrders = data.orders.filter(o => targetDateStrings.includes(o.deliveryDate));
+    // 新增一個清洗字串的小工具 (將 2026/05/23 00:00:00 強制轉換回 2026-05-23)
+    const normalizeGasDate = (dStr) => {
+      if (!dStr) return "";
+      return String(dStr).split(' ')[0].replace(/\//g, '-');
+    };
+
+    const targetOrders = data.orders.filter(o => {
+      return targetDateStrings.includes(normalizeGasDate(o.deliveryDate));
+    });
     
     // 過濾客戶 (如果客戶在"所有"勾選的目標日期都是休息或特休，才略過他)
     const activeCustomers = customers.filter(c => {

@@ -1,5 +1,4 @@
 import { ApiClient } from '../api/ApiClient';
-import { Customer, Order, Product } from '../../types';
 
 export interface SyncDataParams {
   type: string;
@@ -14,6 +13,7 @@ export interface SyncDataResult {
   products?: any[];
   trips?: string[];
   serverGlobalTs?: number;
+  settings?: any;
 }
 
 export interface ISyncRepository {

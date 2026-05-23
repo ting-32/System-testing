@@ -33,18 +33,48 @@ export const getStatusStyles = (status: OrderStatus) => {
   }
 };
 
-export const normalizeDate = (dateStr: any) => {
-  if (!dateStr) return '';
+export const normalizeDate = (dateStr: any, fallbackToToday = true) => {
+  if (!dateStr && !fallbackToToday) return '';
+  if (!dateStr) return getSmartDefaultDate();
+  
   try {
     const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return String(dateStr);
+    if (isNaN(d.getTime())) {
+      if (typeof dateStr === 'string') {
+         // handle yyyy/mm/dd mapping
+         const cleaned = dateStr.replace(/\//g, '-').split(' ')[0];
+         const d2 = new Date(cleaned);
+         if (!isNaN(d2.getTime())) {
+             return `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
+         }
+      }
+      if (process.env.NODE_ENV === 'development') {
+          console.warn(`[Data Sanitization] Invalid date encountered: "${dateStr}". Falling back to system default.`);
+      }
+      return fallbackToToday ? getSmartDefaultDate() : '';
+    }
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   } catch (e) {
-    return String(dateStr);
+    if (process.env.NODE_ENV === 'development') {
+         console.warn(`[Data Sanitization] Invalid date encountered: "${dateStr}". Falling back to system default.`);
+    }
+    return fallbackToToday ? getSmartDefaultDate() : '';
   }
+};
+
+export const safeNumber = (val: any, fallback = 0, contextInfo = ''): number => {
+  if (val === null || val === undefined || val === '') return fallback;
+  const num = Number(val);
+  if (isNaN(num)) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(`[Data Sanitization] Invalid number in ${contextInfo}: "${val}". Falling back to ${fallback}.`);
+    }
+    return fallback;
+  }
+  return num;
 };
 
 export const formatDateStr = (date: Date) => {
