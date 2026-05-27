@@ -292,7 +292,7 @@ export const useOrderActions = ({
         try {
             if (apiEndpoint) {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000);
+                const timeoutId = setTimeout(() => controller.abort(), 45000);
                 
                 let res;
                 try {
@@ -354,9 +354,9 @@ export const useOrderActions = ({
                 return; // Let individual upsert handle it
             }
 
-            if (e.name === 'AbortError' || (e.message && e.message.includes('aborted'))) {
-                errMsg = '請求連線逾時 (超過15秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
-            } else if (e.message === 'Failed to fetch') {
+            if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
+                errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
+            } else if (e.message === 'Failed to fetch' || String(e).includes('Failed to fetch')) {
                 errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
             }
 
@@ -413,7 +413,7 @@ export const useOrderActions = ({
           try {
               if (apiEndpoint) {
                   const controller = new AbortController();
-                  const timeoutId = setTimeout(() => controller.abort(), 15000);
+                  const timeoutId = setTimeout(() => controller.abort(), 45000);
                   
                   let res;
                   try {
@@ -476,9 +476,9 @@ export const useOrderActions = ({
                   return; // Let individual upsert handle it
               }
 
-              if (e.name === 'AbortError' || (e.message && e.message.includes('aborted'))) {
-                  errMsg = '請求連線逾時 (超過15秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
-              } else if (e.message === 'Failed to fetch') {
+              if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
+                  errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
+              } else if (e.message === 'Failed to fetch' || String(e).includes('Failed to fetch')) {
                   errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
               }
 

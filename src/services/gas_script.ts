@@ -77,7 +77,7 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
     try {
-      lock.waitLock(15000);
+      lock.waitLock(28000);
     } catch (err) {
       return ContentService.createTextOutput(JSON.stringify({ 
         success: false, 
@@ -1169,7 +1169,7 @@ function safeJsonArray(val) {
 function generateTomorrowDefaultOrders() {
   const lock = LockService.getScriptLock();
   try {
-    lock.waitLock(15000);
+    lock.waitLock(28000);
   } catch (err) {
     console.error("排程伺服器忙碌中，放棄執行自動建單");
     return;
@@ -1747,7 +1747,7 @@ function getNotificationLogSheet() {
 function writeTraceLog(source, ruleId, ruleName, status, detailsObj) {
   const lock = LockService.getScriptLock();
   try {
-    lock.waitLock(5000); // 防禦並發寫入
+    lock.waitLock(15000); // 防禦並發寫入
     const sheet = getNotificationLogSheet();
     
     // 寫入當下軌跡

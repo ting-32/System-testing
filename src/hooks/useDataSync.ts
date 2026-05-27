@@ -308,7 +308,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       console.error("無法連線至雲端:", e); 
       if (!isSilent) {
         let errMsg = "同步失敗，請檢查網路連線";
-        if (e instanceof Error && e.message === 'Failed to fetch') {
+        if ((e instanceof Error && e.message.includes('Failed to fetch')) || String(e).includes('Failed to fetch')) {
           errMsg = "雲端連線失敗 (CORS / 網址無效)。請確認 Apps Script 部署 URL 是否正確、權限是否為「所有人」，或程式碼是否有錯。";
         }
         addToast(errMsg, 'error'); 
@@ -385,7 +385,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     } catch (e: any) {
       console.error(e);
       // Backend error returned explicit success: false (GasApiClient throws an Error with errorCode if it fails)
-      if (e.errorCode || e.message !== 'Failed to fetch') {
+      if (e.errorCode || !String(e).includes('Failed to fetch')) {
         addToast('伺服器拒絕強制執行，已為您重新整理為最新資料', 'warning');
         setConflictData(null); 
         setTimeout(() => syncData(true), 100);
@@ -449,9 +449,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         }
       }
       
-      if (e.name === 'AbortError' || (e.message && e.message.includes('aborted'))) {
-         errMsg = '請求連線逾時 (超過15秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
-      } else if (e.message === 'Failed to fetch') {
+      if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
+         errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
+      } else if ((e instanceof Error && e.message.includes('Failed to fetch')) || String(e).includes('Failed to fetch')) {
          errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
       }
       if (e.errorCode === 'VERSION_CONFLICT' || errMsg.includes('ERR_VERSION_CONFLICT')) {
