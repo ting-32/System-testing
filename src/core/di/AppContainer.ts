@@ -3,6 +3,7 @@ import { AuthRepository } from '../repositories/AuthRepository';
 import { OrderRepository } from '../repositories/OrderRepository';
 import { SyncRepository } from '../repositories/SyncRepository';
 import { TripsRepository } from '../repositories/TripsRepository';
+import { LogRepository } from '../repositories/LogRepository';
 import { OrderService } from '../services/OrderService';
 
 export class AppContainer {
@@ -13,6 +14,7 @@ export class AppContainer {
   public orderRepo: OrderRepository;
   public syncRepo: SyncRepository;
   public tripsRepo: TripsRepository;
+  public logRepo: LogRepository;
   public orderService: OrderService;
 
   private constructor() {
@@ -24,6 +26,7 @@ export class AppContainer {
     this.orderRepo = new OrderRepository(this.apiClient);
     this.syncRepo = new SyncRepository(this.apiClient);
     this.tripsRepo = new TripsRepository(this.apiClient);
+    this.logRepo = new LogRepository(this.apiClient);
     this.orderService = new OrderService(this.orderRepo);
   }
 

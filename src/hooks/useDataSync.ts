@@ -247,6 +247,12 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                  const mergedMap = new Map();
                  currentOrders.forEach(o => mergedMap.set(o.id, o));
                  newOrders.forEach(newOrder => {
+                    // ✅ 修改後：若是發現帶有 DELETED 狀態的資料，直接從 Map 中連根拔起
+                    if (newOrder.status === 'DELETED') {
+                        mergedMap.delete(newOrder.id);
+                        return;
+                    }
+
                     const existOrder = mergedMap.get(newOrder.id);
                     if (existOrder) {
                         if (existOrder.syncStatus === 'pending' || existOrder.syncStatus === 'error') {
@@ -270,7 +276,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            }
            
            setOrders(currentOrders => {
-             const mergedOrders = [...newOrders];
+             const activeNewOrders = newOrders.filter(o => o.status !== 'DELETED');
+             const mergedOrders = [...activeNewOrders];
              
              currentOrders.forEach(localOrder => {
                  const index = mergedOrders.findIndex(o => o.id === localOrder.id);

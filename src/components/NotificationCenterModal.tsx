@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, BellRing, Trash2, Save, MessageCircle, AlertCircle } from 'lucide-react';
+import { X, Plus, BellRing, Trash2, Save, MessageCircle, AlertCircle, Sparkles } from 'lucide-react';
 import { Customer, Product, ReminderRule } from '../types';
+import { NotificationLogViewer } from './NotificationLogViewer';
+import { DiagnosticFunnelModal } from './DiagnosticFunnelModal';
+import { container } from '../core/di/AppContainer';
 
 interface Props {
   isOpen: boolean;
@@ -26,12 +29,24 @@ export const NotificationCenterModal: React.FC<Props> = ({
   setLineUserId,
   apiEndpoint
 }) => {
-  const [activeTab, setActiveTab] = useState<'rules' | 'settings'>('rules');
+  const [activeTab, setActiveTab] = useState<'rules' | 'settings' | 'logs'>('rules');
   const [rules, setRules] = useState<ReminderRule[]>([]);
   const [editingRule, setEditingRule] = useState<ReminderRule | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  
+  const [isFunnelOpen, setIsFunnelOpen] = useState(false);
+  const [isDryRunning, setIsDryRunning] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<any>(null);
+  const [currentDryRunRuleId, setCurrentDryRunRuleId] = useState<string | null>(null);
 
   const loadRulesFromStorage = () => {
+    // 💡 【新增】冷卻護盾檢查：如果距離上次編輯不到 15 秒 (15000 毫秒)，就忽略來自雲端的覆蓋
+    const lastEditTime = localStorage.getItem('rules_last_edit_time');
+    if (lastEditTime && Date.now() - parseInt(lastEditTime) < 15000) {
+      console.log('處於編輯安全冷卻期，略過外部背景覆寫');
+      return;
+    }
+
     const saved = localStorage.getItem('nm_reminder_rules');
     if (saved) {
       try {
@@ -86,9 +101,66 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const saveRules = (newRules: ReminderRule[]) => {
     setRules(newRules);
     localStorage.setItem('nm_reminder_rules', JSON.stringify(newRules));
+    // 💡 【新增】：打上冷卻護盾，寫入現在的絕對時間
+    localStorage.setItem('rules_last_edit_time', Date.now().toString());
     saveToGas(newRules, lineChannelToken, lineUserId);
   };
   
+  const handleDryRunRule = async (ruleId: string) => {
+    if (!apiEndpoint || !lineChannelToken || !lineUserId) {
+      alert('請填寫完整 Token 與 User ID');
+      return;
+    }
+    
+    setIsFunnelOpen(true);
+    setIsDryRunning(true);
+    setDryRunResult(null);
+    setCurrentDryRunRuleId(ruleId);
+    
+    try {
+      container.updateApiEndpoint(apiEndpoint);
+      await saveToGas(rules, lineChannelToken, lineUserId);
+      const res = await container.logRepo.runDryRun(ruleId);
+      if (res?.data) {
+        setDryRunResult(res.data);
+      } else {
+        // Fallback for API structure changes
+        setDryRunResult(res);
+      }
+    } catch(err: any) {
+      console.error(err);
+      alert('推演時發生錯誤: ' + err.message);
+      setIsFunnelOpen(false);
+    } finally {
+      setIsDryRunning(false);
+    }
+  };
+
+  const executeRealSend = async () => {
+    if (!currentDryRunRuleId) return;
+    setIsSaving(true);
+    try {
+      const res = await fetch(apiEndpoint, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "testRule",
+          data: { ruleId: currentDryRunRuleId }
+        })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        alert('測試觸發指令已送出！應會立即發送 LINE 訊息。');
+        setIsFunnelOpen(false);
+      } else {
+        alert('測試失敗: ' + (data.message || '未知錯誤'));
+      }
+    } catch(err: any) {
+      alert('測試時發生錯誤: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleSaveAndTestToken = async () => {
     if (!apiEndpoint || !lineChannelToken || !lineUserId) {
       alert('請填寫完整 Token 與 User ID');
@@ -180,11 +252,12 @@ export const NotificationCenterModal: React.FC<Props> = ({
   if (!isOpen) return null;
 
   return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-sm">
-        <motion.div
-          initial={{ y: '100%' }}
-          animate={{ y: 0 }}
+    <>
+      <AnimatePresence>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-sm">
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
           className="bg-white w-full max-w-md h-[95dvh] sm:h-[85dvh] sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl relative rounded-t-3xl"
@@ -212,6 +285,12 @@ export const NotificationCenterModal: React.FC<Props> = ({
               onClick={() => setActiveTab('rules')}
             >
               提醒規則
+            </button>
+            <button
+              className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all ${activeTab === 'logs' ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-500 hover:bg-slate-100'}`}
+              onClick={() => setActiveTab('logs')}
+            >
+              執行日誌
             </button>
             <button
               className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all ${activeTab === 'settings' ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/50' : 'text-slate-500 hover:bg-slate-100'}`}
@@ -247,9 +326,13 @@ export const NotificationCenterModal: React.FC<Props> = ({
                             {rule.name}
                             {!rule.isActive && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">已停用</span>}
                           </h3>
-                          <div className="flex gap-2">
-                            <button onClick={() => setEditingRule(rule)} className="text-amber-600 text-sm font-semibold hover:underline">編輯</button>
-                            <button onClick={() => saveRules(rules.filter(r => r.id !== rule.id))} className="text-rose-500 text-sm"><Trash2 className="w-4 h-4"/></button>
+                          <div className="flex gap-2 items-center">
+                            <button onClick={() => handleDryRunRule(rule.id)} className="text-indigo-600 text-[11px] px-2 py-1 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 rounded-md font-semibold transition-colors">
+                              <Sparkles className="w-3 h-3" />
+                              邏輯診斷
+                            </button>
+                            <button onClick={() => setEditingRule(rule)} className="text-amber-600 text-sm font-semibold hover:underline border-l border-slate-200 pl-2">編輯</button>
+                            <button onClick={() => saveRules(rules.filter(r => r.id !== rule.id))} className="text-rose-500 text-sm pl-1"><Trash2 className="w-4 h-4"/></button>
                           </div>
                         </div>
                         <p className="text-sm text-slate-600 mt-2 bg-slate-50 p-2 rounded-xl whitespace-pre-line leading-relaxed">
@@ -268,6 +351,10 @@ export const NotificationCenterModal: React.FC<Props> = ({
                   </>
                 )}
               </div>
+            )}
+
+            {activeTab === 'logs' && (
+              <NotificationLogViewer apiEndpoint={apiEndpoint} />
             )}
 
             {activeTab === 'settings' && (
@@ -330,6 +417,14 @@ export const NotificationCenterModal: React.FC<Props> = ({
         </motion.div>
       </div>
     </AnimatePresence>
+    <DiagnosticFunnelModal 
+      isOpen={isFunnelOpen} 
+      onClose={() => setIsFunnelOpen(false)} 
+      isLoading={isDryRunning} 
+      result={dryRunResult} 
+      onRealSend={executeRealSend} 
+    />
+  </>
   );
 };
 
@@ -440,7 +535,19 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
           </div>
           <div>
             <label className="block text-xs font-bold text-slate-500 mb-1.5">提醒時間</label>
-            <input type="time" value={rule.timeToNotify || ''} onChange={e => setRule({...rule, timeToNotify: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" />
+            <input 
+              type="time" 
+              value={rule.timeToNotify || ''} 
+              onChange={e => {
+                let val = e.target.value;
+                if (val && val.includes(':')) {
+                   const [h, m] = val.split(':');
+                   val = `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
+                }
+                setRule({ ...rule, timeToNotify: val });
+              }} 
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl" 
+            />
           </div>
         </div>
       </div>

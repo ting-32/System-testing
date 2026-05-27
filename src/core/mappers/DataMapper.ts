@@ -1,7 +1,36 @@
-import { Customer, Order, Product, OrderStatus } from '../../types';
+import { Customer, Order, Product, OrderStatus, NotificationLog, LogStatus } from '../../types';
 import { safeJsonArray, normalizeDate, safeNumber } from '../../utils';
 
 export class DataMapper {
+  static mapNotificationLogs(rawLogs: any[]): NotificationLog[] {
+    return rawLogs.map((log: any, idx: number) => {
+      let parsedDetails = {};
+      try {
+        parsedDetails = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+      } catch (e) {
+        console.warn('Failed to parse log details:', log.details);
+      }
+      
+      // Attempt to convert string timestamp to numeric epoch or keep it as-is if parsing fails
+      // Assuming log.timestamp comes back as "YYYY-MM-DD HH:mm:ss"
+      let ts = Date.now();
+      if (log.timestamp) {
+        const d = new Date(log.timestamp.replace(/-/g, '/')); // simple cross-browser compatible string date parsing
+        if (!isNaN(d.getTime())) ts = d.getTime();
+      }
+
+      return {
+        id: `${ts}_${log.ruleId || 'norule'}_${idx}`,
+        timestamp: ts,
+        triggerSource: log.source || 'UNKNOWN',
+        ruleId: String(log.ruleId || ''),
+        ruleName: String(log.ruleName || ''),
+        status: (log.status as LogStatus) || 'ERROR',
+        details: parsedDetails
+      };
+    });
+  }
+
   static mapCustomers(rawCustomers: any[]): Customer[] {
     return rawCustomers.map((c: any) => {
       const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 

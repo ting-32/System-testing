@@ -3,14 +3,17 @@
 
 const SS = SpreadsheetApp.getActiveSpreadsheet();
 
+let cachedTimeZone = null;
+
 // 👇 新增這個輔助函數：用來將試算表的 Date 物件格式化為乾淨的字串
 function formatCellValue(val) {
   if (val instanceof Date) {
+    if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
     // Google Sheets 將純時間儲存為 1899 年的日期
     if (val.getFullYear() <= 1900) {
-      return Utilities.formatDate(val, SS.getSpreadsheetTimeZone(), "HH:mm");
+      return Utilities.formatDate(val, cachedTimeZone, "HH:mm");
     } else {
-      return Utilities.formatDate(val, SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+      return Utilities.formatDate(val, cachedTimeZone, "yyyy/MM/dd HH:mm:ss");
     }
   }
   return val;
@@ -146,6 +149,15 @@ function doPost(e) {
       case "testLineMessage":
         result = testLineMessage(params.data);
         break;
+      case "testRule":
+        result = checkReminders(params.data.ruleId);
+        break;
+      case "dryRunRule":
+        result = checkReminders(params.data.ruleId, true);
+        break;
+      case "getNotificationLogs":
+        result = getNotificationLogs();
+        break;
       default:
         throw new Error("Unknown action: " + action);
     }
@@ -178,6 +190,7 @@ function doPost(e) {
       errorCode: "UNKNOWN_ERROR"
     })).setMimeType(ContentService.MimeType.JSON);
   } finally {
+    SpreadsheetApp.flush(); // 強制將快取變更寫入 Sheets，確保後續 Lock 拿到最新資料
     lock.releaseLock();
   }
 }
@@ -447,7 +460,7 @@ function getData(startDateStr, since = 0) {
     quantity: o.Quantity || o.quantity || o.數量,
     unit: o.Unit || o.unit || o.單位,
     note: o.Note || o.note || o.備註,
-    status: o.Status || o.status || o.狀態,
+    status: String(o.Status || o.status || o.狀態 || '').trim(),
     deliveryMethod: o.DeliveryMethod || o.deliveryMethod || o.配送方式,
     source: o.Source || o.source || o.資料來源 || '',
     lastUpdated: o.LastUpdated ? new Date(o.LastUpdated).getTime() : 0,
@@ -455,8 +468,17 @@ function getData(startDateStr, since = 0) {
   }));
 
   if (startDateStr) {
-    const start = new Date(startDateStr);
-    orders = orders.filter(o => new Date(o.deliveryDate) >= start);
+    const startStr = startDateStr.replace(/-/g, '');
+    orders = orders.filter(o => {
+      let d = o.deliveryDate;
+      if (d instanceof Date) {
+        if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || 'Asia/Taipei';
+        d = Utilities.formatDate(d, cachedTimeZone, 'yyyyMMdd');
+      } else {
+        d = String(d || '').split(' ')[0].replace(/[\/-]/g, '');
+      }
+      return d >= startStr;
+    });
   }
 
   if (since > 0) {
@@ -504,13 +526,14 @@ function saveRemindRulesToSheet(rules) {
     rule.name || "",
     Array.isArray(rule.schedule) ? rule.schedule.join(',') : (rule.schedule || ""),
     Array.isArray(rule.targetOrderDays) ? rule.targetOrderDays.join(',') : (rule.targetOrderDays || ""),
-    rule.timeToNotify || "",
+    rule.timeToNotify ? `'${String(rule.timeToNotify)}` : "",
     rule.isActive === false ? false : true,
     rule.customMessage || "",
     JSON.stringify(rule.conditions || [])
   ]);
   
   sheet.getRange(2, 1, dataToRows.length, 8).setValues(dataToRows);
+  sheet.getRange(2, 5, dataToRows.length, 1).setNumberFormat("@");
 }
 
 function getRemindRulesFromSheet() {
@@ -519,10 +542,12 @@ function getRemindRulesFromSheet() {
   if (lastRow <= 1) return [];
   
   const values = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  const displayValues = sheet.getRange(2, 1, lastRow - 1, 8).getDisplayValues();
   const rules = [];
   
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
+    const displayRow = displayValues[i];
     const id = row[0];
     if (!id) continue;
     
@@ -536,7 +561,7 @@ function getRemindRulesFromSheet() {
       name: String(row[1] || ""),
       schedule: row[2] ? String(row[2]).split(',') : [],
       targetOrderDays: row[3] ? String(row[3]).split(',') : [],
-      timeToNotify: String(row[4] || ""),
+      timeToNotify: String(displayRow[4] || "").replace(/^'/, ""), // Use display value for time to avoid Date object issues
       isActive: row[5] === "" ? true : Boolean(row[5]),
       customMessage: String(row[6] || ""),
       conditions: conditions
@@ -838,6 +863,7 @@ function batchUpdateOrders(data) {
   const updateMap = new Map();
   updates.forEach(u => updateMap.set(String(u.id).trim(), u));
 
+  let modified = false;
   for (let i = 1; i < values.length; i++) {
     const rowId = String(values[i][1]).trim();
     if (updateMap.has(rowId)) {
@@ -849,11 +875,16 @@ function batchUpdateOrders(data) {
          checkOrderVersionStrict(currentVersion, updateData.version);
       }
       
-      sheet.getRange(i + 1, 9).setValue(updateData.status); // Status column
-      sheet.getRange(i + 1, lastUpdatedColIdx + 1).setValue(newLastUpdatedTs);
-      sheet.getRange(i + 1, versionColIdx + 1).setValue(Number(currentVersion || 0) + 1); // bump version
+      values[i][8] = updateData.status; // Status column (index 8 is col 9)
+      values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+      values[i][versionColIdx] = Number(currentVersion || 0) + 1; // bump version
       updatedCount++;
+      modified = true;
     }
+  }
+  
+  if (modified && values.length > 1) {
+    sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
   }
   
   return { updatedCount, newLastUpdatedTs };
@@ -866,12 +897,18 @@ function batchUpdatePaymentStatus(data) {
   const orderIds = new Set(data.orderIds.map(id => String(id).trim()));
   const newLastUpdatedTs = new Date().getTime();
   
+  let modified = false;
   for (let i = 1; i < values.length; i++) {
     const id = String(values[i][1]).trim();
     if (orderIds.has(id)) {
-      sheet.getRange(i + 1, 9).setValue(data.newStatus);
-      sheet.getRange(i + 1, lastUpdatedColIdx + 1).setValue(newLastUpdatedTs);
+      values[i][8] = data.newStatus; // Status column (index 8 is col 9)
+      values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+      modified = true;
     }
+  }
+
+  if (modified && values.length > 1) {
+    sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
   }
   return true;
 }
@@ -880,49 +917,48 @@ function deleteOrder(data) {
   const sheet = getSheets().ORDERS;
   const lastRow = sheet.getLastRow();
   
-  // 防禦邊界：如果只有標頭或空白
-  if (lastRow <= 1) {
-      return false; // 無資料可刪除
-    }
+  if (lastRow <= 1) return false;
 
-    const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
-    const versionColIdx = ensureHeader(sheet, "Version");
-    const totalCols = sheet.getMaxColumns();
-    const values = sheet.getDataRange().getValues();
-    const targetId = String(data.id).trim();
-    
-    // 1. Check conflict
-    let found = false;
-    for (let i = values.length - 1; i >= 1; i--) {
-      if (String(values[i][1]).trim() === targetId) {
-         found = true;
-         if (!data.force && data.version !== undefined) {
-           checkOrderVersionStrict(values[i][versionColIdx], data.version);
-         }
-      }
-    }
+  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const versionColIdx = ensureHeader(sheet, "Version");
+  const statusColIdx = ensureHeader(sheet, "Status");
+  const totalCols = sheet.getMaxColumns();
+  const values = sheet.getDataRange().getValues();
+  const targetId = String(data.id).trim();
 
-    if (!found) return false;
-
-    // 2. Filter out deleted rows
-    const newRows = [];
-    for (let i = 1; i < values.length; i++) {
-      if (String(values[i][1]).trim() !== targetId) {
-        const r = values[i].slice();
-        while (r.length < totalCols) r.push("");
-        newRows.push(r.slice(0, totalCols));
-      }
-    }
-
-    // 3. Batch Write Back
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-    }
-    
-  if (newRows.length > 0) {
-    sheet.getRange(2, 1, newRows.length, totalCols).setValues(newRows);
-  }
+  let modified = false;
+  let newVersion = 0;
   
+  if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const tsString = Utilities.formatDate(new Date(), cachedTimeZone, "yyyy/MM/dd HH:mm:ss");
+
+  // Conflict check first
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][1]).trim() === targetId) {
+      if (!data.force && data.version !== undefined) {
+         checkOrderVersionStrict(values[i][versionColIdx], data.version);
+      }
+    }
+  }
+
+  // Update rows
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][1]).trim() === targetId) {
+      if (!modified) {
+        newVersion = Number(values[i][versionColIdx] || 0) + 1;
+        modified = true;
+      }
+      
+      // Update Status, LastUpdated, Version in memory
+      values[i][statusColIdx] = 'DELETED';
+      values[i][lastUpdatedColIdx] = tsString;
+      values[i][versionColIdx] = newVersion;
+    }
+  }
+
+  if (modified && values.length > 1) {
+    sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
+  }
   return true;
 }
 
@@ -1264,6 +1300,7 @@ function generateTomorrowDefaultOrders() {
   }
   
   } finally {
+    SpreadsheetApp.flush(); // 強制將快取變更寫入 Sheets，確保後續 Lock 拿到最新資料
     lock.releaseLock();
   }
 }
@@ -1375,7 +1412,8 @@ function onSpreadsheetChange(e) {
 
 // 🔔 Notification Center Check (Intended for Time-Driven Trigger)
 // Runs periodically (e.g. hourly) to evaluate rules and send notifications
-function checkReminders() {
+function checkReminders(forceRuleId = null, isDryRun = false) {
+  let dryRunResults = [];
   const configSheet = getConfigSheet();
   const settingsDataStr = getSystemConfig(configSheet, "AppSettings");
   if (!settingsDataStr) return;
@@ -1394,15 +1432,22 @@ function checkReminders() {
 
   const now = new Date();
   
+  const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
   // === 新增以下這段轉換時間的邏輯 ===
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const dateStr = String(now.getDate()).padStart(2, '0');
-  const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
-  const dayName = shortDays[now.getDay()]; // 短星期的字眼
+  const year = Utilities.formatDate(now, timeZone, "yyyy");
+  const month = Utilities.formatDate(now, timeZone, "MM");
+  const dateStr = Utilities.formatDate(now, timeZone, "dd");
   
-  let h = now.getHours();
-  const m = String(now.getMinutes()).padStart(2, '0');
+  const currentDayNum = parseInt(Utilities.formatDate(now, timeZone, "u"), 10) % 7; 
+  const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
+  const dayName = shortDays[currentDayNum]; // 短星期的字眼
+  
+  const currentHour = Utilities.formatDate(now, timeZone, "HH");
+  const m = Utilities.formatDate(now, timeZone, "mm");
+  const currentDayStr = String(currentDayNum);
+  const currentTimeStr = `${currentHour}:00`; 
+  
+  let h = parseInt(currentHour, 10);
   let period = '凌晨';
   if (h >= 6 && h < 12) period = '上午';
   else if (h === 12) period = '中午';
@@ -1413,19 +1458,9 @@ function checkReminders() {
   // 組合出格式如：2026-05-17(日)晚上7:00
   const formattedTimeStr = `${year}-${month}-${dateStr}(${dayName})${period}${displayHour}:${m}`;
   // =================================
-
-  const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
-  // u 會回傳 1(一) 到 7(日)，因此對 7 取餘數就能完美變回 JavaScript 習慣的 0(日)到 6(六)
-  const currentDayNum = parseInt(Utilities.formatDate(now, timeZone, "u"), 10) % 7; 
-  const currentDayStr = String(currentDayNum);
-  const currentHour = Utilities.formatDate(now, timeZone, "HH");
-  const currentTimeStr = `${currentHour}:00`; // Simplify to hour check for stability
   
   // Date format YYYY-MM-DD
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const todayStr = `${yyyy}-${mm}-${dd}`;
+  const todayStr = `${year}-${month}-${dateStr}`;
   
   const data = getData(todayStr, 0); // Only get orders from today onwards
   const customers = data.customers || [];
@@ -1433,11 +1468,27 @@ function checkReminders() {
   let notifications = [];
   
   rules.forEach(rule => {
-    if (!rule.isActive) return;
+    // 定義初始偵測包
+    let trace = { step: "INIT", message: "開始評估", customersEvaluated: 0, customersMatched: 0 };
+    const source = forceRuleId === rule.id ? "Manual_Test" : "System_Cron";
+
+    const logAndReturn = (status, details) => {
+        writeTraceLog(source, rule.id, rule.name, status, details);
+        if (isDryRun) dryRunResults.push({ ruleId: rule.id, ruleName: rule.name, status, details });
+    };
+
+    if (forceRuleId && rule.id !== forceRuleId) return;
+
+    if (!rule.isActive && rule.id !== forceRuleId) {
+       logAndReturn("SKIPPED", { reason: "規則已停用" });
+       return;
+    }
     
     // Check Date & Time match
     let isTimeMatched = false;
-    if (Array.isArray(rule.schedule)) {
+    if (forceRuleId === rule.id) {
+      isTimeMatched = true; // Bypass time check when forcing a test
+    } else if (Array.isArray(rule.schedule)) {
       isTimeMatched = rule.schedule.includes(currentDayStr) && rule.timeToNotify.startsWith(currentHour);
     } else {
       if (rule.schedule === '每天') {
@@ -1447,7 +1498,10 @@ function checkReminders() {
       }
     }
     
-    if (!isTimeMatched) return;
+    if (!isTimeMatched) {
+        logAndReturn("SKIPPED", { reason: "時間未到或非指定星期", currentHour, schedule: rule.schedule });
+        return;
+    }
     
     // === 支援多天檢查未來的訂單 ===
     let targetDatesInfo = [];
@@ -1472,7 +1526,9 @@ function checkReminders() {
 
     // 格式化所有的短日期 (用於推播訊息中的文字：例如 5-19(二))
     const targetShortStrings = targetDatesInfo.map(d => {
-      return `${d.getMonth() + 1}-${d.getDate()}(${shortDaysArr[d.getDay()]})`;
+      const md = Utilities.formatDate(d, timeZone, "M-d");
+      const dNum = parseInt(Utilities.formatDate(d, timeZone, "u"), 10) % 7;
+      return `${md}(${shortDaysArr[dNum]})`;
     });
     const targetDatesText = targetShortStrings.join('、');
     
@@ -1480,6 +1536,9 @@ function checkReminders() {
     // 新增一個清洗字串的小工具 (將 2026/05/23 00:00:00 強制轉換回 2026-05-23)
     const normalizeGasDate = (dStr) => {
       if (!dStr) return "";
+      if (dStr instanceof Date) {
+        return Utilities.formatDate(dStr, timeZone, "yyyy-MM-dd");
+      }
       return String(dStr).split(' ')[0].replace(/\//g, '-');
     };
 
@@ -1497,6 +1556,12 @@ function checkReminders() {
       return hasWorkingDay;
     });
     // =================================
+    trace.customersEvaluated = activeCustomers.length;
+
+    if (activeCustomers.length === 0) {
+        logAndReturn("SKIPPED", { reason: "今日所有目標客戶皆為休假日", targetDatesText });
+        return;
+    }
 
     const triggeredCustomers = activeCustomers.filter(customer => {
       let isRuleMatched = null;
@@ -1517,7 +1582,7 @@ function checkReminders() {
           if (cond.status === 'UNORDERED') {
             condMatched = relevantOrders.length === 0;
           } else if (cond.status === 'PENDING') {
-            condMatched = relevantOrders.some(o => o.status === '待處理');
+            condMatched = relevantOrders.some(o => o.status === 'PENDING' || o.status === '待處理');
           }
         }
         
@@ -1535,9 +1600,22 @@ function checkReminders() {
       return isRuleMatched;
     });
 
+    trace.step = "CONDITION_EVALUATED";
+    trace.customersMatched = triggeredCustomers.length;
+
+    if (triggeredCustomers.length === 0) {
+        logAndReturn("SKIPPED", { reason: "客戶有營業，但條件未達成 (例如客戶已下單)", targetDatesText });
+        return;
+    }
+
     if (triggeredCustomers.length > 0) {
       // 將觸發提醒的客戶名稱串接
       const names = triggeredCustomers.map(c => c.name).join('、');
+      
+      // 成功發送
+      trace.step = "SENT";
+      trace.recipients = names;
+      logAndReturn("SUCCESS", trace);
       
       // 嘗試組合「發生+品項」的文字，因為條件可能有多個，我們需要簡潔表達
       // 您可以將所有條件的產品名稱與狀態彙整起來
@@ -1569,34 +1647,36 @@ function checkReminders() {
   });
   
   // Actually send
-  if (notifications.length > 0) {
+  if (!isDryRun && notifications.length > 0) {
     const message = notifications.join("\n\n");
     const userIds = userId.split(',').map(id => id.trim()).filter(id => id);
     
-    if (userIds.length === 0) return;
-    
-    const endpoint = userIds.length === 1 
-      ? "https://api.line.me/v2/bot/message/push" 
-      : "https://api.line.me/v2/bot/message/multicast";
+    if (userIds.length > 0) {
+      const endpoint = userIds.length === 1 
+        ? "https://api.line.me/v2/bot/message/push" 
+        : "https://api.line.me/v2/bot/message/multicast";
+        
+      const payloadTo = userIds.length === 1 ? userIds[0] : userIds;
       
-    const payloadTo = userIds.length === 1 ? userIds[0] : userIds;
-    
-    try {
-      UrlFetchApp.fetch(endpoint, {
-        method: "post",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + channelToken 
-        },
-        payload: JSON.stringify({
-          to: payloadTo,
-          messages: [{ type: "text", text: message }]
-        })
-      });
-    } catch(err) {
-      console.log("LINE Messaging API failed: " + err.message);
+      try {
+        UrlFetchApp.fetch(endpoint, {
+          method: "post",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + channelToken 
+          },
+          payload: JSON.stringify({
+            to: payloadTo,
+            messages: [{ type: "text", text: message }]
+          })
+        });
+      } catch(err) {
+        console.log("LINE Messaging API failed: " + err.message);
+      }
     }
   }
+
+  return dryRunResults;
 }
 
 function handleLineWebhook(payload) {
@@ -1647,4 +1727,66 @@ function handleLineWebhook(payload) {
   });
   
   return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
+}
+
+// 1. 初始化與獲取 Log 表單
+function getNotificationLogSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("NotificationLogs");
+  if (!sheet) {
+    sheet = ss.insertSheet("NotificationLogs");
+    // [Timestamp, 觸發來源, 規則ID, 規則名稱, 執行狀態, 詳細過程(JSON)]
+    sheet.appendRow(["Timestamp", "Source", "RuleID", "RuleName", "Status", "Details"]);
+    sheet.setFrozenRows(1);
+    sheet.hideSheet(); // 前端架構不依賴人員檢視，直接隱藏防呆
+  }
+  return sheet;
+}
+
+// 2. 寫入日誌與滾動清理機制 (Rolling Window)
+function writeTraceLog(source, ruleId, ruleName, status, detailsObj) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(5000); // 防禦並發寫入
+    const sheet = getNotificationLogSheet();
+    
+    // 寫入當下軌跡
+    const timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone() || "Asia/Taipei", "yyyy-MM-dd HH:mm:ss");
+    const safeDetails = detailsObj ? JSON.stringify(detailsObj) : "{}";
+    sheet.appendRow([timestamp, source, ruleId, ruleName, status, safeDetails]);
+    
+    // 效能防禦：Rolling Window (保留最新 800 筆)
+    const lastRow = sheet.getLastRow();
+    const MAX_LOGS = 1000;
+    const DELETE_COUNT = 200;
+    
+    if (lastRow > MAX_LOGS) {
+      // 刪除最舊的 200 筆 (保留第 1 列的 Header，從第 2 列開始刪)
+      sheet.deleteRows(2, DELETE_COUNT);
+    }
+  } catch (e) {
+    console.error("Trace Log 寫入失敗", e);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 實作該 Method (只抓最新 50 筆加速前端繪製)
+function getNotificationLogs() {
+  const sheet = getNotificationLogSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+  
+  const rawValues = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  // 將陣列反轉 (顯示最新的在最上面)，並限制回傳筆數以防 Payload 過大
+  const logs = rawValues.reverse().slice(0, 50).map(row => ({
+    timestamp: row[0],
+    source: row[1],
+    ruleId: String(row[2]),
+    ruleName: String(row[3]),
+    status: row[4],
+    details: row[5] // JSON String, 留給前端 Mapper 去 parse
+  }));
+  
+  return logs;
 }

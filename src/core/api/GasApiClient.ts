@@ -28,9 +28,9 @@ export class GasApiClient implements ApiClient {
     const finalConfig = { ...this.baseConfig, ...config };
     const payload = { action, data };
 
-    // 加入 15 秒的 Timeout（逾時中斷機制），避免 GAS 無回應導致該訂單死鎖
+    // 加入 45 秒的 Timeout（逾時中斷機制），避免 GAS 無回應導致該訂單死鎖
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     let res;
     try {
@@ -41,6 +41,11 @@ export class GasApiClient implements ApiClient {
         body: JSON.stringify(payload),
         signal: controller.signal // 將終止訊號掛載上來
       });
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        throw new Error("API Request Timeout: 超過 45 秒未回應");
+      }
+      throw err;
     } finally {
       clearTimeout(timeoutId); // 清除計時器
     }

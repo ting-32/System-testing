@@ -106,6 +106,18 @@ export interface ReminderRule {
   customMessage?: string;
 }
 
+export type LogStatus = 'SUCCESS' | 'SKIPPED' | 'ERROR';
+
+export interface NotificationLog {
+  id: string; // 可以用 timestamp + ruleId 組合
+  timestamp: number; // 將 GAS 的日期字串轉為 Epoch time 以利排序
+  triggerSource: 'SYSTEM_CRON' | 'MANUAL_TEST' | 'WEBHOOK' | string;
+  ruleId: string;
+  ruleName: string;
+  status: LogStatus;
+  details: Record<string, any>; // 從 JSON.parse(字串) 轉換過來的物件
+}
+
 export interface GASResponse<T> {
   success: boolean;
   data?: T;
