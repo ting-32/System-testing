@@ -1,5 +1,6 @@
 import { ApiClient, ApiClientConfig } from './ApiClient';
 import { GASResponse } from '../../types';
+import { fetchWithRetry } from '../../utils/fetchUtils';
 
 export class GasApiClient implements ApiClient {
   private baseConfig: ApiClientConfig;
@@ -34,7 +35,7 @@ export class GasApiClient implements ApiClient {
 
     let res;
     try {
-      res = await fetch(finalConfig.endpoint, {
+      res = await fetchWithRetry(finalConfig.endpoint, {
         method: 'POST',
         redirect: finalConfig.redirect,
         headers: finalConfig.headers,
@@ -57,6 +58,11 @@ export class GasApiClient implements ApiClient {
       // Create a specific error that contains the errorCode for upstream handling
       const error = new Error(json.error || 'API Request Failed');
       (error as any).errorCode = json.errorCode;
+      if (json.serverData) {
+        (error as any).serverData = json.serverData;
+      } else if (json.data) {
+        (error as any).serverData = json.data;
+      }
       throw error;
     }
 
@@ -76,12 +82,17 @@ export class GasApiClient implements ApiClient {
       finalUrl += `?${qs}`;
     }
 
-    const res = await fetch(finalUrl, { redirect: 'follow' });
+    const res = await fetchWithRetry(finalUrl, { redirect: 'follow' });
     const json = await res.json() as GASResponse<any>;
     
     if (!json.success) {
       const error = new Error(json.error || 'API Request Failed');
       (error as any).errorCode = json.errorCode;
+      if (json.serverData) {
+        (error as any).serverData = json.serverData;
+      } else if (json.data) {
+        (error as any).serverData = json.data;
+      }
       throw error;
     }
 

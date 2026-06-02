@@ -1,5 +1,6 @@
 import React from 'react';
 import { Customer, Product, ToastType } from '../types';
+import { fetchWithRetry } from '../utils/fetchUtils';
 
 interface UseDataManagementProps {
   customers: Customer[];
@@ -9,6 +10,7 @@ interface UseDataManagementProps {
   apiEndpoint: string;
   isSaving: boolean;
   setIsSaving: (isSaving: boolean) => void;
+  setIsRetrying?: (isRetrying: boolean) => void;
   customerForm: any;
   productForm: any;
   isEditingCustomer: string | null;
@@ -29,6 +31,7 @@ export const useDataManagement = ({
   apiEndpoint,
   isSaving,
   setIsSaving,
+  setIsRetrying,
   customerForm,
   productForm,
   isEditingCustomer,
@@ -79,7 +82,7 @@ export const useDataManagement = ({
            (payload as any).force = true;
         }
 
-        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateCustomer', data: payload }) }); 
+        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateCustomer', data: payload }) }); 
         const json = await res.json();
         
         if (!json.success) {
@@ -88,7 +91,10 @@ export const useDataManagement = ({
               setConflictData({
                  action: 'updateCustomer',
                  data: payload,
-                 description: `更新店家: ${finalCustomer.name}`
+                 description: `更新店家: ${finalCustomer.name}`,
+                 type: 'customer',
+                 clientData: payload,
+                 serverData: json.serverData || json.data
               });
            } else {
               addToast('店家資料儲存失敗', 'error');
@@ -125,7 +131,7 @@ export const useDataManagement = ({
         if (isEditingProduct !== 'new') {
            (payload as any).originalLastUpdated = editingVersionRef.current;
         }
-        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateProduct', data: payload }) }); 
+        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateProduct', data: payload }) }); 
         const json = await res.json();
         if (!json.success) {
            setProducts(previousProducts);
@@ -133,7 +139,10 @@ export const useDataManagement = ({
               setConflictData({
                  action: 'updateProduct',
                  data: payload,
-                 description: `更新品項: ${finalProduct.name}`
+                 description: `更新品項: ${finalProduct.name}`,
+                 type: 'product',
+                 clientData: payload,
+                 serverData: json.serverData || json.data
               });
            } else {
               addToast('品項資料儲存失敗', 'error');
@@ -160,7 +169,7 @@ export const useDataManagement = ({
     setCustomers((prev: Customer[]) => prev.filter(c => c.id !== customerId)); 
     try { 
       if (apiEndpoint) { 
-        await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteCustomer', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) }); 
+        await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteCustomer', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) }); 
       } 
     } catch (e) { 
       console.error("刪除失敗:", e); 
@@ -176,7 +185,7 @@ export const useDataManagement = ({
     setProducts((prev: Product[]) => prev.filter(p => p.id !== productId)); 
     try { 
       if (apiEndpoint) { 
-        await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteProduct', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) }); 
+        await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteProduct', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) }); 
       } 
     } catch (e) { 
       console.error("刪除失敗:", e); 

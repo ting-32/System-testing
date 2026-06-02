@@ -48,6 +48,7 @@ import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
 import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES } from './constants';
 import { ConfirmModal } from './components/ConfirmModal';
+import { NetworkTimeoutModal } from './components/NetworkTimeoutModal';
 import { VoiceInputModal } from './components/VoiceInputModal';
 import { ConflictModal } from './components/ConflictModal';
 import { DatePickerModal } from './components/DatePickerModal';
@@ -74,6 +75,7 @@ import { useOrderActions } from './hooks/useOrderActions';
 import { useDataManagement } from './hooks/useDataManagement';
 import { useAutoOrderPrediction } from './hooks/useAutoOrderPrediction';
 import { useCompactMode } from './hooks/useCompactMode';
+import { fetchWithRetry } from './utils/fetchUtils';
 import { AutoOrderDashboardModal } from './components/modals/AutoOrderDashboardModal';
 import { getTomorrowDate, getSmartDefaultDate, getLastMonthEndDate, formatTimeDisplay, formatTimeForInput, getUpcomingHolidays, isDateInOffDays } from './utils';
 import { modalVariants, buttonTap, buttonHover, triggerHaptic, containerVariants, itemVariants } from './components/animations';
@@ -160,6 +162,72 @@ const App: React.FC = () => {
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockError, setUnlockError] = useState(false);
+  const [isWarmingUp, setIsWarmingUp] = useState(false);
+  const [showDeadlockModal, setShowDeadlockModal] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const lastActiveTimeRef = useRef(Date.now());
+
+  useEffect(() => {
+    const handleDeadlock = () => setShowDeadlockModal(true);
+    const handleRetryStart = () => setIsRetrying(true);
+    const handleRetryEnd = () => setIsRetrying(false);
+
+    window.addEventListener('networkDeadlock', handleDeadlock);
+    window.addEventListener('networkRetryStart', handleRetryStart);
+    window.addEventListener('networkRetryEnd', handleRetryEnd);
+
+    return () => {
+      window.removeEventListener('networkDeadlock', handleDeadlock);
+      window.removeEventListener('networkRetryStart', handleRetryStart);
+      window.removeEventListener('networkRetryEnd', handleRetryEnd);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      // 當使用者切回包含本系統的頁籤時
+      if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        const idleTime = now - lastActiveTimeRef.current;
+        
+        // 設定閒置判定時間：超過 15 分鐘 (900,000 毫秒)
+        if (idleTime > 900000) {
+          setIsWarmingUp(true);
+          
+          try {
+            if (apiEndpoint) {
+              // 發送一個極輕量的請求喚醒 GAS (用原本處理 GET 的方法即可，主要目的是喚醒 Server)
+              await fetchWithRetry(`${apiEndpoint}?action=ping`, { method: 'GET' });
+            }
+          } catch (error) {
+            console.warn("系統熱機喚醒失敗", error);
+          } finally {
+            // 不管成功或失敗，2~3 秒內 GAS 會被叫醒，我們就可以放行按鈕
+            setIsWarmingUp(false);
+            lastActiveTimeRef.current = Date.now(); 
+          }
+        } else {
+          // 未超過閒置時間，單純更新活躍標記
+          lastActiveTimeRef.current = Date.now(); 
+        }
+      }
+    };
+
+    // 監聽滑鼠或鍵盤，代表使用者還在操作，保持活躍時間更新
+    const handleUserActivity = () => {
+      lastActiveTimeRef.current = Date.now();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('mousemove', handleUserActivity);
+    window.addEventListener('keydown', handleUserActivity);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('mousemove', handleUserActivity);
+      window.removeEventListener('keydown', handleUserActivity);
+    };
+  }, [apiEndpoint]);
 
   useEffect(() => {
     if (isUnlocked && unlockTimeout) {
@@ -834,7 +902,7 @@ const App: React.FC = () => {
 
 
 
-  const handleSaveProductOrder = async () => { if (!apiEndpoint || isSaving) return; setIsSaving(true); const orderedIds = products.map(p => p.id); try { await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', data: orderedIds }) }); setInitialProductOrder(orderedIds); setHasReorderedProducts(false); addToast("排序已更新！", 'success'); } catch (e) { console.error(e); addToast("排序儲存失敗，請檢查網路", 'error'); } finally { setIsSaving(false); } };
+  const handleSaveProductOrder = async () => { if (!apiEndpoint || isSaving) return; setIsSaving(true); const orderedIds = products.map(p => p.id); try { await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', data: orderedIds }) }); setInitialProductOrder(orderedIds); setHasReorderedProducts(false); addToast("排序已更新！", 'success'); } catch (e) { console.error(e); addToast("排序儲存失敗，請檢查網路", 'error'); } finally { setIsSaving(false); } };
 
   const {
     handleSaveCustomer,
@@ -961,6 +1029,21 @@ const App: React.FC = () => {
 
   return (
     <div className="h-[100dvh] flex flex-col max-w-md mx-auto bg-morandi-oatmeal relative shadow-2xl overflow-hidden text-morandi-charcoal font-sans">
+      {/* 熱機 UI 橫幅 */}
+      <AnimatePresence>
+        {isWarmingUp && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20, x: '-50%' }} 
+            animate={{ opacity: 1, y: 16, x: '-50%' }} 
+            exit={{ opacity: 0, y: -20, x: '-50%' }}
+            className="fixed top-0 left-1/2 z-[200] bg-indigo-600/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-lg border border-indigo-500/50 flex items-center gap-2.5 text-sm font-medium"
+          >
+            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            系統重新連線與熱機中...
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <header className="px-4 py-3 bg-white border-b border-gray-100 flex justify-between items-center sticky top-0 z-40">
         <div><h1 className="text-xl font-extrabold text-morandi-charcoal tracking-tight">麵廠職人</h1><p className="text-[10px] text-morandi-pebble font-bold uppercase tracking-widest mt-0.5">專業訂單管理系統</p></div>
         <div className="flex gap-2 items-center">
@@ -1068,7 +1151,7 @@ const App: React.FC = () => {
       {/* --- NEW: Conflict Resolution Modal --- */}
       <ConflictModal 
         isOpen={!!conflictData}
-        description={conflictData?.description}
+        conflictData={conflictData}
         onClose={() => setConflictData(null)} 
         onRefresh={() => {
           setConflictData(null);
@@ -1493,7 +1576,7 @@ const App: React.FC = () => {
         )}
         {activeTab === 'products' && (
           <motion.div key="products" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
-             <div className="flex justify-between items-center px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Package className="w-5 h-5 text-morandi-blue" /> 品項清單</h2><div className="flex gap-2">{hasReorderedProducts && (<motion.button initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} whileTap={buttonTap} onClick={() => requireAuth(handleSaveProductOrder)} disabled={isSaving} className="p-3 rounded-2xl text-white shadow-lg bg-emerald-500 hover:bg-emerald-600 transition-colors flex items-center gap-2">{isSaving ? <Loader2 className="w-6 h-6 animate-spin"/> : <Save className="w-6 h-6" />}<span className="text-xs font-bold hidden sm:inline">儲存排序</span></motion.button>)}<motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setProductForm({ name: '', unit: '斤', price: 0, category: 'other' }); setIsEditingProduct('new'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div></div>
+             <div className="flex justify-between items-center px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Package className="w-5 h-5 text-morandi-blue" /> 品項清單</h2><div className="flex gap-2">{hasReorderedProducts && (<motion.button initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} whileTap={buttonTap} onClick={() => requireAuth(handleSaveProductOrder)} disabled={isSaving || isWarmingUp} className="p-3 rounded-2xl text-white shadow-lg bg-emerald-500 hover:bg-emerald-600 transition-colors flex items-center gap-2">{isSaving || isWarmingUp || isRetrying ? <Loader2 className="w-6 h-6 animate-spin"/> : <Save className="w-6 h-6" />}<span className="text-xs font-bold hidden sm:inline">{isRetrying ? '重試中...' : '儲存排序'}</span></motion.button>)}<motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setProductForm({ name: '', unit: '斤', price: 0, category: 'other' }); setIsEditingProduct('new'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div></div>
              <Reorder.Group axis="y" values={products} onReorder={(newOrder) => { setProducts(newOrder); setHasReorderedProducts(true); }} className="space-y-0">
                {products.map(p => (<SortableProductItem key={p.id} product={p} onEdit={(p) => requireAuth(() => { setProductForm(p); setIsEditingProduct(p.id); })} onDelete={(id) => requireAuth(() => handleDeleteProduct(id))} />))}
              </Reorder.Group>
@@ -2218,7 +2301,7 @@ const App: React.FC = () => {
                     originalLastUpdated: originalCustomer.lastUpdated, 
                     force: true  // 👉 新增這行，讓後端放行公休狀態的單點更新
                   };
-                  const res = await fetch(apiEndpoint, {
+                  const res = await fetchWithRetry(apiEndpoint, {
                     method: 'POST',
                     body: JSON.stringify({ action: 'updateCustomer', data: payload })
                   });
@@ -2278,7 +2361,7 @@ const App: React.FC = () => {
       {isAddingOrder && (
         <motion.div key="order-modal" className="fixed inset-0 bg-morandi-oatmeal z-[60] flex flex-col">
           <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="flex flex-col h-full">
-          <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => { setIsAddingOrder(false); setEditingOrderId(null); }} className="p-2 rounded-2xl bg-gray-50 text-morandi-pebble"><X className="w-6 h-6" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">{editingOrderId ? `編輯訂單 - ${orderForm.customerName}` : '建立配送訂單'}</h2><motion.button whileTap={buttonTap} onClick={() => requireAuth(handleSaveOrder)} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : (editingOrderId ? '更新訂單' : '儲存')}</motion.button></div>
+          <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => { setIsAddingOrder(false); setEditingOrderId(null); }} className="p-2 rounded-2xl bg-gray-50 text-morandi-pebble"><X className="w-6 h-6" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">{editingOrderId ? `編輯訂單 - ${orderForm.customerName}` : '建立配送訂單'}</h2><motion.button whileTap={buttonTap} onClick={() => requireAuth(handleSaveOrder)} disabled={isSaving || isWarmingUp} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isWarmingUp ? '連線中...' : (isRetrying ? '↻ 正在重試...' : (isSaving ? '儲存中...' : (editingOrderId ? '更新訂單' : '儲存')))}</motion.button></div>
           <div className="p-6 space-y-6 overflow-y-auto pb-10">
             {/* NEW: Date Picker for Order */}
             <div className="space-y-2">
@@ -2385,7 +2468,7 @@ const App: React.FC = () => {
                 : 'h-full'
             }`}
           >
-          <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => { setIsEditingCustomer(null); setEditCustomerMode('full'); }} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">{editCustomerMode === 'itemsOnly' ? '修改預設品項' : editCustomerMode === 'holidayOnly' ? '設定公休' : '店家詳細資料'}</h2><motion.button whileTap={buttonTap} onClick={() => requireAuth(handleSaveCustomer)} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : '儲存'}</motion.button></div>
+          <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => { setIsEditingCustomer(null); setEditCustomerMode('full'); }} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">{editCustomerMode === 'itemsOnly' ? '修改預設品項' : editCustomerMode === 'holidayOnly' ? '設定公休' : '店家詳細資料'}</h2><motion.button whileTap={buttonTap} onClick={() => requireAuth(handleSaveCustomer)} disabled={isSaving || isWarmingUp} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isWarmingUp ? '連線中...' : (isRetrying ? '↻ 正在重試...' : (isSaving ? '儲存中...' : '儲存'))}</motion.button></div>
           <div className="p-6 overflow-y-auto pb-10">
             <div className={`grid grid-cols-1 ${editCustomerMode === 'full' ? 'lg:grid-cols-2' : 'max-w-2xl mx-auto'} gap-6`}>
               {/* 左欄：基本資訊與配送 */}
@@ -2522,11 +2605,14 @@ const App: React.FC = () => {
       )}
       </AnimatePresence>
 
+      {/* 連線逾時/死鎖彈窗 */}
+      <NetworkTimeoutModal isOpen={showDeadlockModal} />
+
       <AnimatePresence>
       {isEditingProduct && (
          <motion.div key="product-modal" className="fixed inset-0 bg-morandi-oatmeal z-[60] flex flex-col">
            <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="flex flex-col h-full">
-           <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => setIsEditingProduct(null)} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">品項資料</h2><motion.button whileTap={buttonTap} onClick={() => requireAuth(handleSaveProduct)} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">完成儲存</motion.button></div>
+           <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => setIsEditingProduct(null)} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">品項資料</h2><motion.button whileTap={buttonTap} onClick={() => requireAuth(handleSaveProduct)} disabled={isSaving || isWarmingUp} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isWarmingUp ? '連線中...' : (isRetrying ? '↻ 正在重試...' : (isSaving ? '儲存中...' : '完成儲存'))}</motion.button></div>
            <div className="p-6 space-y-6">
               <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">品項名稱</label><input type="text" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="例如：油麵 (小)" value={productForm.name || ''} onChange={(e) => setProductForm({...productForm, name: e.target.value})} /></div>
               <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">分類</label><div className="flex flex-wrap gap-2 p-2 bg-white rounded-[24px] border border-slate-200">{PRODUCT_CATEGORIES.map(cat => (<button key={cat.id} onClick={() => setProductForm({...productForm, category: cat.id})} className={`px-4 py-2 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 ${productForm.category === cat.id ? 'border-transparent shadow-sm' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: productForm.category === cat.id ? cat.color : '', color: productForm.category === cat.id ? '#3E3C3A' : '' }}><span className={`w-2 h-2 rounded-full`} style={{ backgroundColor: cat.color, border: '1px solid rgba(0,0,0,0.1)' }}></span>{cat.label}</button>))}</div></div>
@@ -2954,7 +3040,7 @@ const App: React.FC = () => {
                   try {
                     // 2. 補上 originalLastUpdated 與 force 給後端驗證 (開關自動建單不需要嚴格檢查版本)
                     const payload = { ...updatedCustomer, originalLastUpdated: customer.lastUpdated, force: true };
-                    const res = await fetch(apiEndpoint, {
+                    const res = await fetchWithRetry(apiEndpoint, {
                       method: 'POST',
                       body: JSON.stringify({ action: 'updateCustomer', data: payload })
                     });

@@ -455,7 +455,15 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
          errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
       }
       if (e.errorCode === 'VERSION_CONFLICT' || errMsg.includes('ERR_VERSION_CONFLICT')) {
-         errMsg = '此訂單已被其他設備更新，請重新整理頁面。';
+         errMsg = '此訂單已被其他設備更新，請選擇如何處理衝突。';
+         setConflictData({
+           action: actionName,
+           data: { ...newOrder, originalVersion },
+           description: `更新訂單: ${newOrder.customerName}`,
+           type: 'order',
+           clientData: newOrder,
+           serverData: e.serverData
+         });
       }
       onError(errMsg);
     }

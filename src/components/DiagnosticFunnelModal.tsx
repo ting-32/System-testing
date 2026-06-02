@@ -1,6 +1,47 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Sparkles, CheckCircle2, Clock, AlertTriangle, ArrowRight } from 'lucide-react';
+import { X, Sparkles, CheckCircle2, Clock, AlertTriangle, ArrowRight, Calendar } from 'lucide-react';
+import { ReminderRule } from '../types';
+
+function calculateNextRuns(schedule: string | string[], timeToNotify: string, count = 3): Date[] {
+  const nextRuns: Date[] = [];
+  const now = new Date();
+  
+  // 解析設定的時間 (例如 '19:00')
+  const [targetHour, targetMinute] = (timeToNotify || '00:00').split(':').map(Number);
+
+  // 往未來的 30 天內進行尋找，找到滿 3 個為止
+  for (let i = 0; i < 30; i++) {
+    if (nextRuns.length >= count) break;
+
+    const checkDate = new Date();
+    checkDate.setDate(now.getDate() + i);
+    checkDate.setHours(targetHour, targetMinute, 0, 0);
+
+    // 如果是今天，且約定時間已經過了，就跳過今天
+    if (i === 0 && checkDate.getTime() <= now.getTime()) {
+      continue;
+    }
+
+    const dayNumStr = String(checkDate.getDay());
+    let isMatch = false;
+
+    // 比對星期條件
+    if (Array.isArray(schedule)) {
+      isMatch = schedule.includes(dayNumStr);
+    } else if (schedule === '每天') {
+      isMatch = true;
+    } else {
+      isMatch = schedule === dayNumStr;
+    }
+
+    if (isMatch) {
+      nextRuns.push(checkDate);
+    }
+  }
+
+  return nextRuns;
+}
 
 interface Props {
   isOpen: boolean;
@@ -8,9 +49,10 @@ interface Props {
   isLoading: boolean;
   result: any;
   onRealSend: () => void;
+  rule?: ReminderRule;
 }
 
-export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRealSend }: Props) {
+export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRealSend, rule }: Props) {
   if (!isOpen) return null;
 
   const renderStepIcon = (isActive: boolean, isError: boolean = false) => {
@@ -48,6 +90,9 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
   const status = result && result.length > 0 ? result[0].status : null;
   const skipReason = trace?.reason;
 
+  const nextRuns = rule ? calculateNextRuns(rule.schedule, rule.timeToNotify) : [];
+  const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
+
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
@@ -69,6 +114,27 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
           </div>
 
           <div className="p-6">
+            {rule && (
+              <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 mb-4">
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-2">
+                  <Calendar className="w-4 h-4 text-indigo-500" />
+                  未來 3 次提醒排程預報
+                </h4>
+                <div className="space-y-1.5 pl-5">
+                  {nextRuns.length > 0 ? nextRuns.map((d, idx) => (
+                    <div key={idx} className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                      {`${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`}
+                      <span className="text-slate-400 font-normal">({shortDays[d.getDay()]})</span>
+                      <span className="text-indigo-600 font-bold ml-1">{rule.timeToNotify}</span>
+                    </div>
+                  )) : (
+                    <div className="text-sm font-medium text-slate-500">無可預測的排程</div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-10 space-y-4">
                 <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>

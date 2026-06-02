@@ -1473,7 +1473,9 @@ function checkReminders(forceRuleId = null, isDryRun = false) {
     const source = forceRuleId === rule.id ? "Manual_Test" : "System_Cron";
 
     const logAndReturn = (status, details) => {
-        writeTraceLog(source, rule.id, rule.name, status, details);
+        if (!isDryRun) {
+            writeTraceLog(source, rule.id, rule.name, status, details);
+        }
         if (isDryRun) dryRunResults.push({ ruleId: rule.id, ruleName: rule.name, status, details });
     };
 

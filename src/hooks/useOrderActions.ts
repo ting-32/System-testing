@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
 import { Customer, Product, Order, OrderStatus, ToastType } from '../types';
 import { formatTimeForInput, formatTimeDisplay } from '../utils';
+import { fetchWithRetry } from '../utils/fetchUtils';
 
 interface UseOrderActionsProps {
   orders: Order[];
@@ -12,6 +13,7 @@ interface UseOrderActionsProps {
   apiEndpoint: string;
   isSaving: boolean;
   setIsSaving: (isSaving: boolean) => void;
+  setIsRetrying?: (isRetrying: boolean) => void;
   orderForm: any;
   setOrderForm: React.Dispatch<React.SetStateAction<any>>;
   editingOrderId: string | null;
@@ -44,6 +46,7 @@ export const useOrderActions = ({
   apiEndpoint,
   isSaving,
   setIsSaving,
+  setIsRetrying,
   orderForm,
   setOrderForm,
   editingOrderId,
@@ -198,7 +201,7 @@ export const useOrderActions = ({
           const p = products.find(prod => prod.id === item.productId);
           return { productName: item.productName || p?.name || item.productId, quantity: item.quantity, unit: item.unit };
         });
-        const res = await fetch(apiEndpoint, {
+        const res = await fetchWithRetry(apiEndpoint, {
           method: 'POST',
           body: JSON.stringify({ action: 'createOrder', data: { ...newOrder, items: uploadItems } })
         });
@@ -296,7 +299,7 @@ export const useOrderActions = ({
                 
                 let res;
                 try {
-                    res = await fetch(apiEndpoint, {
+                    res = await fetchWithRetry(apiEndpoint, {
                         method: 'POST',
                         body: JSON.stringify({ 
                             action: 'batchUpdateOrders', 
@@ -315,7 +318,10 @@ export const useOrderActions = ({
                          setConflictData({
                            action: 'batchUpdateOrders',
                            data: { updates: updatesToProcess },
-                           description: `批量更新狀態發生版本衝突`
+                           description: `批量更新狀態發生版本衝突`,
+                           type: 'batch_order',
+                           clientData: updatesToProcess,
+                           serverData: json.serverData || json.data
                          });
                     } else {
                          throw new Error(json.error || 'Unknown error');
@@ -417,7 +423,7 @@ export const useOrderActions = ({
                   
                   let res;
                   try {
-                      res = await fetch(apiEndpoint, {
+                      res = await fetchWithRetry(apiEndpoint, {
                           method: 'POST',
                           body: JSON.stringify({ 
                               action: 'batchUpdateOrders', 
@@ -436,7 +442,10 @@ export const useOrderActions = ({
                            setConflictData({
                              action: 'batchUpdateOrders',
                              data: { updates: updatesToProcess },
-                             description: `批量結帳更新發生版本衝突`
+                             description: `批量結帳更新發生版本衝突`,
+                             type: 'batch_order',
+                             clientData: updatesToProcess,
+                             serverData: json.serverData || json.data
                            });
                       } else {
                            throw new Error(json.error || 'Unknown error');
@@ -869,7 +878,7 @@ export const useOrderActions = ({
     try { 
       if (apiEndpoint) { 
         const payload = { id: orderId, version: orderBackup.version };
-        const res = await fetch(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
+        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
         const json = await res.json();
         if (!json.success) {
            if (json.errorCode === 'ERR_VERSION_CONFLICT') {
@@ -877,7 +886,10 @@ export const useOrderActions = ({
               setConflictData({
                  action: 'deleteOrder',
                  data: payload,
-                 description: `刪除訂單: ${orderBackup.customerName}`
+                 description: `刪除訂單: ${orderBackup.customerName}`,
+                 type: 'delete_order',
+                 clientData: payload,
+                 serverData: json.serverData || json.data
               });
            } else {
               // Add back with error status

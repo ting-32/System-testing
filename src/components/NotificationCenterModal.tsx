@@ -5,6 +5,96 @@ import { Customer, Product, ReminderRule } from '../types';
 import { NotificationLogViewer } from './NotificationLogViewer';
 import { DiagnosticFunnelModal } from './DiagnosticFunnelModal';
 import { container } from '../core/di/AppContainer';
+import { fetchWithRetry } from '../utils/fetchUtils';
+
+// 1. 取得該規則下次執行的具體 Date 物件
+function getNextRunDate(schedule: string | string[], timeToNotify: string): Date | null {
+  if (!timeToNotify) return null;
+  
+  const now = new Date();
+  const [hourStr, minuteStr] = timeToNotify.split(':');
+  const targetHour = parseInt(hourStr, 10);
+  const targetMinute = parseInt(minuteStr || '0', 10);
+
+  // 轉換排程為數字陣列 (0=星期日, 1=星期一...)
+  const targetDays = schedule === '每天' 
+    ? [0, 1, 2, 3, 4, 5, 6] 
+    : (Array.isArray(schedule) ? schedule.map(Number) : [Number(schedule)]);
+
+  if (targetDays.length === 0 || isNaN(targetDays[0])) return null;
+
+  // 從今天開始往後推 7 天內，找出最近的一個觸發時間
+  for (let i = 0; i <= 7; i++) {
+    const checkDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+    const dayOfWeek = checkDate.getDay();
+
+    if (targetDays.includes(dayOfWeek)) {
+      checkDate.setHours(targetHour, targetMinute, 0, 0);
+      // 如果時間是大於現在的 (也就是未來的時間)，這就是最接近的下一班車
+      if (checkDate > now) {
+         return checkDate;
+      }
+    }
+  }
+  return null;
+}
+
+// 2. 將 Date 物件轉為「今天 19:00 (約 2 小時 15 分後)」的格式
+function formatNextRunText(nextRun: Date | null): string {
+  if (!nextRun) return "無法計算預計時間";
+  const now = new Date();
+  const diffMs = nextRun.getTime() - now.getTime();
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const hours = Math.floor(diffMinutes / 60);
+  const mins = diffMinutes % 60;
+  
+  const isToday = nextRun.getDate() === now.getDate();
+  const isTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getDate() === nextRun.getDate();
+  
+  let dayStr = "";
+  if (isToday) dayStr = "今天";
+  else if (isTomorrow) dayStr = "明天";
+  else {
+    const days = ['日', '一', '二', '三', '四', '五', '六'];
+    dayStr = `星期${days[nextRun.getDay()]}`;
+  }
+
+  const timeStr = `${String(nextRun.getHours()).padStart(2, '0')}:${String(nextRun.getMinutes()).padStart(2, '0')}`;
+  
+  if (hours === 0 && mins === 0) return `預計下次執行：${dayStr} ${timeStr} (即將執行)`;
+  if (hours === 0) return `預計下次執行：${dayStr} ${timeStr} (約 ${mins} 分後)`;
+  return `預計下次執行：${dayStr} ${timeStr} (約 ${hours} 小時 ${mins} 分後)`;
+}
+
+// 實時更新的下一班車徽章元件
+const NextRunIndicator = ({ rule }: { rule: ReminderRule }) => {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    // 設定每 60 秒喚醒一次，重新設定當下時間來重算倒數
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!rule.isActive) {
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-[12px] text-slate-400 font-medium">
+         <span className="w-2 h-2 rounded-full bg-slate-300"></span>
+         規則已停用，暫且停止排程
+      </div>
+    );
+  }
+
+  const nextRunDate = getNextRunDate(rule.schedule, rule.timeToNotify);
+  const text = formatNextRunText(nextRunDate);
+
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium">
+       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
+       {text}
+    </div>
+  );
+};
 
 interface Props {
   isOpen: boolean;
@@ -80,7 +170,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
     if (!apiEndpoint) return;
     setIsSaving(true);
     try {
-      await fetch(apiEndpoint, {
+      await fetchWithRetry(apiEndpoint, {
         method: "POST",
         body: JSON.stringify({
           action: "saveSettings",
@@ -140,7 +230,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
     if (!currentDryRunRuleId) return;
     setIsSaving(true);
     try {
-      const res = await fetch(apiEndpoint, {
+      const res = await fetchWithRetry(apiEndpoint, {
         method: "POST",
         body: JSON.stringify({
           action: "testRule",
@@ -148,7 +238,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
         })
       });
       const data = await res.json();
-      if (data.status === 'success') {
+      if (data.success) {
         alert('測試觸發指令已送出！應會立即發送 LINE 訊息。');
         setIsFunnelOpen(false);
       } else {
@@ -172,7 +262,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
       await saveToGas(rules, lineChannelToken, lineUserId);
       
       // Then trigger test message
-      const res = await fetch(apiEndpoint, {
+      const res = await fetchWithRetry(apiEndpoint, {
         method: "POST",
         body: JSON.stringify({
           action: "testLineMessage",
@@ -251,6 +341,8 @@ export const NotificationCenterModal: React.FC<Props> = ({
 
   if (!isOpen) return null;
 
+  const activeDryRunRule = rules.find(r => r.id === currentDryRunRuleId);
+
   return (
     <>
       <AnimatePresence>
@@ -322,10 +414,13 @@ export const NotificationCenterModal: React.FC<Props> = ({
                     {rules.map(rule => (
                       <div key={rule.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm relative overflow-hidden">
                         <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                            {rule.name}
-                            {!rule.isActive && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">已停用</span>}
-                          </h3>
+                          <div>
+                            <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                              {rule.name}
+                              {!rule.isActive && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">已停用</span>}
+                            </h3>
+                            <NextRunIndicator rule={rule} />
+                          </div>
                           <div className="flex gap-2 items-center">
                             <button onClick={() => handleDryRunRule(rule.id)} className="text-indigo-600 text-[11px] px-2 py-1 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 rounded-md font-semibold transition-colors">
                               <Sparkles className="w-3 h-3" />
@@ -423,6 +518,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
       isLoading={isDryRunning} 
       result={dryRunResult} 
       onRealSend={executeRealSend} 
+      rule={activeDryRunRule}
     />
   </>
   );
