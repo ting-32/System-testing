@@ -11,35 +11,53 @@ export async function fetchWithRetry(
   options: RequestInit,
   onRetry?: (attempt: number) => void,
   maxRetries = 2,
-  delayMs = 1500
+  delayMs = 1500,
+  silentFail = false,
+  timeoutMs = 25000
 ): Promise<Response> {
   let lastError: any;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs); 
+    
     try {
-      const response = await fetch(url, options);
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
+
       // JSON syntax error usually occurs when GAS returns HTML (error page)
       // We check for ok response
       if (!response.ok && attempt < maxRetries) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      if (attempt > 0) {
+      if (attempt > 0 && !silentFail) {
         window.dispatchEvent(new CustomEvent('networkRetryEnd'));
       }
       return response;
-    } catch (error) {
-      lastError = error;
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      
+      // 如果是 Timeout 也當作失敗
+      if (error.name === 'AbortError') {
+        lastError = new Error('TIMEOUT');
+      } else {
+        lastError = error;
+      }
       
       if (attempt === maxRetries) {
-        window.dispatchEvent(new CustomEvent('networkRetryEnd'));
-        window.dispatchEvent(new CustomEvent('networkDeadlock'));
-        throw error;
+        if (!silentFail) {
+          window.dispatchEvent(new CustomEvent('networkRetryEnd'));
+          window.dispatchEvent(new CustomEvent('networkDeadlock'));
+        }
+        throw lastError;
       }
       
-      if (onRetry) {
+      if (onRetry && !silentFail) {
         onRetry(attempt + 1);
       }
-      window.dispatchEvent(new CustomEvent('networkRetryStart'));
+      if (!silentFail) {
+        window.dispatchEvent(new CustomEvent('networkRetryStart'));
+      }
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
   }

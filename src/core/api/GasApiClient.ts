@@ -29,26 +29,19 @@ export class GasApiClient implements ApiClient {
     const finalConfig = { ...this.baseConfig, ...config };
     const payload = { action, data };
 
-    // 加入 45 秒的 Timeout（逾時中斷機制），避免 GAS 無回應導致該訂單死鎖
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
-
     let res;
     try {
       res = await fetchWithRetry(finalConfig.endpoint, {
         method: 'POST',
         redirect: finalConfig.redirect,
         headers: finalConfig.headers,
-        body: JSON.stringify(payload),
-        signal: controller.signal // 將終止訊號掛載上來
-      });
+        body: JSON.stringify(payload)
+      }, undefined, 2, 1500, finalConfig.silentFail, 45000);
     } catch (err: any) {
-      if (err.name === 'AbortError') {
+      if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
         throw new Error("API Request Timeout: 超過 45 秒未回應");
       }
       throw err;
-    } finally {
-      clearTimeout(timeoutId); // 清除計時器
     }
 
     const json = await res.json() as GASResponse<any>;
@@ -69,7 +62,7 @@ export class GasApiClient implements ApiClient {
     return json.data as R;
   }
 
-  async get<R>(_: string, params?: Record<string, string>): Promise<R> {
+  async get<R>(_: string, params?: Record<string, string>, config?: Partial<ApiClientConfig>): Promise<R> {
     if (!this.baseConfig.endpoint) {
       throw new Error('API Endpoint is not configured');
     }
@@ -82,7 +75,8 @@ export class GasApiClient implements ApiClient {
       finalUrl += `?${qs}`;
     }
 
-    const res = await fetchWithRetry(finalUrl, { redirect: 'follow' });
+    const finalConfig = { ...this.baseConfig, ...config };
+    const res = await fetchWithRetry(finalUrl, { redirect: finalConfig.redirect, headers: finalConfig.headers }, undefined, 2, 1500, finalConfig.silentFail, 45000);
     const json = await res.json() as GASResponse<any>;
     
     if (!json.success) {

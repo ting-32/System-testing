@@ -165,7 +165,6 @@ const App: React.FC = () => {
   const [isWarmingUp, setIsWarmingUp] = useState(false);
   const [showDeadlockModal, setShowDeadlockModal] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
-  const lastActiveTimeRef = useRef(Date.now());
 
   useEffect(() => {
     const handleDeadlock = () => setShowDeadlockModal(true);
@@ -184,49 +183,20 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const handleVisibilityChange = async () => {
-      // 當使用者切回包含本系統的頁籤時
-      if (document.visibilityState === 'visible') {
-        const now = Date.now();
-        const idleTime = now - lastActiveTimeRef.current;
-        
-        // 設定閒置判定時間：超過 15 分鐘 (900,000 毫秒)
-        if (idleTime > 900000) {
-          setIsWarmingUp(true);
-          
-          try {
-            if (apiEndpoint) {
-              // 發送一個極輕量的請求喚醒 GAS (用原本處理 GET 的方法即可，主要目的是喚醒 Server)
-              await fetchWithRetry(`${apiEndpoint}?action=ping`, { method: 'GET' });
-            }
-          } catch (error) {
-            console.warn("系統熱機喚醒失敗", error);
-          } finally {
-            // 不管成功或失敗，2~3 秒內 GAS 會被叫醒，我們就可以放行按鈕
-            setIsWarmingUp(false);
-            lastActiveTimeRef.current = Date.now(); 
-          }
-        } else {
-          // 未超過閒置時間，單純更新活躍標記
-          lastActiveTimeRef.current = Date.now(); 
-        }
-      }
+    if (!apiEndpoint) return;
+    
+    // 初次掛載直接發射後不理
+    fetch(`${apiEndpoint}?action=ping`, { method: 'GET' }).catch(() => {});
+
+    // 定義一個不重試、不報錯、不干擾 UI 的極輕量 Ping
+    const pingGas = () => {
+      fetch(`${apiEndpoint}?action=ping`, { method: 'GET' })
+        .catch(() => { /* 忽略任何網路錯誤，不要跳 Modal */ });
     };
 
-    // 監聽滑鼠或鍵盤，代表使用者還在操作，保持活躍時間更新
-    const handleUserActivity = () => {
-      lastActiveTimeRef.current = Date.now();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('mousemove', handleUserActivity);
-    window.addEventListener('keydown', handleUserActivity);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('mousemove', handleUserActivity);
-      window.removeEventListener('keydown', handleUserActivity);
-    };
+    const intervalId = setInterval(pingGas, 5 * 60 * 1000); // 每 5 分鐘
+    
+    return () => clearInterval(intervalId);
   }, [apiEndpoint]);
 
   useEffect(() => {

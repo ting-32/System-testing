@@ -1413,6 +1413,12 @@ function onSpreadsheetChange(e) {
 // 🔔 Notification Center Check (Intended for Time-Driven Trigger)
 // Runs periodically (e.g. hourly) to evaluate rules and send notifications
 function checkReminders(forceRuleId = null, isDryRun = false) {
+  // 💡 【核心修復】：攔截 GAS 自動灌入的事件物件 (Event Object)
+  // 如果傳進來的 forceRuleId 是一個物件，代表它是被時間觸發器喚醒的，強制將其歸零為 null
+  if (forceRuleId !== null && typeof forceRuleId === 'object') {
+    forceRuleId = null;
+  }
+  
   let dryRunResults = [];
   const configSheet = getConfigSheet();
   const settingsDataStr = getSystemConfig(configSheet, "AppSettings");

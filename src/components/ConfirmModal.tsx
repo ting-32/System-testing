@@ -1,9 +1,23 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle } from 'lucide-react';
 import { modalVariants, buttonTap } from './animations';
 
 export const ConfirmModal: React.FC<{ isOpen: boolean; title: string; message: string; onConfirm: () => void; onCancel: () => void; }> = ({ isOpen, title, message, onConfirm, onCancel }) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsProcessing(false);
+    }
+  }, [isOpen]);
+
+  const handleConfirm = () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    onConfirm();
+  };
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -16,7 +30,14 @@ export const ConfirmModal: React.FC<{ isOpen: boolean; title: string; message: s
             </div>
             <div className="p-4 flex gap-3 bg-morandi-oatmeal/30">
               <motion.button whileTap={buttonTap} onClick={onCancel} className="flex-1 py-3 rounded-[16px] font-bold text-morandi-pebble bg-white shadow-sm border border-slate-200 tracking-wide">取消</motion.button>
-              <motion.button whileTap={buttonTap} onClick={onConfirm} className="flex-1 py-3 rounded-[16px] font-bold text-white shadow-md bg-rose-400 tracking-wide">確認</motion.button>
+              <motion.button 
+                whileTap={isProcessing ? {} : buttonTap} 
+                onClick={handleConfirm} 
+                disabled={isProcessing}
+                className={`flex-1 py-3 rounded-[16px] font-bold text-white shadow-md tracking-wide transition-all duration-300 ${isProcessing ? 'bg-rose-300 cursor-not-allowed' : 'bg-rose-400'}`}
+              >
+                {isProcessing ? '處理中' : '確認'}
+              </motion.button>
             </div>
           </motion.div>
         </motion.div>

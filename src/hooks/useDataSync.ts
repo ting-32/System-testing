@@ -163,7 +163,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         ...(since > 0 && { since: String(since) })
       };
 
-      const result = await container.syncRepo.sync(endpointParams);
+      const result = await container.syncRepo.sync(endpointParams, isSilent);
       
       if (result) { 
         if (result.serverGlobalTs) {
@@ -217,8 +217,14 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         
         // === 加入這段：每次輪詢時，將通知中心的設定存更新至本機快取 ===
         if (result.settings) {
+           let rulesChanged = false;
            if (result.settings.rules) {
-               localStorage.setItem('nm_reminder_rules', JSON.stringify(result.settings.rules));
+               const newRulesStr = JSON.stringify(result.settings.rules);
+               const oldRulesStr = localStorage.getItem('nm_reminder_rules');
+               if (newRulesStr !== oldRulesStr) {
+                   localStorage.setItem('nm_reminder_rules', newRulesStr);
+                   rulesChanged = true;
+               }
            }
            if (result.settings.lineChannelToken) {
                localStorage.setItem('nm_line_token', result.settings.lineChannelToken);
@@ -226,8 +232,18 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            if (result.settings.lineUserId) {
                localStorage.setItem('nm_line_user_id', result.settings.lineUserId);
            }
-           // 發送一個全域的更新事件，讓如果有開啟通知介面的人可以即時看到新資料
-           window.dispatchEvent(new Event('rules_updated_from_cloud'));
+           
+           if (rulesChanged) {
+               // 判斷當前是否開啟 NotificationCenterModal (用自訂屬性等方式，或者讓 NotificationCenterModal 攔截)
+               const evt = new CustomEvent('rules_updated_from_cloud', { detail: { isPollingUpdate: true } });
+               window.dispatchEvent(evt);
+               
+               // 這裡直接判斷 DOM 是不是有彈窗
+               const isModalOpen = document.getElementById('notification-center-modal') !== null;
+               if (!isModalOpen) {
+                 addToast("通知提醒規則已從雲端同步最新設定", "info");
+               }
+           }
         }
         // ========================================================
         

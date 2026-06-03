@@ -17,18 +17,18 @@ export interface SyncDataResult {
 }
 
 export interface ISyncRepository {
-  sync(params: SyncDataParams): Promise<SyncDataResult>;
+  sync(params: SyncDataParams, silentFail?: boolean): Promise<SyncDataResult>;
   checkUpdates(): Promise<{ globalLastUpdated: number }>;
 }
 
 export class SyncRepository implements ISyncRepository {
   constructor(private apiClient: ApiClient) {}
 
-  async sync(params: SyncDataParams): Promise<SyncDataResult> {
-    return this.apiClient.get<SyncDataResult>('', params as any);
+  async sync(params: SyncDataParams, silentFail?: boolean): Promise<SyncDataResult> {
+    return this.apiClient.get<SyncDataResult>('', params as any, { silentFail });
   }
 
   async checkUpdates(): Promise<{ globalLastUpdated: number }> {
-    return this.apiClient.post<any, { globalLastUpdated: number }>('checkUpdates', {});
+    return this.apiClient.post<any, { globalLastUpdated: number }>('checkUpdates', {}, { silentFail: true });
   }
 }

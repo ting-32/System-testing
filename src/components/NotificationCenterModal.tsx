@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, BellRing, Trash2, Save, MessageCircle, AlertCircle, Sparkles } from 'lucide-react';
+import { X, Plus, BellRing, Trash2, Save, MessageCircle, AlertCircle, Sparkles, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { Customer, Product, ReminderRule } from '../types';
 import { NotificationLogViewer } from './NotificationLogViewer';
 import { DiagnosticFunnelModal } from './DiagnosticFunnelModal';
@@ -123,6 +123,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const [rules, setRules] = useState<ReminderRule[]>([]);
   const [editingRule, setEditingRule] = useState<ReminderRule | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [hasCloudUpdate, setHasCloudUpdate] = useState(false);
   
   const [isFunnelOpen, setIsFunnelOpen] = useState(false);
   const [isDryRunning, setIsDryRunning] = useState(false);
@@ -158,8 +159,12 @@ export const NotificationCenterModal: React.FC<Props> = ({
     loadRulesFromStorage();
 
     // 監聽來自背景同步的更新事件
-    const handleCloudUpdate = () => {
-      loadRulesFromStorage();
+    const handleCloudUpdate = (e: any) => {
+      if (e.detail?.isPollingUpdate) {
+          setHasCloudUpdate(true);
+      } else {
+          loadRulesFromStorage();
+      }
     };
     
     window.addEventListener('rules_updated_from_cloud', handleCloudUpdate);
@@ -170,16 +175,11 @@ export const NotificationCenterModal: React.FC<Props> = ({
     if (!apiEndpoint) return;
     setIsSaving(true);
     try {
-      await fetchWithRetry(apiEndpoint, {
-        method: "POST",
-        body: JSON.stringify({
-          action: "saveSettings",
-          data: {
-            rules: currentRules,
-            lineChannelToken: channelToken,
-            lineUserId: userId
-          }
-        })
+      container.updateApiEndpoint(apiEndpoint);
+      await container.apiClient.post('saveSettings', {
+        rules: currentRules,
+        lineChannelToken: channelToken,
+        lineUserId: userId
       });
     } catch(e) {
       console.error(e);
@@ -262,20 +262,11 @@ export const NotificationCenterModal: React.FC<Props> = ({
       await saveToGas(rules, lineChannelToken, lineUserId);
       
       // Then trigger test message
-      const res = await fetchWithRetry(apiEndpoint, {
-        method: "POST",
-        body: JSON.stringify({
-          action: "testLineMessage",
-          data: {
-            lineChannelToken,
-            lineUserId
-          }
-        })
+      container.updateApiEndpoint(apiEndpoint);
+      const resObj: any = await container.apiClient.post('testLineMessage', {
+        lineChannelToken,
+        lineUserId
       });
-      const resObj = await res.json();
-      if (!resObj.success) {
-        throw new Error(resObj.error || "測試發送失敗");
-      }
       alert('已成功儲存並發送測試訊息，請確認您的 LINE！');
     } catch(e: any) {
       alert('執行失敗：' + e.message);
@@ -346,7 +337,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
   return (
     <>
       <AnimatePresence>
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-sm">
+        <div id="notification-center-modal" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-sm">
           <motion.div
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
@@ -357,10 +348,29 @@ export const NotificationCenterModal: React.FC<Props> = ({
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-white/80 backdrop-blur z-10 sticky top-0">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500">
+              <div className="w-10 h-10 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 relative">
                 <BellRing className="w-5 h-5" />
+                {isSaving && (
+                  <div className="absolute -top-1 -right-1 bg-white rounded-full">
+                    <RefreshCw className="w-4 h-4 text-emerald-500 animate-spin" />
+                  </div>
+                )}
               </div>
-              <h2 className="text-xl font-bold text-slate-800">通知中心</h2>
+              <div className="flex flex-col">
+                <h2 className="text-xl font-bold text-slate-800">通知中心</h2>
+                <div className="flex items-center gap-1 mt-0.5">
+                  {isSaving ? (
+                    <span className="text-[10px] font-medium text-emerald-600 flex flex-row items-center gap-1">
+                      雲端儲存中...
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-medium text-slate-400 flex flex-row items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                      已同步至雲端
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
             <button
               onClick={onClose}
@@ -369,6 +379,24 @@ export const NotificationCenterModal: React.FC<Props> = ({
               <X className="w-5 h-5" />
             </button>
           </div>
+          
+          {hasCloudUpdate && (
+            <div className="bg-blue-50 border-b border-blue-100 px-4 py-2.5 flex items-center justify-between shrink-0">
+              <p className="text-xs font-bold text-blue-700 flex items-center gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5" />
+                有新的變更已在雲端儲存
+              </p>
+              <button 
+                onClick={() => {
+                  setHasCloudUpdate(false);
+                  loadRulesFromStorage();
+                }}
+                className="text-xs font-bold text-blue-600 hover:text-blue-800 py-1 px-2.5 bg-blue-100 rounded-lg transition-colors shadow-sm"
+              >
+                載入並覆蓋
+              </button>
+            </div>
+          )}
 
           {/* Tabs */}
           <div className="flex border-b border-slate-100 p-2 gap-2 bg-slate-50/50">
