@@ -116,6 +116,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
+  const isSyncingRef = useRef(false);
+  
   useEffect(() => {
     isSavingRef.current = isSaving;
   }, [isSaving]);
@@ -124,6 +126,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     action: string;
     data: any;
     description: string;
+    type?: string;
+    clientData?: any;
+    serverData?: any;
   } | null>(null);
 
   // Sync Data Logic
@@ -132,12 +137,18 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       console.log("UX Block: Bypassing sync while user is saving data.");
       return;
     }
+    
+    if (isSyncingRef.current) {
+      console.log("UX Block: Prevent duplicate concurrent sync operations.");
+      return;
+    }
 
     if (!apiEndpoint) { 
       setIsInitialLoading(false); 
       return; 
     } 
     
+    isSyncingRef.current = true;
     if (!isSilent) setIsInitialLoading(true);
     else setIsBackgroundSyncing(true);
 
@@ -332,6 +343,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     } finally { 
       setIsInitialLoading(false); 
       setIsBackgroundSyncing(false);
+      isSyncingRef.current = false;
     } 
   }, [apiEndpoint, addToast]);
 
@@ -394,6 +406,17 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     try {
       await container.apiClient.post(conflictData.action, newPayload);
       
+      // Update local orders to clear pending status
+      setOrders(prev => {
+        if (conflictData.type === 'batch_order' && conflictData.clientData) {
+          const updatedIds = conflictData.clientData.map((u: any) => u.id);
+          return prev.map(o => updatedIds.includes(o.id) ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o);
+        } else if (conflictData.type === 'order' && conflictData.clientData) {
+          return prev.map(o => o.id === conflictData.clientData.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o);
+        }
+        return prev;
+      });
+
       addToast('強制覆蓋成功', 'success');
       setConflictData(null);
       setTimeout(() => syncData(true), 100);

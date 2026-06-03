@@ -162,6 +162,7 @@ const App: React.FC = () => {
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockError, setUnlockError] = useState(false);
+  const [isUnlocking, setIsUnlocking] = useState(false);
   const [isWarmingUp, setIsWarmingUp] = useState(false);
   const [showDeadlockModal, setShowDeadlockModal] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -226,20 +227,25 @@ const App: React.FC = () => {
 
   const handleAppUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!unlockPassword) return;
+    if (!unlockPassword || isUnlocking) return;
     
-    const success = await handleLogin(unlockPassword);
-    
-    if (success) {
-      setIsUnlocked(true);
-      setUnlockTimeout(Date.now() + 30 * 60 * 1000);
-      setShowUnlockModal(false);
-      if (pendingAction) {
-        pendingAction();
-        setPendingAction(null);
+    setIsUnlocking(true);
+    try {
+      const success = await handleLogin(unlockPassword);
+      
+      if (success) {
+        setIsUnlocked(true);
+        setUnlockTimeout(Date.now() + 30 * 60 * 1000);
+        setShowUnlockModal(false);
+        if (pendingAction) {
+          pendingAction();
+          setPendingAction(null);
+        }
+      } else {
+        setUnlockError(true);
       }
-    } else {
-      setUnlockError(true);
+    } finally {
+      setIsUnlocking(false);
     }
   };
 
@@ -1089,7 +1095,9 @@ const App: React.FC = () => {
                 </AnimatePresence>
                 <div className="flex gap-2 mt-6">
                   <button type="button" onClick={() => setShowUnlockModal(false)} className="flex-1 py-3 rounded-xl bg-slate-100 text-slate-500 font-bold text-sm tracking-wide hover:bg-slate-200 transition-colors">取消</button>
-                  <button type="submit" className="flex-1 py-3 rounded-xl bg-morandi-blue text-white font-bold text-sm tracking-wide hover:bg-slate-600 transition-colors shadow-md">解鎖</button>
+                  <button type="submit" disabled={isUnlocking} className={`flex-1 py-3 rounded-xl text-white font-bold text-sm tracking-wide transition-colors shadow-md ${isUnlocking ? 'bg-slate-400 cursor-not-allowed' : 'bg-morandi-blue hover:bg-slate-600'}`}>
+                    {isUnlocking ? '處理中...' : '解鎖'}
+                  </button>
                 </div>
               </form>
             </motion.div>
@@ -1124,6 +1132,13 @@ const App: React.FC = () => {
         conflictData={conflictData}
         onClose={() => setConflictData(null)} 
         onRefresh={() => {
+          // 修正一直卡在同步中: 把發生衝突卡住的訂單狀態先清空，否則 syncData 的增量合併會保留 pending 狀態導致卡死
+          if (conflictData?.type === 'batch_order' && conflictData.clientData) {
+            const updatedIds = conflictData.clientData.map((u: any) => u.id);
+            setOrders((prev: Order[]) => prev.map(o => updatedIds.includes(o.id) ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+          } else if (conflictData?.type === 'order' && conflictData.clientData) {
+            setOrders((prev: Order[]) => prev.map(o => o.id === conflictData.clientData.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+          }
           setConflictData(null);
           syncData(true); // Re-fetch latest data
           setIsAddingOrder(false); // Force close any open editors to prevent stale data usage

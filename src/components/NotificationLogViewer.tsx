@@ -10,7 +10,9 @@ const statusTextMap: Record<string, string> = {
 };
 
 const sourceTextMap: Record<string, string> = {
+  'SYSTEM_CRON': '系統排程',
   'System_Cron': '系統排程',
+  'MANUAL_TEST': '手動測試',
   'Manual_Test': '手動測試',
   'UNKNOWN': '未知來源'
 };
@@ -25,6 +27,9 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [filterRule, setFilterRule] = useState<string>('ALL');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+
+  const [filterSource, setFilterSource] = useState<string>('ALL');
+  const [filterTime, setFilterTime] = useState<number>(0);
 
   const fetchLogs = async () => {
     setIsLoadingLogs(true);
@@ -55,12 +60,15 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
   }, [logs]);
 
   const filteredLogs = useMemo(() => {
+    const now = Date.now();
     return logs.filter(log => {
       if (filterStatus !== 'ALL' && log.status !== filterStatus) return false;
       if (filterRule !== 'ALL' && log.ruleName !== filterRule) return false;
+      if (filterSource !== 'ALL' && log.triggerSource !== filterSource && log.triggerSource !== filterSource.toUpperCase()) return false;
+      if (filterTime > 0 && (now - log.timestamp) > filterTime * 60 * 60 * 1000) return false;
       return true;
     });
-  }, [logs, filterStatus, filterRule]);
+  }, [logs, filterStatus, filterRule, filterSource, filterTime]);
 
   const toggleExpand = (id: string) => {
     setExpandedLogId(prev => (prev === id ? null : id));
@@ -97,6 +105,9 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
         )}
         {log.status === 'SUCCESS' && (
           <p className="mb-2"><span className="font-semibold text-emerald-600">成功發送：</span> 傳送給 {details.recipients || '不明'}</p>
+        )}
+        {log.status === 'ERROR' && (
+          <p className="mb-2"><span className="font-semibold text-rose-600">發生錯誤：</span> {details.Error || '不明原因'}</p>
         )}
         {details.customersEvaluated !== undefined && (
           <p className="mb-1 text-slate-600">名單篩選：共 <span className="font-medium">{details.customersEvaluated}</span> 間店營業中。</p>
@@ -136,34 +147,68 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
       </div>
 
       {/* Filters */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col sm:flex-row gap-3">
-        <div className="flex-1">
-          <label className="block text-xs font-semibold text-slate-500 mb-1.5 ml-1">狀態篩選</label>
-          <div className="flex bg-slate-50 p-1 rounded-xl gap-1">
-            {['ALL', 'SUCCESS', 'SKIPPED', 'ERROR'].map(status => (
-               <button 
-                 key={status}
-                 onClick={() => setFilterStatus(status)}
-                 className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all ${filterStatus === status ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-               >
-                 {status === 'ALL' ? '全部' : status === 'SUCCESS' ? '✅ 成功' : status === 'SKIPPED' ? '⏳ 略過' : '❌ 失敗'}
-               </button>
-            ))}
+      <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 ml-1">狀態篩選</label>
+            <div className="flex bg-slate-50 p-1 rounded-xl gap-1">
+              {['ALL', 'SUCCESS', 'SKIPPED', 'ERROR'].map(status => (
+                 <button 
+                   key={status}
+                   onClick={() => setFilterStatus(status)}
+                   className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all ${filterStatus === status ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   {status === 'ALL' ? '全部' : status === 'SUCCESS' ? '✅ 成功' : status === 'SKIPPED' ? '⏳ 略過' : '❌ 失敗'}
+                 </button>
+              ))}
+            </div>
+          </div>
+          
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 ml-1">時間篩選</label>
+            <div className="flex bg-slate-50 p-1 rounded-xl gap-1">
+              {[{label: '全部時間', val: 0}, {label: '近12小時', val: 12}, {label: '近1天', val: 24}, {label: '近7天', val: 168}].map(time => (
+                 <button 
+                   key={time.val}
+                   onClick={() => setFilterTime(time.val)}
+                   className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all ${filterTime === time.val ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   {time.label}
+                 </button>
+              ))}
+            </div>
           </div>
         </div>
         
-        <div className="flex-1">
-          <label className="block text-xs font-semibold text-slate-500 mb-1.5 ml-1">規則篩選</label>
-          <select 
-            value={filterRule}
-            onChange={(e) => setFilterRule(e.target.value)}
-            className="w-full bg-slate-50 border-0 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-100 appearance-none outline-none"
-          >
-            <option value="ALL">所有規則</option>
-            {uniqueRules.map(rule => (
-              <option key={rule} value={rule}>{rule}</option>
-            ))}
-          </select>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 ml-1">來源篩選</label>
+            <div className="flex bg-slate-50 p-1 rounded-xl gap-1">
+              {[{label: '全部來源', val: 'ALL'}, {label: '系統排程', val: 'SYSTEM_CRON'}, {label: '手動測試', val: 'MANUAL_TEST'}].map(src => (
+                 <button 
+                   key={src.val}
+                   onClick={() => setFilterSource(src.val)}
+                   className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all ${filterSource === src.val ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   {src.label}
+                 </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 ml-1">規則篩選</label>
+            <select 
+              value={filterRule}
+              onChange={(e) => setFilterRule(e.target.value)}
+              className="w-full bg-slate-50 border-0 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-100 appearance-none outline-none"
+            >
+              <option value="ALL">所有規則</option>
+              {uniqueRules.map(rule => (
+                <option key={rule} value={rule}>{rule}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
       

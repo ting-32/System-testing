@@ -1412,11 +1412,16 @@ function onSpreadsheetChange(e) {
 
 // 🔔 Notification Center Check (Intended for Time-Driven Trigger)
 // Runs periodically (e.g. hourly) to evaluate rules and send notifications
-function checkReminders(forceRuleId = null, isDryRun = false) {
-  // 💡 【核心修復】：攔截 GAS 自動灌入的事件物件 (Event Object)
-  // 如果傳進來的 forceRuleId 是一個物件，代表它是被時間觸發器喚醒的，強制將其歸零為 null
+function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
+  let forceRuleId = forceRuleIdOrEvent;
+  let triggerSource = "MANUAL_TEST";
+
   if (forceRuleId !== null && typeof forceRuleId === 'object') {
+    // 如果傳進來的是一個物件，代表它是被時間觸發器喚醒的
+    triggerSource = "SYSTEM_CRON";
     forceRuleId = null;
+  } else if (forceRuleId === null) {
+    triggerSource = "SYSTEM_CRON"; // Without explicit ruleId, standard time trigger or background job
   }
   
   let dryRunResults = [];
@@ -1476,11 +1481,10 @@ function checkReminders(forceRuleId = null, isDryRun = false) {
   rules.forEach(rule => {
     // 定義初始偵測包
     let trace = { step: "INIT", message: "開始評估", customersEvaluated: 0, customersMatched: 0 };
-    const source = forceRuleId === rule.id ? "Manual_Test" : "System_Cron";
 
     const logAndReturn = (status, details) => {
         if (!isDryRun) {
-            writeTraceLog(source, rule.id, rule.name, status, details);
+            writeTraceLog(triggerSource, rule.id, rule.name, status, details);
         }
         if (isDryRun) dryRunResults.push({ ruleId: rule.id, ruleName: rule.name, status, details });
     };
@@ -1507,7 +1511,7 @@ function checkReminders(forceRuleId = null, isDryRun = false) {
     }
     
     if (!isTimeMatched) {
-        logAndReturn("SKIPPED", { reason: "時間未到或非指定星期", currentHour, schedule: rule.schedule });
+        // 時間未到或非指定星期，直接略過，不寫入試算表避免塞爆
         return;
     }
     
@@ -1620,10 +1624,8 @@ function checkReminders(forceRuleId = null, isDryRun = false) {
       // 將觸發提醒的客戶名稱串接
       const names = triggeredCustomers.map(c => c.name).join('、');
       
-      // 成功發送
       trace.step = "SENT";
       trace.recipients = names;
-      logAndReturn("SUCCESS", trace);
       
       // 嘗試組合「發生+品項」的文字，因為條件可能有多個，我們需要簡潔表達
       // 您可以將所有條件的產品名稱與狀態彙整起來
@@ -1650,13 +1652,17 @@ function checkReminders(forceRuleId = null, isDryRun = false) {
         message += `\n\n${rule.customMessage}`; // 加一個空行區隔會比較乾淨
       }
       
-      notifications.push(message);
+      notifications.push({
+        message: message,
+        logSuccess: () => logAndReturn("SUCCESS", trace),
+        logError: (err) => logAndReturn("ERROR", { ...trace, Error: err.message || err.toString() })
+      });
     }
   });
   
   // Actually send
-  if (!isDryRun && notifications.length > 0) {
-    const message = notifications.join("\n\n");
+  if (notifications.length > 0) {
+    const combinedMessage = notifications.map(n => n.message).join("\n\n");
     const userIds = userId.split(',').map(id => id.trim()).filter(id => id);
     
     if (userIds.length > 0) {
@@ -1666,21 +1672,30 @@ function checkReminders(forceRuleId = null, isDryRun = false) {
         
       const payloadTo = userIds.length === 1 ? userIds[0] : userIds;
       
-      try {
-        UrlFetchApp.fetch(endpoint, {
-          method: "post",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + channelToken 
-          },
-          payload: JSON.stringify({
-            to: payloadTo,
-            messages: [{ type: "text", text: message }]
-          })
-        });
-      } catch(err) {
-        console.log("LINE Messaging API failed: " + err.message);
+      if (!isDryRun) {
+        try {
+          UrlFetchApp.fetch(endpoint, {
+            method: "post",
+            headers: { 
+              "Content-Type": "application/json",
+              "Authorization": "Bearer " + channelToken 
+            },
+            payload: JSON.stringify({
+              to: payloadTo,
+              messages: [{ type: "text", text: combinedMessage }]
+            })
+          });
+          
+          notifications.forEach(n => n.logSuccess());
+        } catch(err) {
+          console.log("LINE Messaging API failed: " + err.message);
+          notifications.forEach(n => n.logError(err));
+        }
+      } else {
+         notifications.forEach(n => n.logSuccess());
       }
+    } else {
+        notifications.forEach(n => n.logError(new Error("未設定 LINE userId")));
     }
   }
 
@@ -1740,13 +1755,13 @@ function handleLineWebhook(payload) {
 // 1. 初始化與獲取 Log 表單
 function getNotificationLogSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("NotificationLogs");
+  let sheet = ss.getSheetByName("執行日誌");
   if (!sheet) {
-    sheet = ss.insertSheet("NotificationLogs");
+    sheet = ss.insertSheet("執行日誌");
     // [Timestamp, 觸發來源, 規則ID, 規則名稱, 執行狀態, 詳細過程(JSON)]
     sheet.appendRow(["Timestamp", "Source", "RuleID", "RuleName", "Status", "Details"]);
     sheet.setFrozenRows(1);
-    sheet.hideSheet(); // 前端架構不依賴人員檢視，直接隱藏防呆
+    // sheet.hideSheet(); // 前端架構不依賴人員檢視，直接隱藏防呆 - 取消隱藏以便使用者查看
   }
   return sheet;
 }
