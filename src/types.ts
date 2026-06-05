@@ -136,3 +136,12 @@ export interface Toast {
     onClick: () => void;
   };
 }
+
+export interface SystemLog {
+  id: string; // fallback using timestamp
+  timestampStr: string;
+  timestamp: number;
+  actionType: string;
+  target: string;
+  details: string;
+}

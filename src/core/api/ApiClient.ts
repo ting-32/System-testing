@@ -3,6 +3,8 @@ export interface ApiClientConfig {
   redirect?: RequestRedirect;
   headers?: HeadersInit;
   silentFail?: boolean;
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface ApiClient {

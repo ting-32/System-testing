@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X, Maximize } from 'lucide-react';
+import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X, Maximize, Activity, ChevronLeft } from 'lucide-react';
 import { modalVariants, buttonTap } from './animations';
+import { SystemLogViewer } from './SystemLogViewer';
 
 export const SettingsModal: React.FC<{ 
   onClose: () => void; 
@@ -17,6 +18,8 @@ export const SettingsModal: React.FC<{
   const [inputUrl, setInputUrl] = useState(currentUrl);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [urlSaveStatus, setUrlSaveStatus] = useState<'idle' | 'success'>('idle');
+  
+  const [showSystemLogs, setShowSystemLogs] = useState(false);
 
   const handlePasswordSubmit = async () => {
     if (!oldPassword) { alert('請輸入原密碼'); return; }
@@ -45,6 +48,26 @@ export const SettingsModal: React.FC<{
     setUrlSaveStatus('success');
     setTimeout(() => setUrlSaveStatus('idle'), 2000);
   };
+
+  if (showSystemLogs) {
+    return (
+      <div className="fixed inset-0 bg-morandi-charcoal/40 z-[100] flex sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
+        <motion.div variants={modalVariants} initial="hidden" animate="visible" exit="exit" className="bg-white w-full max-w-2xl min-h-[50vh] max-h-[90vh] flex flex-col rounded-t-[32px] sm:rounded-[32px] overflow-hidden shadow-xl">
+          <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-slate-50 relative z-10 shrink-0">
+            <button onClick={() => setShowSystemLogs(false)} className="flex items-center gap-1.5 p-2 bg-white rounded-xl shadow-sm text-slate-500 font-bold border border-slate-200">
+              <ChevronLeft className="w-5 h-5" /> 返回設定
+            </button>
+            <button onClick={onClose} className="p-2 bg-white rounded-xl shadow-sm text-slate-500 font-bold border border-slate-200">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-hidden relative">
+            <SystemLogViewer apiEndpoint={currentUrl} />
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-morandi-charcoal/40 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
@@ -111,6 +134,24 @@ export const SettingsModal: React.FC<{
               </motion.button>
             </div>
           </section>
+          <section className="space-y-3">
+            <h4 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2">
+              <Activity className="w-4 h-4" /> 系統操作日誌
+            </h4>
+            <div className="bg-morandi-oatmeal/50 p-5 rounded-[24px] border border-slate-100 space-y-4">
+              <p className="text-[10px] text-morandi-charcoal/60 font-bold leading-relaxed tracking-wide">
+                您可以隨時查詢與追蹤應用程式中發生的資料異動軌跡與編輯操作紀錄，預設保留最近數百筆紀錄。
+              </p>
+              <motion.button 
+                whileTap={buttonTap} 
+                onClick={() => setShowSystemLogs(true)} 
+                className="w-full py-3 rounded-[16px] bg-indigo-50 border border-indigo-100 text-indigo-600 font-bold flex items-center justify-center gap-2 shadow-sm tracking-wide"
+              >
+                <Activity className="w-4 h-4" /> 檢視系統日誌
+              </motion.button>
+            </div>
+          </section>
+
           <section className="space-y-3">
             <h4 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2">
               <Lock className="w-4 h-4" /> 安全性設定

@@ -294,22 +294,21 @@ export const useOrderActions = ({
 
         try {
             if (apiEndpoint) {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 45000);
-                
-                let res;
-                try {
-                    res = await fetchWithRetry(apiEndpoint, {
+                const res = await fetchWithRetry(
+                    apiEndpoint, 
+                    {
                         method: 'POST',
                         body: JSON.stringify({ 
                             action: 'batchUpdateOrders', 
                             data: { updates: updatesToProcess } 
-                        }),
-                        signal: controller.signal
-                    });
-                } finally {
-                    clearTimeout(timeoutId);
-                }
+                        })
+                    },
+                    undefined,
+                    2,
+                    1500,
+                    false,
+                    45000 // 傳入自訂 timeout 延長至 45 秒
+                );
                 
                 const json = await res.json();
 
@@ -342,23 +341,6 @@ export const useOrderActions = ({
         } catch (e: any) {
             console.error("Batch Sync Failed:", e);
             let errMsg = e instanceof Error ? e.message : String(e);
-
-            if (errMsg.includes('Order not found')) {
-                console.log("Order not found during batch update. Falling back to individual upserts...");
-                updatesToProcess.forEach(u => {
-                    const orderToFix = orders.find(o => o.id === u.id);
-                    if (orderToFix) {
-                        saveOrderToCloud(
-                           {...orderToFix, status: u.status}, 
-                           'updateOrderContent', 
-                           undefined, 
-                           () => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o)),
-                           (err: string) => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'error', errorMessage: err } : o))
-                        );
-                    }
-                });
-                return; // Let individual upsert handle it
-            }
 
             if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
                 errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
@@ -418,22 +400,21 @@ export const useOrderActions = ({
 
           try {
               if (apiEndpoint) {
-                  const controller = new AbortController();
-                  const timeoutId = setTimeout(() => controller.abort(), 45000);
-                  
-                  let res;
-                  try {
-                      res = await fetchWithRetry(apiEndpoint, {
+                  const res = await fetchWithRetry(
+                      apiEndpoint,
+                      {
                           method: 'POST',
                           body: JSON.stringify({ 
                               action: 'batchUpdateOrders', 
                               data: { updates: updatesToProcess } 
-                          }),
-                          signal: controller.signal
-                      });
-                  } finally {
-                      clearTimeout(timeoutId);
-                  }
+                          })
+                      },
+                      undefined,
+                      2,
+                      1500,
+                      false,
+                      45000 // 傳入自訂 timeout 延長至 45 秒
+                  );
                   
                   const json = await res.json();
 
@@ -467,23 +448,6 @@ export const useOrderActions = ({
           } catch (e: any) {
               console.error("Batch Sync Failed:", e);
               let errMsg = e instanceof Error ? e.message : String(e);
-
-              if (errMsg.includes('Order not found')) {
-                  console.log("Order not found during batch checkout. Falling back to individual upserts...");
-                  updatesToProcess.forEach(u => {
-                      const orderToFix = orders.find(o => o.id === u.id);
-                      if (orderToFix) {
-                          saveOrderToCloud(
-                             {...orderToFix, status: u.status}, 
-                             'updateOrderContent', 
-                             undefined, 
-                             () => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o)),
-                             (err: string) => setOrders((prev: Order[]) => prev.map(o => o.id === u.id ? { ...o, syncStatus: 'error', errorMessage: err } : o))
-                          );
-                      }
-                  });
-                  return; // Let individual upsert handle it
-              }
 
               if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
                   errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';

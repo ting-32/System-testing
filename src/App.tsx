@@ -812,8 +812,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
 
+    let intervalId: any = null;
+    let wakeoutId: any = null;
+
     // 1. Define the silent sync executor with safety locks
     const performSilentSync = () => {
+      if (document.visibilityState === 'hidden') return;
       // Safety Lock: Don't sync if user is editing
       if (isAddingOrder || isEditingCustomer || isEditingProduct || quickAddData || editingOrderId) {
         console.log("使用者忙碌中，略過背景同步");
@@ -824,31 +828,46 @@ const App: React.FC = () => {
       syncData(true);
     };
 
-    // 2. Initial Sync on mount (explicitly non-silent if needed, but handled by the original effect below if kept separate.
-    // However, to consolidate, we can rely on the original effect for initial load and this one for updates)
-    
-    // 3. Polling Logic (Every 60 seconds)
-    const intervalId = setInterval(performSilentSync, 60000);
-
-    // 4. Focus Logic (Revalidate on Focus)
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        performSilentSync();
+    const startPolling = () => {
+      if (!intervalId) {
+        intervalId = setInterval(performSilentSync, 60000);
       }
     };
-    
-    const onWindowFocus = () => {
-        performSilentSync();
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+      if (wakeoutId) {
+        clearTimeout(wakeoutId);
+        wakeoutId = null;
+      }
+    };
+
+    // Initial Start
+    startPolling();
+
+    // 4. Focus Logic (Revalidate on Focus with 2 seconds debounce on wake-up)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // 等待兩秒鐘暖機，讓作業系統重新連結 Wi-Fi 或蜂窩網路
+        wakeoutId = setTimeout(() => {
+          performSilentSync();
+          startPolling();
+        }, 2000);
+      } else {
+        // 進入隱藏休眠，清除所有可能引爆的定時器
+        stopPolling();
+      }
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('focus', onWindowFocus);
 
     // Cleanup
     return () => {
-      clearInterval(intervalId);
+      stopPolling();
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('focus', onWindowFocus);
     };
   }, [isAuthenticated, syncData, isAddingOrder, isEditingCustomer, isEditingProduct, quickAddData, editingOrderId]);
 

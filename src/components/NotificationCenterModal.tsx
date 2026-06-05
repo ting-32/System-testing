@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, BellRing, Trash2, Save, MessageCircle, AlertCircle, Sparkles, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { X, Plus, BellRing, Trash2, Save, MessageCircle, AlertCircle, Sparkles, RefreshCw, CheckCircle2, Smile } from 'lucide-react';
+import EmojiPicker from 'emoji-picker-react';
 import { Customer, Product, ReminderRule } from '../types';
 import { NotificationLogViewer } from './NotificationLogViewer';
 import { DiagnosticFunnelModal } from './DiagnosticFunnelModal';
@@ -324,7 +325,8 @@ export const NotificationCenterModal: React.FC<Props> = ({
     });
 
     if (rule.customMessage) {
-      desc += `\n${rule.customMessage}`;
+      let previewMsg = rule.customMessage.replace(/{日期}/g, targetDayStr).replace(/{{日期}}/g, targetDayStr);
+      desc += `\n${previewMsg}`;
     }
     
     return desc;
@@ -556,6 +558,25 @@ export const NotificationCenterModal: React.FC<Props> = ({
 const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, previewText }: any) => {
   const [activePicker, setActivePicker] = useState<{index: number, type: 'customers' | 'products'} | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const onEmojiClick = (emojiData: any) => {
+    setRule({
+      ...rule,
+      customMessage: (rule.customMessage || '') + emojiData.emoji
+    });
+  };
 
   const addConditionGroup = (operator: 'AND' | 'OR') => {
     setRule({
@@ -823,16 +844,34 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
       </div>
 
       <div className="space-y-3 mt-4">
-        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">
-          自訂提醒內容 (選填)
-        </label>
-        <textarea
-          value={rule.customMessage || ''}
-          onChange={e => setRule({...rule, customMessage: e.target.value})}
-          placeholder="例如：請記得打電話跟客戶確認是否漏訂單..."
-          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-1 focus:ring-emerald-500"
-          rows={3}
-        />
+        <div className="flex justify-between items-center mb-1.5">
+          <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest">
+            自訂提醒內容 (選填)
+          </label>
+          <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">可以用 <code className="text-emerald-600 font-bold px-1">{`{日期}`}</code> 代入對象營業日</span>
+        </div>
+        <div className="relative">
+          <textarea
+            value={rule.customMessage || ''}
+            onChange={e => setRule({...rule, customMessage: e.target.value})}
+            placeholder="例如：請記得打電話跟客戶確認是否漏訂單... 或者 輸入格式如 {日期} 天一油麵10斤"
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-1 focus:ring-emerald-500 pr-10"
+            rows={3}
+          />
+          <button
+            type="button"
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            className="absolute right-2 top-2 p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
+          >
+            <Smile className="w-5 h-5" />
+          </button>
+          
+          {showEmojiPicker && (
+            <div className="absolute right-0 bottom-full mb-2 z-50 shadow-2xl rounded-lg" ref={emojiPickerRef}>
+              <EmojiPicker onEmojiClick={onEmojiClick} width={300} height={400} />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100/50 mt-4">

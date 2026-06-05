@@ -30,16 +30,21 @@ export class GasApiClient implements ApiClient {
     const payload = { action, data };
 
     let res;
+    let timeoutToUse = finalConfig.timeoutMs ?? 25000;
     try {
       res = await fetchWithRetry(finalConfig.endpoint, {
         method: 'POST',
         redirect: finalConfig.redirect,
         headers: finalConfig.headers,
-        body: JSON.stringify(payload)
-      }, undefined, 2, 1500, finalConfig.silentFail, 45000);
+        body: JSON.stringify(payload),
+        signal: finalConfig.signal
+      }, undefined, 2, 1500, finalConfig.silentFail, timeoutToUse);
     } catch (err: any) {
+      if (err.message === 'ABORTED_BY_USER' || err.message === 'ABORTED') {
+         throw err;
+      }
       if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
-        throw new Error("API Request Timeout: 超過 45 秒未回應");
+        throw new Error(`API Request Timeout: 超過 ${timeoutToUse/1000} 秒未回應`);
       }
       throw err;
     }
@@ -51,8 +56,8 @@ export class GasApiClient implements ApiClient {
       // Create a specific error that contains the errorCode for upstream handling
       const error = new Error(json.error || 'API Request Failed');
       (error as any).errorCode = json.errorCode;
-      if (json.serverData) {
-        (error as any).serverData = json.serverData;
+      if ((json as any).serverData) {
+        (error as any).serverData = (json as any).serverData;
       } else if (json.data) {
         (error as any).serverData = json.data;
       }
@@ -76,14 +81,29 @@ export class GasApiClient implements ApiClient {
     }
 
     const finalConfig = { ...this.baseConfig, ...config };
-    const res = await fetchWithRetry(finalUrl, { redirect: finalConfig.redirect, headers: finalConfig.headers }, undefined, 2, 1500, finalConfig.silentFail, 45000);
+    const timeoutToUse = finalConfig.timeoutMs ?? 25000;
+    
+    let res;
+    try {
+      res = await fetchWithRetry(finalUrl, { 
+        redirect: finalConfig.redirect, 
+        headers: finalConfig.headers, 
+        signal: finalConfig.signal 
+      }, undefined, 2, 1500, finalConfig.silentFail, timeoutToUse);
+    } catch (err: any) {
+      if (err.message === 'ABORTED_BY_USER' || err.message === 'ABORTED') {
+         throw err;
+      }
+      throw err;
+    }
+    
     const json = await res.json() as GASResponse<any>;
     
     if (!json.success) {
       const error = new Error(json.error || 'API Request Failed');
       (error as any).errorCode = json.errorCode;
-      if (json.serverData) {
-        (error as any).serverData = json.serverData;
+      if ((json as any).serverData) {
+        (error as any).serverData = (json as any).serverData;
       } else if (json.data) {
         (error as any).serverData = json.data;
       }

@@ -12,6 +12,8 @@ localforage.config({
   storeName: 'nmr_cache_store'
 });
 
+let globalSyncController: AbortController | null = null;
+
 const debouncedSaveData = debounce(async (key: string, data: any) => {
   try {
     await localforage.setItem(key, data);
@@ -138,10 +140,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       return;
     }
     
-    if (isSyncingRef.current) {
-      console.log("UX Block: Prevent duplicate concurrent sync operations.");
-      return;
+    if (globalSyncController) {
+      console.log("Canceling previous stale sync request");
+      globalSyncController.abort();
     }
+    globalSyncController = new AbortController();
 
     if (!apiEndpoint) { 
       setIsInitialLoading(false); 
@@ -174,7 +177,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         ...(since > 0 && { since: String(since) })
       };
 
-      const result = await container.syncRepo.sync(endpointParams, isSilent);
+      const result = await container.syncRepo.sync(endpointParams, isSilent, globalSyncController.signal);
       
       if (result) { 
         if (result.serverGlobalTs) {
@@ -275,7 +278,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                  currentOrders.forEach(o => mergedMap.set(o.id, o));
                  newOrders.forEach(newOrder => {
                     // ✅ 修改後：若是發現帶有 DELETED 狀態的資料，直接從 Map 中連根拔起
-                    if (newOrder.status === 'DELETED') {
+                    if (String(newOrder.status) === 'DELETED') {
                         mergedMap.delete(newOrder.id);
                         return;
                     }
@@ -303,7 +306,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            }
            
            setOrders(currentOrders => {
-             const activeNewOrders = newOrders.filter(o => o.status !== 'DELETED');
+             const activeNewOrders = newOrders.filter(o => String(o.status) !== 'DELETED');
              const mergedOrders = [...activeNewOrders];
              
              currentOrders.forEach(localOrder => {
@@ -331,7 +334,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
           addToast(`已更新至最新資料`, 'success');
         }
       } 
-    } catch (e) { 
+    } catch (e: any) { 
+      if (e.message === 'ABORTED_BY_USER' || e.message === 'ABORTED') {
+        console.log("Stale sync request was aborted successfully.");
+        return;
+      }
       console.error("無法連線至雲端:", e); 
       if (!isSilent) {
         let errMsg = "同步失敗，請檢查網路連線";
@@ -524,7 +531,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   useEffect(() => {
     if (!isAuthenticated || !apiEndpoint) return;
 
-    const pollInterval = setInterval(async () => {
+    let pollInterval: any = null;
+    let wakeoutId: any = null;
+
+    const performPolling = async () => {
+      if (document.visibilityState === 'hidden') return;
       try {
         const { globalLastUpdated } = await container.syncRepo.checkUpdates();
         const serverGlobalTs = globalLastUpdated;
@@ -535,11 +546,45 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         lastGlobalUpdateRef.current = serverGlobalTs;
       } catch (e) {
         // Suppress polling error log to avoid console spam when offline or endpoint is invalid
-        // console.error("Polling error:", e);
       }
-    }, 30000); // 30 seconds
+    };
 
-    return () => clearInterval(pollInterval);
+    const startPolling = () => {
+      if (!pollInterval) {
+        pollInterval = setInterval(performPolling, 30000); // 30 seconds
+      }
+    };
+
+    const stopPolling = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+      if (wakeoutId) {
+        clearTimeout(wakeoutId);
+        wakeoutId = null;
+      }
+    };
+
+    startPolling();
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        wakeoutId = setTimeout(() => {
+          performPolling();
+          startPolling();
+        }, 2000);
+      } else {
+        stopPolling();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [isAuthenticated, apiEndpoint, syncData]);
 
   // 🔔 Firebase Realtime Database 門鈴監聽器

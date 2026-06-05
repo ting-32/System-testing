@@ -103,36 +103,47 @@ function doPost(e) {
         break;
       case "createOrder":
         result = createOrder(params.data);
+        writeSystemLog("CREATE_ORDER", params.data.customerName || "未知", JSON.stringify({ items: params.data.items, payload: params.data }));
         break;
       case "updateOrderContent":
         result = updateOrderContent(params.data);
+        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({ diff: params.data }));
         break;
       case "updateOrderStatus":
         result = updateOrderStatus(params.data);
+        writeSystemLog("UPDATE_ORDER_STATUS", params.data.id ? `Order ID: ${params.data.id}` : "Batch", JSON.stringify({ status: params.data.status }));
         break;
       case "batchUpdateOrders":
         result = batchUpdateOrders(params.data);
+        writeSystemLog("UPDATE_ORDER_BATCH", "多筆訂單", JSON.stringify({ updates: params.data }));
         break;
       case "batchUpdatePaymentStatus":
         result = batchUpdatePaymentStatus(params.data);
+        writeSystemLog("UPDATE_PAYMENT_BATCH", "多筆訂單", JSON.stringify({ count: (params.data.orderIds || []).length, paid: params.data.isPaid }));
         break;
       case "deleteOrder":
         result = deleteOrder(params.data);
+        writeSystemLog("DELETE_ORDER", `Order ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
         break;
       case "reorderProducts":
         result = reorderProducts(params.data);
+        writeSystemLog("UPDATE_PRODUCT_ORDER", "商品列表", JSON.stringify({ updatedCount: (params.data.products || []).length }));
         break;
       case "updateCustomer":
         result = updateCustomer(params.data);
+        writeSystemLog("UPDATE_CUSTOMER", params.data.name || "未知", JSON.stringify({ data: params.data }));
         break;
       case "deleteCustomer":
         result = deleteCustomer(params.data);
+        writeSystemLog("DELETE_CUSTOMER", `Customer ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
         break;
       case "updateProduct":
         result = updateProduct(params.data);
+        writeSystemLog("UPDATE_PRODUCT", params.data.name || "未知", JSON.stringify({ data: params.data }));
         break;
       case "deleteProduct":
         result = deleteProduct(params.data);
+        writeSystemLog("DELETE_PRODUCT", `Product ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
         break;
       case "checkUpdates":
         result = checkUpdates();
@@ -142,21 +153,28 @@ function doPost(e) {
         break;
       case "saveTrips":
         result = saveTrips(params.data);
+        writeSystemLog("UPDATE_TRIPS", "車趟清單", JSON.stringify({ count: (params.data.trips || []).length }));
         break;
       case "saveSettings":
         result = saveSettings(params.data);
+        writeSystemLog("UPDATE_SETTINGS", "APP 設定/提醒規則", JSON.stringify({ data: params.data }));
         break;
       case "testLineMessage":
         result = testLineMessage(params.data);
+        writeSystemLog("SYSTEM_TEST_MSG", "LINE Notify", JSON.stringify({ msg: "Triggered test message" }));
         break;
       case "testRule":
         result = checkReminders(params.data.ruleId);
+        writeSystemLog("SYSTEM_TEST_RULE", `Rule ID: ${params.data.ruleId}`, JSON.stringify({ action: "testRule" }));
         break;
       case "dryRunRule":
         result = checkReminders(params.data.ruleId, true);
         break;
       case "getNotificationLogs":
         result = getNotificationLogs();
+        break;
+      case "getSystemLogs":
+        result = getSystemLogs(params.data?.limit || 200);
         break;
       default:
         throw new Error("Unknown action: " + action);
@@ -1649,7 +1667,8 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       
       // 4. 提醒內容(純文字)
       if (rule.customMessage) {
-        message += `\n\n${rule.customMessage}`; // 加一個空行區隔會比較乾淨
+        let msg = rule.customMessage.replace(/{日期}/g, targetDatesText).replace(/{{日期}}/g, targetDatesText);
+        message += `\n\n${msg}`; // 加一個空行區隔會比較乾淨
       }
       
       notifications.push({
@@ -1662,7 +1681,6 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
   
   // Actually send
   if (notifications.length > 0) {
-    const combinedMessage = notifications.map(n => n.message).join("\n\n");
     const userIds = userId.split(',').map(id => id.trim()).filter(id => id);
     
     if (userIds.length > 0) {
@@ -1673,24 +1691,29 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       const payloadTo = userIds.length === 1 ? userIds[0] : userIds;
       
       if (!isDryRun) {
-        try {
-          UrlFetchApp.fetch(endpoint, {
-            method: "post",
-            headers: { 
-              "Content-Type": "application/json",
-              "Authorization": "Bearer " + channelToken 
-            },
-            payload: JSON.stringify({
-              to: payloadTo,
-              messages: [{ type: "text", text: combinedMessage }]
-            })
-          });
-          
-          notifications.forEach(n => n.logSuccess());
-        } catch(err) {
-          console.log("LINE Messaging API failed: " + err.message);
-          notifications.forEach(n => n.logError(err));
-        }
+        // 【修改點】針對每一則通知獨立發動 API 請求，使其成為獨立對話泡泡
+        notifications.forEach(n => {
+          try {
+            UrlFetchApp.fetch(endpoint, {
+              method: "post",
+              headers: { 
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + channelToken 
+              },
+              payload: JSON.stringify({
+                to: payloadTo,
+                // 只放入當下的這則 message
+                messages: [{ type: "text", text: n.message }]
+              })
+            });
+            // 該則訊息發送成功，寫入成功 Log
+            n.logSuccess();
+          } catch(err) {
+            console.log("LINE Messaging API failed: " + err.message);
+            // 該則訊息發送失敗，寫入失敗 Log
+            n.logError(err);
+          }
+        });
       } else {
          notifications.forEach(n => n.logSuccess());
       }
@@ -1758,8 +1781,8 @@ function getNotificationLogSheet() {
   let sheet = ss.getSheetByName("執行日誌");
   if (!sheet) {
     sheet = ss.insertSheet("執行日誌");
-    // [Timestamp, 觸發來源, 規則ID, 規則名稱, 執行狀態, 詳細過程(JSON)]
-    sheet.appendRow(["Timestamp", "Source", "RuleID", "RuleName", "Status", "Details"]);
+    // [時間, 觸發來源, 規則ID, 規則名稱, 執行狀態, 詳細過程(JSON)]
+    sheet.appendRow(["時間", "觸發來源", "規則ID", "規則名稱", "執行狀態", "詳細內容"]);
     sheet.setFrozenRows(1);
     // sheet.hideSheet(); // 前端架構不依賴人員檢視，直接隱藏防呆 - 取消隱藏以便使用者查看
   }
@@ -1812,4 +1835,97 @@ function getNotificationLogs() {
   }));
   
   return logs;
+}
+
+// ==========================================
+// 系統操作日誌 (System Logs) Functionality
+// ==========================================
+
+function getSystemLogSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("系統操作日誌");
+  if (!sheet) {
+    sheet = ss.insertSheet("系統操作日誌");
+    sheet.appendRow(["時間", "操作類型", "目標對象", "詳細內容"]);
+    sheet.setFrozenRows(1);
+    sheet.hideSheet(); // 避免人員變更
+  }
+  return sheet;
+}
+
+function writeSystemLog(actionType, target, detailsStr) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getSystemLogSheet();
+    const lastRow = sheet.getLastRow();
+    
+    // Rolling Window
+    if (lastRow > 5000) {
+       sheet.deleteRows(2, 1000);
+    }
+    
+    const timestamp = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm:ss");
+    sheet.appendRow([timestamp, actionType, target, detailsStr]);
+  } catch (e) {
+    console.error("writeSystemLog error: ", e);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getSystemLogs(limit) {
+  limit = limit || 100;
+  const sheet = getSystemLogSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+  
+  const startRow = Math.max(2, lastRow - limit + 1);
+  const numRows = lastRow - startRow + 1;
+  const rawValues = sheet.getRange(startRow, 1, numRows, 4).getValues();
+  
+  return rawValues.reverse().map(row => ({
+    timestampStr: String(row[0]),
+    actionType: String(row[1]),
+    target: String(row[2]),
+    details: String(row[3])
+  }));
+}
+
+function cleanupOldLogs() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000); // 允許等待較長時間
+    const sheet = getSystemLogSheet();
+    const lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return;
+    
+    // 設定刪除期限為 30 天前
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 30);
+    const cutoffTs = cutoffDate.getTime();
+    
+    const maxProcess = 1000; // 一次最多檢查 1000 筆避免逾時
+    const values = sheet.getRange(2, 1, Math.min(lastRow - 1, maxProcess), 1).getValues();
+    
+    let deleteCount = 0;
+    for (let i = 0; i < values.length; i++) {
+       const cellTimeStr = String(values[i][0]).replace(/-/g, '/');
+       const cellDate = new Date(cellTimeStr);
+       if (!isNaN(cellDate.getTime()) && cellDate.getTime() < cutoffTs) {
+         deleteCount++;
+       } else {
+         break; // 因為是按時間寫入的，遇到第一個比較新的就可以停了
+       }
+    }
+    
+    if (deleteCount > 0) {
+      sheet.deleteRows(2, deleteCount);
+      console.log(`cleanupOldLogs: 刪除了 ${deleteCount} 筆超過 30 天的系統日誌`);
+    }
+  } catch(e) {
+    console.error("cleanupOldLogs error", e);
+  } finally {
+    lock.releaseLock();
+  }
 }

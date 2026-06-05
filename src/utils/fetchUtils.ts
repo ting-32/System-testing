@@ -21,9 +21,22 @@ export async function fetchWithRetry(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs); 
     
+    // 如果外部傳入了 signal，也要同步中止
+    let externalAbortHandler: (() => void) | null = null;
+    if (options.signal) {
+      if (options.signal.aborted) {
+        throw new Error('ABORTED');
+      }
+      externalAbortHandler = () => controller.abort();
+      options.signal.addEventListener('abort', externalAbortHandler);
+    }
+
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timeoutId);
+      if (externalAbortHandler && options.signal) {
+        options.signal.removeEventListener('abort', externalAbortHandler);
+      }
 
       // JSON syntax error usually occurs when GAS returns HTML (error page)
       // We check for ok response
@@ -36,7 +49,15 @@ export async function fetchWithRetry(
       return response;
     } catch (error: any) {
       clearTimeout(timeoutId);
+      if (externalAbortHandler && options.signal) {
+        options.signal.removeEventListener('abort', externalAbortHandler);
+      }
       
+      // 如果是被外部中止，不重試
+      if (options.signal && options.signal.aborted) {
+        throw new Error('ABORTED_BY_USER');
+      }
+
       // 如果是 Timeout 也當作失敗
       if (error.name === 'AbortError') {
         lastError = new Error('TIMEOUT');
@@ -58,7 +79,8 @@ export async function fetchWithRetry(
       if (!silentFail) {
         window.dispatchEvent(new CustomEvent('networkRetryStart'));
       }
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      const currentDelay = delayMs * Math.pow(2, attempt) + (Math.random() * 500);
+      await new Promise(resolve => setTimeout(resolve, currentDelay));
     }
   }
   

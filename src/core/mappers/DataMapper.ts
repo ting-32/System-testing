@@ -1,7 +1,25 @@
-import { Customer, Order, Product, OrderStatus, NotificationLog, LogStatus } from '../../types';
+import { Customer, Order, Product, OrderStatus, NotificationLog, LogStatus, SystemLog } from '../../types';
 import { safeJsonArray, normalizeDate, safeNumber } from '../../utils';
 
 export class DataMapper {
+  static mapSystemLogs(rawLogs: any[]): SystemLog[] {
+    return rawLogs.map((log: any, idx: number) => {
+      let ts = Date.now();
+      if (log.timestampStr) {
+        const d = new Date(log.timestampStr.replace(/-/g, '/'));
+        if (!isNaN(d.getTime())) ts = d.getTime();
+      }
+      return {
+        id: `${ts}_${idx}`,
+        timestampStr: log.timestampStr || '',
+        timestamp: ts,
+        actionType: log.actionType || 'UNKNOWN',
+        target: log.target || '',
+        details: log.details || ''
+      };
+    });
+  }
+
   static mapNotificationLogs(rawLogs: any[]): NotificationLog[] {
     return rawLogs.map((log: any, idx: number) => {
       let parsedDetails = {};
