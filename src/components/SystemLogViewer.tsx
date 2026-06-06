@@ -39,10 +39,13 @@ const actionDictionary: Record<string, string> = {
   'CREATE_ORDER': '建立訂單',
   'CREATE_PRODUCT': '建立產品',
   'CREATE_CUSTOMER': '建立客戶',
-  'UPDATE_ORDER': '更新訂單',
+  'UPDATE_ORDER': '更新單筆訂單',
   'UPDATE_PRODUCT': '更新產品',
   'UPDATE_CUSTOMER': '更新客戶',
-  'BATCH_UPDATE_ORDERS': '批次更新',
+  'BATCH_UPDATE_ORDERS': '批次更新訂單',
+  'UPDATE_ORDER_BATCH': '批次更新訂單',
+  'UPDATE_PAYMENT_BATCH': '批次結清狀態',
+  'UPDATE_ORDER_STATUS': '更新訂單狀態',
   'DELETE_ORDER': '刪除訂單',
   'DELETE_PRODUCT': '刪除產品',
   'DELETE_CUSTOMER': '刪除客戶',
@@ -63,11 +66,22 @@ const getRelativeTimeText = (timestamp: number) => {
   return null; // 超過 24 小時就不顯示相對時間
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  'PENDING': '待處理',
+  'PROCESSING': '處理中',
+  'SHIPPED': '已出貨',
+  'DELIVERED': '已送達',
+  'COMPLETED': '已完成',
+  'CANCELLED': '已取消',
+  'PAID': '已付款',
+};
+
 const translateKey = (key: string) => fieldNameDictionary[key] || key;
 const translateAction = (action: string) => actionDictionary[action] || action;
 const translateValue = (value: any): string => {
   if (value === null || value === undefined || value === '') return "無";
   if (typeof value === 'boolean') return value ? "是" : "否";
+  if (typeof value === 'string' && STATUS_LABELS[value]) return STATUS_LABELS[value];
   if (typeof value === 'string' && fieldNameDictionary[value]) return fieldNameDictionary[value];
   if (Array.isArray(value)) {
     return value.map(item => {
@@ -82,7 +96,7 @@ const translateValue = (value: any): string => {
   }
   if (typeof value === 'object' && value !== null) {
       if (value.name) return value.name;
-      return '[複雜資料]';
+      return JSON.stringify(value);
   }
   return String(value);
 };
@@ -112,6 +126,7 @@ const renderValue = (key: string, value: any, isOld: boolean = false) => {
 export function SystemLogViewer({ apiEndpoint }: Props) {
   const [logs, setLogs] = useState<SystemLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   const [filterAction, setFilterAction] = useState<string>('ALL');
   const [filterTime, setFilterTime] = useState<number>(0);
@@ -120,8 +135,13 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
   
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
-  const fetchLogs = async () => {
-    setIsLoadingLogs(true);
+  const fetchLogs = async (silent = false) => {
+    if (!silent) {
+      if (isRefreshing) return;
+      setIsRefreshing(true);
+      if (logs.length === 0) setIsLoadingLogs(true);
+    }
+    
     try {
       container.updateApiEndpoint(apiEndpoint);
       const fetchedLogs = await container.logRepo.getSystemLogs(200);
@@ -129,14 +149,24 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
     } catch (e) {
       console.error("Failed to fetch logs", e);
     } finally {
-      setIsLoadingLogs(false);
+      if (!silent) {
+        setIsRefreshing(false);
+        setIsLoadingLogs(false);
+      }
     }
   };
 
   useEffect(() => {
-    if (apiEndpoint) {
-      fetchLogs();
-    }
+    if (!apiEndpoint) return;
+    
+    fetchLogs();
+    
+    // 背景靜默更新 (不觸發 Loading 動畫，讓 UI 保持安靜)
+    const intervalId = setInterval(() => {
+      fetchLogs(true);
+    }, 30000);
+
+    return () => clearInterval(intervalId);
   }, [apiEndpoint]);
 
   const filteredLogs = useMemo(() => {
@@ -303,24 +333,6 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
       );
     }
   
-    if (actionType === 'BATCH_UPDATE_ORDERS' && logContextData.updates) {
-       return (
-         <div className="mt-2 bg-slate-50 rounded-xl border border-slate-200 flex flex-col p-4 gap-2">
-            <div className="text-sm font-medium text-slate-700">
-              已批次更新 <strong className="text-indigo-600">{logContextData.updates.length || 0}</strong> 筆訂單：
-            </div>
-            <div className="max-h-40 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 mt-2">
-              {logContextData.updates.map((upd: any, idx: number) => (
-                <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between text-xs bg-white border border-slate-100 p-2 rounded-lg shadow-sm">
-                  <span className="font-mono text-slate-500">{upd.id?.substring(0,8) || upd.id}</span>
-                  <span className="font-semibold text-slate-700">{translateValue(upd.status)}</span>
-                </div>
-              ))}
-            </div>
-         </div>
-       );
-    }
-  
     const ignoreKeys = ['version', 'originalVersion', 'syncStatus', 'timestamp', 'id', 'source', 'type'];
     
     const formattedItems = Object.entries(logContextData)
@@ -331,7 +343,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
         
         if (typeof value === 'object' && value !== null && 'old' in value && 'new' in value) {
            return (
-             <div key={key} className="flex flex-col p-2 bg-white rounded-lg border border-slate-100 shadow-sm">
+             <div key={key} className="flex flex-col p-2 bg-white rounded-lg border border-slate-100 shadow-sm col-span-full sm:col-span-1">
                <span className="text-[11px] text-slate-400 font-bold mb-1">{zhKey}</span>
                <div className="flex items-center gap-2 font-medium">
                  {renderValue(key, value.old, true)}
@@ -339,6 +351,82 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
                  {renderValue(key, value.new, false)}
                </div>
              </div>
+           );
+        }
+
+        const actualUpdates = Array.isArray(value) ? value : (value && Array.isArray((value as any).updates) ? (value as any).updates : null);
+
+        if (key === 'updates' && actualUpdates) {
+            return (
+              <div key={key} className="flex flex-col p-2 bg-white rounded-lg border border-slate-100 shadow-sm col-span-full">
+                <span className="text-sm font-medium text-slate-700 mb-2">
+                   已批次處理 <strong className="text-indigo-600">{actualUpdates.length}</strong> 筆資料
+                </span>
+                <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto custom-scrollbar">
+                  {actualUpdates.map((upd: any, idx: number) => (
+                    <div key={idx} className="flex flex-col flex-wrap sm:flex-row sm:items-center justify-between text-xs bg-slate-50 border border-slate-200 p-2 rounded-lg gap-2">
+                      <div className="flex flex-col sm:flex-row gap-1 sm:gap-2 items-start sm:items-center">
+                        <span className="font-mono text-[11px] sm:text-xs text-slate-500 font-bold break-all sm:whitespace-nowrap sm:overflow-x-auto custom-scrollbar">{upd.id}</span>
+                        {upd.customerName && (
+                          <span className="text-xs font-semibold text-slate-700 bg-slate-200/60 px-2 py-0.5 rounded">
+                            {upd.customerName}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {upd.oldStatus ? (
+                           <>
+                             {renderValue('status', upd.oldStatus, true)}
+                             <ArrowRight className="w-3 h-3 text-slate-400" />
+                             {renderValue('status', upd.status, false)}
+                           </>
+                        ) : (
+                           <span className="font-semibold text-slate-700">{translateValue(upd.status)}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+        }
+
+        if (key === '_diff' && typeof value === 'object' && value !== null) {
+            return (
+                <div key={key} className="col-span-full grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {Object.entries(value).map(([subKey, subValue]: [string, any]) => {
+                        const zhSubKey = translateKey(subKey);
+                        if (typeof subValue === 'object' && subValue !== null && 'old' in subValue && 'new' in subValue) {
+                            return (
+                              <div key={subKey} className="flex flex-col p-2 bg-white rounded-lg border border-slate-100 shadow-sm w-full">
+                                <span className="text-[11px] text-slate-400 font-bold mb-1">{zhSubKey}</span>
+                                <div className="flex items-center gap-2 font-medium">
+                                  {renderValue(subKey, subValue.old, true)}
+                                  <ArrowRight className="w-4 h-4 text-slate-300" />
+                                  {renderValue(subKey, subValue.new, false)}
+                                </div>
+                              </div>
+                            );
+                        }
+                        return (
+                          <div key={subKey} className="flex flex-col p-2 bg-slate-900 rounded-lg shadow-sm w-full">
+                             <span className="text-[10px] text-slate-400 font-bold mb-1">{zhSubKey}</span>
+                             <pre className="text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(subValue, null, 2)}</pre>
+                          </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+        
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+           return (
+              <div key={key} className="flex flex-col p-2 bg-slate-900 rounded-lg shadow-sm col-span-full">
+                 <div className="flex items-center justify-between border-b border-slate-700 pb-1 mb-1">
+                    <span className="text-[10px] text-slate-400 font-bold">{zhKey}</span>
+                 </div>
+                 <pre className="text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(value, null, 2)}</pre>
+              </div>
            );
         }
   
@@ -369,12 +457,12 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
             操作軌跡
           </h3>
           <button 
-            onClick={fetchLogs} 
-            disabled={isLoadingLogs}
+            onClick={() => fetchLogs(false)} 
+            disabled={isRefreshing}
             className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingLogs ? 'animate-spin' : ''}`} />
-            {isLoadingLogs ? '更新中' : '最新'}
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-indigo-500' : ''}`} />
+            {isRefreshing ? '更新中' : '最新'}
           </button>
         </div>
 

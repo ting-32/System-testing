@@ -107,7 +107,7 @@ function doPost(e) {
         break;
       case "updateOrderContent":
         result = updateOrderContent(params.data);
-        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({ diff: params.data }));
+        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify(params.data._diff || { updates: params.data }));
         break;
       case "updateOrderStatus":
         result = updateOrderStatus(params.data);
@@ -115,7 +115,7 @@ function doPost(e) {
         break;
       case "batchUpdateOrders":
         result = batchUpdateOrders(params.data);
-        writeSystemLog("UPDATE_ORDER_BATCH", "多筆訂單", JSON.stringify({ updates: params.data }));
+        writeSystemLog("UPDATE_ORDER_BATCH", "多筆訂單", JSON.stringify({ updates: params.data.updates || params.data }));
         break;
       case "batchUpdatePaymentStatus":
         result = batchUpdatePaymentStatus(params.data);

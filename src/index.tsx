@@ -5,7 +5,9 @@ import { setupMockBackend } from './mockBackend';
 import { setupGlobalErrorInterceptors } from './setupErrorInterceptors';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-setupMockBackend();
+if ((import.meta as any).env?.VITE_USE_MOCK_API !== 'false') {
+  setupMockBackend();
+}
 setupGlobalErrorInterceptors();
 
 const rootElement = document.getElementById('root');

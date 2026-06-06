@@ -262,7 +262,7 @@ export const useOrderActions = ({
   };
 
   const batchTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const pendingUpdatesRef = React.useRef<Map<string, { id: string, status: OrderStatus, version: number, force: boolean }>>(new Map());
+  const pendingUpdatesRef = React.useRef<Map<string, { id: string, customerName?: string, status: OrderStatus, oldStatus?: OrderStatus, version: number, force: boolean }>>(new Map());
 
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus, showDefaultToast: boolean = true) => {
     const orderToUpdate = orders.find(o => o.id === orderId);
@@ -274,7 +274,9 @@ export const useOrderActions = ({
     // Add to pending updates map
     pendingUpdatesRef.current.set(orderId, {
       id: orderId,
+      customerName: orderToUpdate.customerName,
       status: newStatus,
+      oldStatus: orderToUpdate.status,
       version: orderToUpdate.version || 1,
       force: true // Force update for status changes to avoid conflicts
     });
@@ -284,7 +286,7 @@ export const useOrderActions = ({
     }
 
     batchTimeoutRef.current = setTimeout(async () => {
-        const updatesToProcess: { id: string, status: OrderStatus, version: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
+        const updatesToProcess: { id: string, customerName?: string, status: OrderStatus, oldStatus?: OrderStatus, version: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
         pendingUpdatesRef.current.clear(); // Clear the map for future updates
         batchTimeoutRef.current = null;
 
@@ -375,8 +377,10 @@ export const useOrderActions = ({
       if (orderToUpdate) {
         pendingUpdatesRef.current.set(orderId, {
           id: orderId,
+          customerName: orderToUpdate.customerName,
           status: OrderStatus.PAID,
-          originalVersion: orderToUpdate.version || 1,
+          oldStatus: orderToUpdate.status,
+          version: orderToUpdate.version || 1,
           force: true
         });
       }
@@ -389,7 +393,7 @@ export const useOrderActions = ({
     // Trigger batch update immediately and return a promise
     return new Promise<void>((resolve) => {
       batchTimeoutRef.current = setTimeout(async () => {
-          const updatesToProcess: { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
+          const updatesToProcess: { id: string, customerName?: string, status: OrderStatus, oldStatus?: OrderStatus, version: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
           pendingUpdatesRef.current.clear();
           batchTimeoutRef.current = null;
 
@@ -773,7 +777,7 @@ export const useOrderActions = ({
       return { productId: item.productId, quantity: Math.max(0, finalQuantity), unit: finalUnit };
     });
 
-    const newOrder: Order = {
+    const newOrder: any = {
       id: editingOrderId || 'ORD-' + Date.now(),
       createdAt: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
       customerName: orderForm.customerName,
@@ -789,6 +793,21 @@ export const useOrderActions = ({
       syncStatus: 'pending',
       pendingAction: editingOrderId ? 'update' : 'create'
     };
+
+    if (editingOrderId) {
+       const oldOrder = orders.find(o => o.id === editingOrderId);
+       if (oldOrder) {
+          const diff: any = {};
+          if (oldOrder.deliveryDate !== newOrder.deliveryDate) diff.date = { old: oldOrder.deliveryDate, new: newOrder.deliveryDate };
+          if (oldOrder.deliveryTime !== newOrder.deliveryTime) diff.time = { old: oldOrder.deliveryTime, new: newOrder.deliveryTime };
+          if (oldOrder.deliveryMethod !== newOrder.deliveryMethod) diff.deliveryMethod = { old: oldOrder.deliveryMethod, new: newOrder.deliveryMethod };
+          if (oldOrder.trip !== newOrder.trip) diff.trip = { old: oldOrder.trip, new: newOrder.trip };
+          if (oldOrder.note !== newOrder.note) diff.note = { old: oldOrder.note, new: newOrder.note };
+          // For items, just record it changed roughly
+          if (JSON.stringify(oldOrder.items) !== JSON.stringify(newOrder.items)) diff.items = { old: oldOrder.items, new: newOrder.items };
+          newOrder._diff = diff;
+       }
+    }
 
     // Optimistic Update
     if (editingOrderId) {
