@@ -12,7 +12,7 @@ interface SwipeableOrderCardProps {
   customerMap: Record<string, Customer>;
   isSelectionMode: boolean;
   isSelected: boolean;
-  onToggleSelection: () => void;
+  onToggleSelection: (id: string) => void;
   onStatusChange: (id: string, status: OrderStatus) => void;
   onDelete: (id: string) => void;
   onShare: (order: Order) => void;
@@ -23,7 +23,7 @@ interface SwipeableOrderCardProps {
   isLoadingProducts?: boolean;
 }
 
-export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({ 
+const SwipeableOrderCardComponent: React.FC<SwipeableOrderCardProps> = ({ 
   order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
   onStatusChange, onDelete, onShare, onMap, onEdit, onRetry, onViewCustomer, isLoadingProducts
 }) => {
@@ -140,7 +140,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
             opacity: isSyncPending ? 0.7 : 1
         }} 
         className={`rounded-[32px] overflow-hidden shadow-sm border-2 relative z-10 touch-pan-y ${isSelectionMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`} 
-        onClick={() => { if (isSelectionMode) onToggleSelection(); }} 
+        onClick={() => { if (isSelectionMode) onToggleSelection(order.id); }} 
       > 
         {isSelectionMode && ( 
           <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20"> 
@@ -277,4 +277,18 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
     </div> 
   ); 
 };
+
+function areEqual(prevProps: SwipeableOrderCardProps, nextProps: SwipeableOrderCardProps) {
+  return (
+    prevProps.order.id === nextProps.order.id &&
+    prevProps.order.lastUpdated === nextProps.order.lastUpdated &&
+    prevProps.order.status === nextProps.order.status &&
+    prevProps.order.syncStatus === nextProps.order.syncStatus &&
+    prevProps.isSelectionMode === nextProps.isSelectionMode &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.isLoadingProducts === nextProps.isLoadingProducts
+  );
+}
+
+export const SwipeableOrderCard = React.memo(SwipeableOrderCardComponent, areEqual);
 

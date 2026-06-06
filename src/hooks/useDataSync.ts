@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import localforage from 'localforage';
-import { debounce } from 'lodash';
+import { debounce, throttle } from 'lodash';
 import { Customer, Product, Order, OrderStatus, ToastType } from '../types';
 import { GAS_URL as DEFAULT_GAS_URL } from '../constants';
 import { formatDateStr, normalizeDate, safeNumber } from '../utils';
 import { container } from '../core/di/AppContainer';
 import { DataMapper } from '../core/mappers/DataMapper';
+import DataWorker from '../workers/dataParser.worker.ts?worker';
 
 localforage.config({
   name: 'NMR_App_DB',
@@ -117,12 +118,50 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingNewOrders, setPendingNewOrders] = useState<Order[]>([]);
+  const isAtTopRef = useRef({ val: true });
   const isSavingRef = useRef(false);
   const isSyncingRef = useRef(false);
   
   useEffect(() => {
     isSavingRef.current = isSaving;
   }, [isSaving]);
+
+  useEffect(() => {
+    const el = document.getElementById('main-scroll-container');
+    const handleScroll = throttle(() => {
+      isAtTopRef.current.val = (el?.scrollTop || 0) < 100;
+    }, 200);
+    if (el) {
+      el.addEventListener('scroll', handleScroll, { passive: true });
+    }
+    return () => {
+      if (el) el.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  const applyPendingOrders = useCallback(() => {
+    if (pendingNewOrders.length === 0) return;
+    setOrders(prev => {
+      const mergedMap = new Map();
+      prev.forEach(o => mergedMap.set(o.id, o));
+      pendingNewOrders.forEach(o => mergedMap.set(o.id, o));
+      const newArray = Array.from(mergedMap.values());
+      newArray.sort((a, b) => {
+         const dateA = a.deliveryDate;
+         const dateB = b.deliveryDate;
+         if (dateA !== dateB) return dateA > dateB ? -1 : 1; 
+         if (a.deliveryTime !== b.deliveryTime) return (a.deliveryTime || '').localeCompare(b.deliveryTime || '');
+         return (a.lastUpdated || 0) > (b.lastUpdated || 0) ? -1 : 1;
+      });
+      return newArray;
+    });
+    setPendingNewOrders([]);
+    const el = document.getElementById('main-scroll-container');
+    if (el) {
+      el.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [pendingNewOrders]);
 
   const [conflictData, setConflictData] = useState<{
     action: string;
@@ -188,45 +227,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         const mappedProducts: Product[] = DataMapper.mapProducts(result.products || []);
         
         const rawOrders = result.orders || []; 
-        const orderMap: { [key: string]: Order } = {}; 
-        rawOrders.forEach((o: any) => { 
-          // 支援人工在試算表輸入時沒有給 ID 的狀況，使用複合鍵當作暫時 ID 分群
-          const fallbackId = `MIGRATED-${o.客戶名 || o.customerName}-${o.配送日期 || o.deliveryDate}-${o.配送時間 || o.deliveryTime || ''}`.trim();
-          let rawId = o.訂單ID || o.id;
-          if (rawId && typeof rawId === 'string' && rawId.trim() === '') rawId = null;
-          const oid = String(rawId || fallbackId); 
-          if (!orderMap[oid]) { 
-            const rawDate = o.配送日期 || o.deliveryDate; 
-            const normalizedDate = normalizeDate(rawDate); 
-            orderMap[oid] = { 
-              id: oid, 
-              createdAt: o.建立時間 || o.createdAt, 
-              customerName: o.客戶名 || o.customerName || '未知客戶', 
-              deliveryDate: normalizedDate, 
-              deliveryTime: o.配送時間 || o.deliveryTime, 
-              items: [], 
-              note: o.備註 || o.note || '', 
-              status: (o.狀態 || o.status as OrderStatus) || OrderStatus.PENDING, 
-              source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
-              deliveryMethod: o.配送方式 || o.deliveryMethod || '',
-              trip: o.趟次 || o.trip || '',
-              lastUpdated: safeNumber(o.lastUpdated, 0, `Order ${oid} lastUpdated`),
-              syncStatus: 'synced' 
-            }; 
-          } 
-          const prodName = o.品項 || o.productName; 
-          
-          // Try to map using delta mapping products, fallback to global products context...
-          let prod = mappedProducts.find(p => p.name === prodName);
-          if (!prod) {
-             const currentProducts = latestDataRef.current.products || [];
-             prod = currentProducts.find(p => p.name === prodName);
-          }
-           
-          orderMap[oid].items.push({ productId: prod ? prod.id : prodName, quantity: safeNumber(o.數量 || o.quantity, 0, `Order ${oid} item ${prodName} quantity`), unit: o.unit || prod?.unit || '斤' }); 
-        }); 
-        
-        const newOrders = Object.values(orderMap);
         const fetchedTrips = result.trips || [];
         
         // === 加入這段：每次輪詢時，將通知中心的設定存更新至本機快取 ===
@@ -261,6 +261,31 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         }
         // ========================================================
         
+        const currentOrders = latestDataRef.current.orders || [];
+        const currentProducts = latestDataRef.current.products || [];
+
+        const { resultOrders, pendingOrders } = await new Promise<{resultOrders: Order[], pendingOrders: Order[]}>((resolve, reject) => {
+           const worker = new DataWorker();
+           worker.onmessage = (e) => {
+              resolve(e.data);
+              worker.terminate();
+           };
+           worker.onerror = (err) => {
+              reject(err);
+              worker.terminate();
+           };
+           worker.postMessage({
+              type: 'MERGE_AND_SORT',
+              rawOrders,
+              oldOrders: currentOrders,
+              mappedProducts,
+              currentProducts,
+              since,
+              isSilent,
+              isAtTop: isAtTopRef.current.val
+           });
+        });
+
         if (since > 0 && result.serverGlobalTs) {
            // 💡 訂單依然做增量合併，但字典檔 (客戶/商品) 採用全量覆蓋
            if (mappedCustomers.length > 0) {
@@ -272,30 +297,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            if (fetchedTrips.length > 0) {
               setTrips(fetchedTrips);
            }
-           if (newOrders.length > 0) {
-              setOrders(currentOrders => {
-                 const mergedMap = new Map();
-                 currentOrders.forEach(o => mergedMap.set(o.id, o));
-                 newOrders.forEach(newOrder => {
-                    // ✅ 修改後：若是發現帶有 DELETED 狀態的資料，直接從 Map 中連根拔起
-                    if (String(newOrder.status) === 'DELETED') {
-                        mergedMap.delete(newOrder.id);
-                        return;
-                    }
-
-                    const existOrder = mergedMap.get(newOrder.id);
-                    if (existOrder) {
-                        if (existOrder.syncStatus === 'pending' || existOrder.syncStatus === 'error') {
-                            return; 
-                        }
-                        if ((existOrder.lastUpdated || 0) >= (newOrder.lastUpdated || 0)) {
-                            return;
-                        }
-                    }
-                    mergedMap.set(newOrder.id, newOrder);
+           if (rawOrders.length > 0) {
+              setOrders(resultOrders);
+              if (pendingOrders && pendingOrders.length > 0) {
+                 setPendingNewOrders(prev => {
+                     const pm = new Map();
+                     prev.forEach(p => pm.set(p.id, p));
+                     pendingOrders.forEach(n => pm.set(n.id, n));
+                     return Array.from(pm.values());
                  });
-                 return Array.from(mergedMap.values());
-              });
+              }
            }
         } else {
            // Full replacement
@@ -304,28 +315,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            if (fetchedTrips.length > 0) {
                setTrips(fetchedTrips);
            }
-           
-           setOrders(currentOrders => {
-             const activeNewOrders = newOrders.filter(o => String(o.status) !== 'DELETED');
-             const mergedOrders = [...activeNewOrders];
-             
-             currentOrders.forEach(localOrder => {
-                 const index = mergedOrders.findIndex(o => o.id === localOrder.id);
-                 if (index !== -1) {
-                     const cloudOrder = mergedOrders[index];
-                     if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
-                         mergedOrders[index] = localOrder;
-                     } else if ((localOrder.lastUpdated || 0) >= (cloudOrder.lastUpdated || 0)) {
-                         mergedOrders[index] = localOrder;
-                     }
-                 } else {
-                     if (localOrder.syncStatus === 'pending' || localOrder.syncStatus === 'error') {
-                         mergedOrders.push(localOrder);
-                     }
-                 }
-             });
-             return mergedOrders;
-           });
+           setOrders(resultOrders);
         }
 
         if (!isSilent) {
@@ -595,42 +585,63 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
     const firebaseUrl = 'https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app/sync.json';
     let eventSource: EventSource | null = null;
+    let reconnectTimer: NodeJS.Timeout | null = null;
 
-    try {
-      // 使用原生 EventSource 訂閱 Firebase 的 Server-Sent Events (SSE)
-      eventSource = new EventSource(firebaseUrl);
-      
-      // 我們把處理邏輯抽出來變成一個獨立的函數
-      const handleFirebaseEvent = (event: any) => {
-        if (event && event.data) {
-          const parsed = JSON.parse(event.data);
-          
-          // 如果解析到的數據內有 lastUpdateTime，就觸動背景同步
-          if (
-            (parsed && parsed.data && parsed.data.lastUpdateTime) || 
-            (parsed && parsed.path === '/lastUpdateTime') ||
-            (parsed && parsed.path === '/')
-          ) {
-            console.log(`🔔 收到 Firebase 門鈴訊號 (${event.type})！準備背景同步...`);
-            
-            // 觸發靜默更新機制 (isSilent = true)
-            syncData(true); 
-          }
+    // 加入防抖處理，避免在短時間內多筆推播進來時轟炸 GAS，延遲 3 秒讓 Google Sheets 完成寫入
+    const debouncedSync = debounce(() => {
+        console.log(`🔔 Firebase 門鈴確認，開始延遲合併抓取...`);
+        syncData(true);
+    }, 3000);
+
+    const connectDoorbell = () => {
+      try {
+        if (eventSource) {
+           eventSource.close();
         }
-      };
+        // 使用原生 EventSource 訂閱 Firebase 的 Server-Sent Events (SSE)
+        eventSource = new EventSource(firebaseUrl);
+        
+        const handleFirebaseEvent = (event: any) => {
+          if (event && event.data) {
+            const parsed = JSON.parse(event.data);
+            
+            // 如果解析到的數據內有 lastUpdateTime，就觸發背景同步 (具有防抖機制)
+            if (
+              (parsed && parsed.data && parsed.data.lastUpdateTime) || 
+              (parsed && parsed.path === '/lastUpdateTime') ||
+              (parsed && parsed.path === '/')
+            ) {
+              debouncedSync(); 
+            }
+          }
+        };
 
-      // 同時拿它來接聽 put 和 patch 兩種廣播
-      eventSource.addEventListener('put', handleFirebaseEvent);
-      eventSource.addEventListener('patch', handleFirebaseEvent);
-    } catch (err) {
-      console.warn('門鈴連線中斷', err);
-    }
+        // 同時拿它來接聽 put 和 patch 兩種廣播
+        eventSource.addEventListener('put', handleFirebaseEvent);
+        eventSource.addEventListener('patch', handleFirebaseEvent);
+
+        // 如果連線因為休眠或其他原因中斷，我們補上自動重連的邏輯
+        eventSource.onerror = (err) => {
+          console.warn('⚠️ Firebase 門鈴連線發生異常，準備重新連線...', err);
+          eventSource?.close();
+          // 斷線後延遲 5 秒重連
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectDoorbell, 5000);
+        };
+      } catch (err) {
+        console.warn('門鈴連線建立失敗', err);
+      }
+    };
+
+    connectDoorbell();
 
     // 當使用者關閉網頁或登出時，拔除監聽器以節省資源
     return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (eventSource) {
         eventSource.close();
       }
+      debouncedSync.cancel();
     };
   }, [isAuthenticated, syncData]);
 
@@ -641,6 +652,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     products, setProducts,
     orders, setOrders,
     trips, setTrips,
+    pendingNewOrders, setPendingNewOrders,
+    applyPendingOrders,
     isInitialLoading, setIsInitialLoading,
     isBackgroundSyncing, setIsBackgroundSyncing,
     isSaving, setIsSaving,

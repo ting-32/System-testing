@@ -861,7 +861,7 @@ export const useOrderActions = ({
     setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId)); 
     try { 
       if (apiEndpoint) { 
-        const payload = { id: orderId, version: orderBackup.version };
+        const payload = { id: orderId, version: orderBackup.version, customerName: orderBackup.customerName };
         const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
         const json = await res.json();
         if (!json.success) {

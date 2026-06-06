@@ -42,9 +42,11 @@ import {
   MoreVertical,
   Bot,
   Lock,
-  Unlock
+  Unlock,
+  ArrowUp
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
+import { Virtuoso } from 'react-virtuoso';
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
 import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES } from './constants';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -133,7 +135,9 @@ const App: React.FC = () => {
     handleSaveApiUrl,
     handleForceRetry,
     saveOrderToCloud,
-    saveTripsToCloud
+    saveTripsToCloud,
+    pendingNewOrders,
+    applyPendingOrders
   } = useDataSync(addToast);
 
   const customerMap = useMemo(() => {
@@ -806,6 +810,35 @@ const App: React.FC = () => {
     setToasts
   });
   
+  const handleToggleSelectionStable = useCallback((orderId: string) => {
+    setSelectedOrderIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(orderId)) newSet.delete(orderId);
+      else newSet.add(orderId);
+      return newSet;
+    });
+  }, []);
+
+  const handleDeleteOrderStable = useCallback((orderId: string) => {
+    requireAuth(() => handleDeleteOrder(orderId));
+  }, [requireAuth, handleDeleteOrder]);
+
+  const handleEditOrderStable = useCallback((orderToEdit: Order) => {
+    requireAuth(() => handleEditOrder(orderToEdit));
+  }, [requireAuth, handleEditOrder]);
+
+  const handleModalEditOrderStable = useCallback((orderToEdit: Order) => {
+    requireAuth(() => {
+      handleEditOrder(orderToEdit);
+      setSelectedCustomerForModal(null);
+    });
+  }, [requireAuth, handleEditOrder]);
+
+  const handleModalViewCustomerStable = useCallback((name: string) => {
+    setSelectedCustomerForModal(null);
+    setViewingCustomerProfile(name);
+  }, []);
+
   // REFACTORED: syncData logic moved to useDataSync hook
 
   // NEW: Automator Effect for Polling and Focus Refetch
@@ -1219,7 +1252,26 @@ const App: React.FC = () => {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 overflow-y-auto pb-24 px-4" ref={mainRef}>
+      <AnimatePresence>
+        {pendingNewOrders && pendingNewOrders.length > 0 && activeTab === 'orders' && (
+          <motion.div 
+            initial={{ opacity: 0, y: -50, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: -50, x: '-50%' }}
+            className="fixed top-20 left-1/2 z-[60] drop-shadow-2xl"
+          >
+            <button 
+              className="px-6 py-3 bg-morandi-charcoal/95 backdrop-blur-md border border-slate-600 text-white rounded-full flex items-center justify-center gap-2 hover:bg-slate-700 transition-colors shadow-[0_8px_30px_rgb(0,0,0,0.2)]"
+              onClick={applyPendingOrders}
+            >
+              <ArrowUp className="w-5 h-5 animate-bounce text-morandi-blue" />
+              <span className="font-extrabold tracking-wide">有 {pendingNewOrders.length} 筆最新訂單</span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <main id="main-scroll-container" className="flex-1 overflow-y-auto pb-24 px-4" ref={mainRef}>
         {/* ... (Main content remains unchanged) ... */}
         <AnimatePresence mode="popLayout">
         {activeTab === 'orders' && (
@@ -1373,7 +1425,10 @@ const App: React.FC = () => {
               </div>
               <motion.div variants={containerVariants} initial="hidden" animate="show">
               {Object.keys(groupedOrders).length > 0 ? (
-                Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => {
+                <Virtuoso
+                  customScrollParent={mainRef.current || undefined}
+                  data={Object.entries(groupedOrders as Record<string, Order[]>)}
+                  itemContent={(index, [custName, custOrders]) => {
                     const isExpanded = expandedCustomer === custName;
                     const currentCustomer = customerMap[custName];
                     
@@ -1439,9 +1494,22 @@ const App: React.FC = () => {
                           <AnimatePresence>
                           {isExpanded && (
                             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="bg-morandi-oatmeal/20 border-t border-slate-100 overflow-hidden">
-                              <div className="p-5">
-                              {custOrders.map((order) => (
-                                 <SwipeableOrderCard 
+                              <div className="p-5 flex flex-col gap-3">
+                                <AnimatePresence initial={false}>
+                                {custOrders.map((order) => (
+                                  <motion.div
+                                     key={order.id}
+                                     layout="position"
+                                     initial={{ opacity: 0, height: 0, y: -20, overflow: 'hidden' }}
+                                     animate={{ opacity: 1, height: 'auto', y: 0, overflow: 'visible' }}
+                                     exit={{ opacity: 0, height: 0, scale: 0.95, overflow: 'hidden' }}
+                                     transition={{ 
+                                       opacity: { duration: 0.2 },
+                                       height: { type: "spring", stiffness: 300, damping: 30 },
+                                       y: { type: "spring", stiffness: 300, damping: 30 }
+                                     }}
+                                  >
+                                     <SwipeableOrderCard 
                                     key={order.id} 
                                     order={order} 
                                     productMap={productMap} 
@@ -1449,16 +1517,18 @@ const App: React.FC = () => {
                                     isLoadingProducts={isLoadingProducts}
                                     isSelectionMode={isSelectionMode}
                                     isSelected={selectedOrderIds.has(order.id)}
-                                    onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
+                                    onToggleSelection={handleToggleSelectionStable}
                                     onStatusChange={handleSwipeStatusChange} // Use Undo handler
-                                    onDelete={() => requireAuth(() => handleDeleteOrder(order.id))}
+                                    onDelete={handleDeleteOrderStable}
                                     onShare={handleShareOrder}
                                     onMap={openGoogleMaps}
-                                    onEdit={(orderId) => requireAuth(() => handleEditOrder(orderId))}
+                                    onEdit={handleEditOrderStable}
                                     onRetry={handleRetryOrder}
                                     onViewCustomer={setViewingCustomerProfile}
                                  />
+                                  </motion.div>
                               ))}
+                              </AnimatePresence>
                               <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
                               <div className="flex gap-2 pt-2">
                                  <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => handleCopyOrder(custName, custOrders))} className="flex-1 py-3 px-4 rounded-[16px] bg-white text-morandi-pebble border border-slate-200 font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors shadow-sm tracking-wide"><Copy className="w-4 h-4" /> 複製</motion.button>
@@ -1471,7 +1541,8 @@ const App: React.FC = () => {
                         </motion.div>
                       </div>
                     );
-                  })
+                  }}
+                />
               ) : (
                 <div className="py-20 flex flex-col items-center text-center gap-4">
                   <ClipboardList className="w-16 h-16 text-gray-200" />
@@ -1822,7 +1893,7 @@ const App: React.FC = () => {
                                       isLoadingProducts={isLoadingProducts}
                                       isSelectionMode={isSelectionMode}
                                       isSelected={selectedOrderIds.has(order.id)}
-                                      onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
+                                      onToggleSelection={handleToggleSelectionStable}
                                       onStatusChange={handleSwipeStatusChange}
                                       onShare={handleShareOrder}
                                       onMap={openGoogleMaps}
@@ -1843,7 +1914,7 @@ const App: React.FC = () => {
                                   isLoadingProducts={isLoadingProducts}
                                   isSelectionMode={isSelectionMode}
                                   isSelected={selectedOrderIds.has(order.id)}
-                                  onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
+                                  onToggleSelection={handleToggleSelectionStable}
                                   onStatusChange={handleSwipeStatusChange}
                                   onShare={handleShareOrder}
                                   onMap={openGoogleMaps}
@@ -2646,33 +2717,40 @@ const App: React.FC = () => {
             onClick={e => e.stopPropagation()}
           >
             <div className="space-y-3">
+              <AnimatePresence initial={false}>
               {groupedOrders[selectedCustomerForModal].map(order => (
-                <SwipeableOrderCard 
+                <motion.div
                   key={order.id}
-                  order={order} 
-                  productMap={productMap} 
-                  customerMap={customerMap}
-                  isLoadingProducts={isLoadingProducts}
-                  isSelectionMode={false}
-                  isSelected={false}
-                  onToggleSelection={() => {}}
-                  onStatusChange={handleSwipeStatusChange}
-                  onDelete={() => {
-                    handleDeleteOrder(order.id);
+                  layout="position"
+                  initial={{ opacity: 0, height: 0, y: -20, overflow: 'hidden' }}
+                  animate={{ opacity: 1, height: 'auto', y: 0, overflow: 'visible' }}
+                  exit={{ opacity: 0, height: 0, scale: 0.95, overflow: 'hidden' }}
+                  transition={{ 
+                     opacity: { duration: 0.2 },
+                     height: { type: "spring", stiffness: 300, damping: 30 },
+                     y: { type: "spring", stiffness: 300, damping: 30 }
                   }}
-                  onShare={handleShareOrder}
-                  onMap={openGoogleMaps}
-                  onEdit={(orderToEdit) => {
-                    handleEditOrder(orderToEdit);
-                    setSelectedCustomerForModal(null);
-                  }}
-                  onRetry={handleRetryOrder}
-                  onViewCustomer={(name) => {
-                    setSelectedCustomerForModal(null);
-                    setViewingCustomerProfile(name);
-                  }}
-                />
+                >
+                  <SwipeableOrderCard 
+                    key={order.id}
+                    order={order} 
+                    productMap={productMap} 
+                    customerMap={customerMap}
+                    isLoadingProducts={isLoadingProducts}
+                    isSelectionMode={false}
+                    isSelected={false}
+                    onToggleSelection={handleToggleSelectionStable}
+                    onStatusChange={handleSwipeStatusChange}
+                    onDelete={handleDeleteOrderStable}
+                    onShare={handleShareOrder}
+                    onMap={openGoogleMaps}
+                    onEdit={handleModalEditOrderStable}
+                    onRetry={handleRetryOrder}
+                    onViewCustomer={handleModalViewCustomerStable}
+                  />
+                </motion.div>
               ))}
+              </AnimatePresence>
             </div>
             <div className="bg-white rounded-[24px] p-4 mt-2 shadow-sm">
               <motion.button 

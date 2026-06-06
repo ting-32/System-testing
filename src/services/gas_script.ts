@@ -107,7 +107,7 @@ function doPost(e) {
         break;
       case "updateOrderContent":
         result = updateOrderContent(params.data);
-        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify(params.data._diff || { updates: params.data }));
+        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({ id: params.data.id, customerName: params.data.customerName, _diff: params.data._diff || {} }));
         break;
       case "updateOrderStatus":
         result = updateOrderStatus(params.data);
@@ -123,7 +123,7 @@ function doPost(e) {
         break;
       case "deleteOrder":
         result = deleteOrder(params.data);
-        writeSystemLog("DELETE_ORDER", `Order ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
+        writeSystemLog("DELETE_ORDER", params.data.customerName || `Order ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id, customerName: params.data.customerName }));
         break;
       case "reorderProducts":
         result = reorderProducts(params.data);

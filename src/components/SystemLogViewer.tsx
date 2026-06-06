@@ -272,29 +272,31 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
     }
     if (actionType === 'BATCH_UPDATE_ORDERS') return `摘要：同時更新 ${data.updates?.length || 0} 筆紀錄`;
     
+    const checkData = data._diff ? { ...data, ...data._diff } : data;
+
     const summaries: string[] = [];
-    if (data.status) {
-      if (data.status.new) {
-        summaries.push(`狀態變更為 ${translateValue(data.status.new)}`);
+    if (checkData.status) {
+      if (checkData.status.new) {
+        summaries.push(`狀態變更為 ${translateValue(checkData.status.new)}`);
       } else {
-        summaries.push(`狀態：${translateValue(data.status)}`);
+        summaries.push(`狀態：${translateValue(checkData.status)}`);
       }
-    } else if (data.quantity) {
-      if (data.quantity.new) {
-        summaries.push(`數量變更為 ${data.quantity.new}`);
+    } else if (checkData.quantity) {
+      if (checkData.quantity.new) {
+        summaries.push(`數量變更為 ${checkData.quantity.new}`);
       } else {
-        summaries.push(`數量：${data.quantity}`);
+        summaries.push(`數量：${checkData.quantity}`);
       }
-    } else if (data.price) {
-       if (data.price.new) {
-          summaries.push(`單價變更為 ${data.price.new}`);
+    } else if (checkData.price) {
+       if (checkData.price.new) {
+          summaries.push(`單價變更為 ${checkData.price.new}`);
        } else {
-          summaries.push(`單價：${data.price}`);
+          summaries.push(`單價：${checkData.price}`);
        }
-    } else if (data.customerName) {
-       summaries.push(`客戶：${translateValue(data.customerName)}`);
-    } else if (data.name) {
-      summaries.push(`品名：${translateValue(data.name)}`);
+    } else if (checkData.customerName) {
+       summaries.push(`客戶：${translateValue(checkData.customerName)}`);
+    } else if (checkData.name) {
+      summaries.push(`品名：${translateValue(checkData.name)}`);
     }
     
     if (summaries.length > 0) return `摘要：${summaries.join('、')}`;
