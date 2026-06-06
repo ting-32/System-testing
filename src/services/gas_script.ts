@@ -718,7 +718,7 @@ function createOrder(orderData) {
   }
 
   const timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
-  const lastUpdatedTs = new Date().getTime(); // Unix timestamp for robust syncing
+  const lastUpdatedTs = String(new Date().getTime()); // Unix timestamp for robust syncing
   
   const rows = orderData.items.map(item => {
     const row = new Array(maxCol).fill("");
@@ -790,7 +790,7 @@ function updateOrderContent(orderData) {
     if (!timestamp) {
       timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
     }
-    const newLastUpdatedTs = new Date().getTime();
+    const newLastUpdatedTs = String(new Date().getTime());
 
     // 2. Filter out old rows (In-Memory Deletion)
     const newRows = [];
@@ -845,7 +845,7 @@ function updateOrderStatus(data) {
   let updated = false;
   let newVersion = 0;
   const targetId = String(data.id).trim();
-  const newLastUpdatedTs = new Date().getTime();
+  const newLastUpdatedTs = String(new Date().getTime());
   
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][1]).trim() === targetId) {
@@ -874,7 +874,7 @@ function batchUpdateOrders(data) {
   const versionColIdx = ensureHeader(sheet, "Version");
   const values = sheet.getDataRange().getValues();
   const updates = data.updates; // Array of { id: string, status: string, version: number }
-  const newLastUpdatedTs = new Date().getTime();
+  const newLastUpdatedTs = String(new Date().getTime());
   let updatedCount = 0;
   
   // Create a map for fast lookup
@@ -913,7 +913,7 @@ function batchUpdatePaymentStatus(data) {
   const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
   const values = sheet.getDataRange().getValues();
   const orderIds = new Set(data.orderIds.map(id => String(id).trim()));
-  const newLastUpdatedTs = new Date().getTime();
+  const newLastUpdatedTs = String(new Date().getTime());
   
   let modified = false;
   for (let i = 1; i < values.length; i++) {
@@ -986,7 +986,7 @@ function reorderProducts(orderedIds) {
   const values = sheet.getDataRange().getValues();
   if (values.length <= 1) return true;
 
-  const newLastUpdatedTs = new Date().getTime();
+  const newLastUpdatedTs = String(new Date().getTime());
 
   const headers = values[0];
   const rows = values.slice(1);
@@ -1064,7 +1064,7 @@ function updateCustomer(data) {
     }
   }
   
-  const newLastUpdatedTs = new Date().getTime();
+  const newLastUpdatedTs = String(new Date().getTime());
   
   // 建立一筆與表格等寬的新資料集，預設先填充為空字串
   const newRow = new Array(headers.length).fill('');
@@ -1139,7 +1139,7 @@ function updateProduct(data) {
     }
   }
   
-  const newLastUpdatedTs = new Date().getTime();
+  const newLastUpdatedTs = String(new Date().getTime());
 
   const rowData = [
     data.id,
@@ -1259,7 +1259,7 @@ function generateTomorrowDefaultOrders() {
   });
   const newOrderRows = [];
   const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
-  const lastUpdatedTs = new Date().getTime();
+  const lastUpdatedTs = String(new Date().getTime());
 
   const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
   if (orderSheet.getMaxColumns() < maxCol) {
@@ -1367,7 +1367,7 @@ function onSpreadsheetEdit(e) {
           if (startRow > 1 && modifiedCol !== (lastUpdatedColIdx + 1)) {
             const currentTs = new Date().getTime();
             // 自動把被編輯的那一列的 LastUpdated 更新為當下的時間戳記！
-            sheet.getRange(startRow, lastUpdatedColIdx + 1, numRows, 1).setValue(currentTs);
+            sheet.getRange(startRow, lastUpdatedColIdx + 1, numRows, 1).setValue(currentTs).setNumberFormat('0');
           }
         }
       }
@@ -1413,7 +1413,7 @@ function onSpreadsheetChange(e) {
 
         // 把這些空白的列補上當前的時間戳記
         rowsToUpdate.forEach(rowNum => {
-          sheet.getRange(rowNum, lastUpdatedColIdx + 1).setValue(currentTs);
+          sheet.getRange(rowNum, lastUpdatedColIdx + 1).setValue(currentTs).setNumberFormat('0');
           isUpdated = true;
         });
       }

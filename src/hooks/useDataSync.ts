@@ -475,6 +475,18 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, version: savedOrder.version } : o));
       onSuccess(savedOrder);
     } catch (e: any) {
+      if (e.errorCode === 'VERSION_CONFLICT' || (e.message && (e.message.includes('ERR_VERSION_CONFLICT') || e.message.includes('VERSION_CONFLICT')))) {
+         setConflictData({
+           action: actionName,
+           data: { ...newOrder, originalVersion },
+           description: `更新訂單: ${newOrder.customerName}`,
+           type: 'order',
+           clientData: newOrder,
+           serverData: e.serverData
+         });
+         return; // 這裡攔截衝突不丟出錯誤，等待使用者解決
+      }
+      
       console.error("Sync Failed:", e);
       let errMsg = e instanceof Error ? e.message : String(e);
       
@@ -499,17 +511,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
          errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
       } else if ((e instanceof Error && e.message.includes('Failed to fetch')) || String(e).includes('Failed to fetch')) {
          errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
-      }
-      if (e.errorCode === 'VERSION_CONFLICT' || errMsg.includes('ERR_VERSION_CONFLICT')) {
-         errMsg = '此訂單已被其他設備更新，請選擇如何處理衝突。';
-         setConflictData({
-           action: actionName,
-           data: { ...newOrder, originalVersion },
-           description: `更新訂單: ${newOrder.customerName}`,
-           type: 'order',
-           clientData: newOrder,
-           serverData: e.serverData
-         });
       }
       onError(errMsg);
     }

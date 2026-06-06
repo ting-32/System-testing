@@ -13,7 +13,6 @@ interface UseOrderActionsProps {
   apiEndpoint: string;
   isSaving: boolean;
   setIsSaving: (isSaving: boolean) => void;
-  setIsRetrying?: (isRetrying: boolean) => void;
   orderForm: any;
   setOrderForm: React.Dispatch<React.SetStateAction<any>>;
   editingOrderId: string | null;
@@ -46,7 +45,6 @@ export const useOrderActions = ({
   apiEndpoint,
   isSaving,
   setIsSaving,
-  setIsRetrying,
   orderForm,
   setOrderForm,
   editingOrderId,
@@ -313,7 +311,7 @@ export const useOrderActions = ({
                 const json = await res.json();
 
                 if (!json.success) {
-                    if (json.errorCode === 'ERR_VERSION_CONFLICT') {
+                    if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
                          setConflictData({
                            action: 'batchUpdateOrders',
                            data: { updates: updatesToProcess },
@@ -322,6 +320,7 @@ export const useOrderActions = ({
                            clientData: updatesToProcess,
                            serverData: json.serverData || json.data
                          });
+                         return;
                     } else {
                          throw new Error(json.error || 'Unknown error');
                     }
@@ -339,6 +338,7 @@ export const useOrderActions = ({
                 }
             }
         } catch (e: any) {
+            if (e.message === 'VERSION_CONFLICT' || e.message === 'ERR_VERSION_CONFLICT') return;
             console.error("Batch Sync Failed:", e);
             let errMsg = e instanceof Error ? e.message : String(e);
 
@@ -419,7 +419,7 @@ export const useOrderActions = ({
                   const json = await res.json();
 
                   if (!json.success) {
-                      if (json.errorCode === 'ERR_VERSION_CONFLICT') {
+                      if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
                            setConflictData({
                              action: 'batchUpdateOrders',
                              data: { updates: updatesToProcess },
@@ -428,6 +428,7 @@ export const useOrderActions = ({
                              clientData: updatesToProcess,
                              serverData: json.serverData || json.data
                            });
+                           return;
                       } else {
                            throw new Error(json.error || 'Unknown error');
                       }
@@ -845,7 +846,7 @@ export const useOrderActions = ({
         const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
         const json = await res.json();
         if (!json.success) {
-           if (json.errorCode === 'ERR_VERSION_CONFLICT') {
+           if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
               setOrders((prev: Order[]) => [...prev, orderBackup]); // Revert
               setConflictData({
                  action: 'deleteOrder',
@@ -855,6 +856,7 @@ export const useOrderActions = ({
                  clientData: payload,
                  serverData: json.serverData || json.data
               });
+              return;
            } else {
               // Add back with error status
               setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' }]);

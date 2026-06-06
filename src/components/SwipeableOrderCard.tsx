@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo } from 'framer-motion';
-import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot, MessageCircle } from 'lucide-react';
+import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot, MessageCircle, Copy } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
 import { ORDERING_HABITS } from '../constants';
 import { getStatusStyles, formatTimeDisplay } from '../utils';
@@ -265,6 +265,10 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
               <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { e.stopPropagation(); onShare(order); }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 hover:text-slate-600 hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><Share2 className="w-4 h-4" /></motion.button> 
               <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { e.stopPropagation(); onMap(order.customerName); }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-400 hover:text-blue-600 hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><MapPin className="w-4 h-4" /></motion.button> 
               <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { e.stopPropagation(); onEdit(order); }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 hover:text-morandi-blue hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><Edit2 className="w-4 h-4" /></motion.button> 
+              <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { 
+                e.stopPropagation(); 
+                navigator.clipboard.writeText(order.id).then(() => alert(`已複製訂單編號: ${order.id}`)).catch(() => alert('複製失敗'));
+              }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 hover:text-emerald-500 hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><Copy className="w-4 h-4" /></motion.button>
             </div> 
             {order.note && (<div className="text-[10px] font-bold text-gray-400 bg-white/40 px-3 py-1.5 rounded-lg max-w-[60%] truncate">備註: {order.note}</div>)} 
           </div> 

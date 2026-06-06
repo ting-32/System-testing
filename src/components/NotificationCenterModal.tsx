@@ -69,11 +69,11 @@ function formatNextRunText(nextRun: Date | null): string {
 
 // 實時更新的下一班車徽章元件
 const NextRunIndicator = ({ rule }: { rule: ReminderRule }) => {
-  const [now, setNow] = useState(new Date());
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     // 設定每 60 秒喚醒一次，重新設定當下時間來重算倒數
-    const timer = setInterval(() => setNow(new Date()), 60000);
+    const timer = setInterval(() => setTick(t => t + 1), 60000);
     return () => clearInterval(timer);
   }, []);
 
@@ -264,7 +264,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
       
       // Then trigger test message
       container.updateApiEndpoint(apiEndpoint);
-      const resObj: any = await container.apiClient.post('testLineMessage', {
+      await container.apiClient.post('testLineMessage', {
         lineChannelToken,
         lineUserId
       });

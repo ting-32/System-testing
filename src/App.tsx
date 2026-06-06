@@ -163,7 +163,7 @@ const App: React.FC = () => {
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockError, setUnlockError] = useState(false);
   const [isUnlocking, setIsUnlocking] = useState(false);
-  const [isWarmingUp, setIsWarmingUp] = useState(false);
+  const [isWarmingUp] = useState(false);
   const [showDeadlockModal, setShowDeadlockModal] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 

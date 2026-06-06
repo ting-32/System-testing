@@ -10,7 +10,6 @@ interface UseDataManagementProps {
   apiEndpoint: string;
   isSaving: boolean;
   setIsSaving: (isSaving: boolean) => void;
-  setIsRetrying?: (isRetrying: boolean) => void;
   customerForm: any;
   productForm: any;
   isEditingCustomer: string | null;
@@ -31,7 +30,6 @@ export const useDataManagement = ({
   apiEndpoint,
   isSaving,
   setIsSaving,
-  setIsRetrying,
   customerForm,
   productForm,
   isEditingCustomer,

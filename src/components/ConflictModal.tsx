@@ -11,7 +11,7 @@ export const ConflictModal: React.FC<{
   conflictData?: any;
   onClose?: () => void;
 }> = ({ isOpen, onRefresh, onForceSave, isSaving, conflictData }) => {
-  const { description, serverData, clientData, type } = conflictData || {};
+  const { description, serverData, clientData } = conflictData || {};
 
   return (
     <AnimatePresence>
