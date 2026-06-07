@@ -109,12 +109,12 @@ const App: React.FC = () => {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
 
-  useEffect(() => {
-    // 元件掛載完成後，確保 DOM 已經存在再獲取
-    const el = document.getElementById('main-scroll-container');
-    if (el) {
-      setScrollElement(el);
+  const scrollRef = useCallback((node: HTMLElement | null) => {
+    if (node !== null) {
+      setScrollElement(node);
     }
+    // Update mainRef to allow programmatic scrolling
+    (mainRef as React.MutableRefObject<HTMLElement | null>).current = node;
   }, []);
 
   const addToast = useCallback((message: string, type: ToastType = 'info') => {
@@ -290,9 +290,7 @@ const App: React.FC = () => {
 
   const mainRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // 移除不必要的 scrollParent 邏輯
-  }, []);
+
 
   
   // NEW: Ref to store the version (lastUpdated timestamp) of the item currently being edited
@@ -461,11 +459,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // 1. 綁定到真正的內部滾動主體
-    const scrollContainer = document.getElementById('main-scroll-container');
-    if (!scrollContainer) return;
+    if (!scrollElement) return;
 
     const handleScroll = throttle(() => {
-      const currentScrollY = scrollContainer.scrollTop; 
+      const currentScrollY = scrollElement.scrollTop; 
       
       // 2. 使用 ref 的最新值來判斷滑動方向
       if (currentScrollY > lastScrollYRef.current && currentScrollY > 50) {
@@ -479,13 +476,13 @@ const App: React.FC = () => {
     }, 300);
 
     // 掛載事件監聽
-    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
+    scrollElement.addEventListener('scroll', handleScroll, { passive: true });
     // 清除機制
     return () => {
-      scrollContainer.removeEventListener('scroll', handleScroll);
+      scrollElement.removeEventListener('scroll', handleScroll);
       handleScroll.cancel();
     };
-  }, []); // 🚨 依賴項務必為空！保證整個生命週期只會綁定這 1 次！
+  }, [scrollElement]); // 當 scrollElement 就緒時綁定一次
 
   useEffect(() => {
     if (isAddingOrder || isEditingCustomer || isEditingProduct || editingOrderId) {
@@ -1507,7 +1504,7 @@ const App: React.FC = () => {
         )}
       </AnimatePresence>
 
-      <main id="main-scroll-container" className="flex-1 overflow-y-auto pb-24 px-4" ref={mainRef}>
+      <main id="main-scroll-container" className="flex-1 overflow-y-auto pb-24 px-4" ref={scrollRef}>
         {/* ... (Main content remains unchanged) ... */}
         <AnimatePresence mode="popLayout">
         {activeTab === 'orders' && (
