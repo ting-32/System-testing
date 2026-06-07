@@ -148,6 +148,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
       setLogs(fetchedLogs);
     } catch (e) {
       console.error("Failed to fetch logs", e);
+      setLogs([]);
     } finally {
       if (!silent) {
         setIsRefreshing(false);
