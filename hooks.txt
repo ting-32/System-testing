@@ -1,0 +1,123 @@
+1:import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+107:  const [toasts, setToasts] = useState<Toast[]>([]);
+108:  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+110:  useEffect(() => {
+118:  const addToast = useCallback((message: string, type: ToastType = 'info') => {
+128:  const removeToast = useCallback((id: string) => {
+154:  const customerMap = useMemo(() => {
+165:  const productMap = useMemo(() => {
+174:  const [isUnlocked, setIsUnlocked] = useState(false);
+175:  const [unlockTimeout, setUnlockTimeout] = useState<number | null>(null);
+176:  const [showUnlockModal, setShowUnlockModal] = useState(false);
+177:  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+178:  const [unlockPassword, setUnlockPassword] = useState('');
+179:  const [unlockError, setUnlockError] = useState(false);
+180:  const [isUnlocking, setIsUnlocking] = useState(false);
+181:  const [isWarmingUp] = useState(false);
+182:  const [showDeadlockModal, setShowDeadlockModal] = useState(false);
+183:  const [isRetrying, setIsRetrying] = useState(false);
+185:  useEffect(() => {
+201:  useEffect(() => {
+218:  useEffect(() => {
+231:  const requireAuth = useCallback((action: () => void) => {
+267:  const [activeTab, setActiveTab] = useState<'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance'>(() => {
+271:  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+272:  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
+273:  const [lineChannelToken, setLineChannelToken] = useState(() => {
+276:  const [lineUserId, setLineUserId] = useState(() => {
+280:  useEffect(() => {
+285:  const [isAutoOrderDashboardOpen, setIsAutoOrderDashboardOpen] = useState(false);
+289:  const mainRef = useRef<HTMLDivElement>(null);
+291:  useEffect(() => {
+297:  const editingVersionRef = useRef<number | undefined>(undefined);
+299:  const [selectedDate, setSelectedDate] = useState<string>(() => {
+305:  const [workDates, setWorkDates] = useState<string[]>([getTomorrowDate()]);
+306:  const [workCustomerFilter, setWorkCustomerFilter] = useState('');
+307:  const [workProductFilter, setWorkProductFilter] = useState<Set<string>>(new Set());
+308:  const [isProductFilterOpen, setIsProductFilterOpen] = useState(false);
+309:  const [expandedFilterCats, setExpandedFilterCats] = useState<Set<string>>(new Set());
+310:  const [workDeliveryMethodFilter, setWorkDeliveryMethodFilter] = useState<string[]>([]);
+312:  const [scheduleDate, setScheduleDate] = useState<string>(getTomorrowDate());
+313:  const [scheduleDeliveryMethodFilter, setScheduleDeliveryMethodFilter] = useState<string[]>([]);
+314:  const [showScheduleDeliveryFilters, setShowScheduleDeliveryFilters] = useState(false);
+316:  const [actionMenuTarget, setActionMenuTarget] = useState<any | null>(null);
+321:  const [isTripManagerOpen, setIsTripManagerOpen] = useState(false);
+323:  const [isSelectionMode, setIsSelectionMode] = useState(false);
+324:  const [isOrderReorderMode, setIsOrderReorderMode] = useState(false);
+325:  const [reorderedOrderIds, setReorderedOrderIds] = useState<Set<string>>(new Set());
+326:  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+328:  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+329:  const [isOrderDatePickerOpen, setIsOrderDatePickerOpen] = useState(false);
+330:  const [isAddingOrder, setIsAddingOrder] = useState(false);
+332:  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+335:  const [drawerConfig, setDrawerConfig] = useState<{
+342:  const [orderSearch, setOrderSearch] = useState('');
+343:  const [localOrderSearch, setLocalOrderSearch] = useState('');
+344:  const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<string[]>([]);
+345:  const [showOrderDeliveryFilters, setShowOrderDeliveryFilters] = useState(false);
+347:  useEffect(() => {
+354:  const [holidayEditorId, setHolidayEditorId] = useState<string | null>(null);
+356:  const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
+357:  const [quickAddData, setQuickAddData] = useState<{customerName: string, items: {productId: string, quantity: number, unit: string}[]} | null>(null);
+359:  const [tempPriceProdId, setTempPriceProdId] = useState('');
+360:  const [tempPriceValue, setTempPriceValue] = useState('');
+361:  const [tempPriceUnit, setTempPriceUnit] = useState('斤');
+363:  const [collapsedWorkGroups, setCollapsedWorkGroups] = useState<Set<string>>(new Set());
+364:  const [completedWorkItems, setCompletedWorkItems] = useState<Set<string>>(new Set());
+366:  const [pickerConfig, setPickerConfig] = useState<{
+373:  const [customerPickerConfig, setCustomerPickerConfig] = useState<{
+379:  const [confirmConfig, setConfirmConfig] = useState<{
+391:  const [isSettling, setIsSettling] = useState(false);
+392:  const [settlementTarget, setSettlementTarget] = useState<{name: string, allOrderIds: string[]} | null>(null);
+393:  const [settlementDate, setSettlementDate] = useState<string>(getLastMonthEndDate());
+394:  const [financeFilter, setFinanceFilter] = useState<'all' | 'thisMonth' | 'over30' | 'over60'>('all');
+395:  const [partialSettlementTarget, setPartialSettlementTarget] = useState<{name: string, orders: Order[]} | null>(null);
+396:  const [selectedPartialOrderIds, setSelectedPartialOrderIds] = useState<Set<string>>(new Set());
+398:  const [orderForm, setOrderForm] = useState<{
+421:  const [customerForm, setCustomerForm] = useState<Partial<Customer>>({});
+422:  const [isEditingCustomer, setIsEditingCustomer] = useState<string | null>(null);
+423:  const [viewingCustomerProfile, setViewingCustomerProfile] = useState<string | null>(null);
+424:  const [viewingCustomerReport, setViewingCustomerReport] = useState<string | null>(null);
+425:  const [directHolidayCustomer, setDirectHolidayCustomer] = useState<Customer | null>(null);
+426:  const [editCustomerMode, setEditCustomerMode] = useState<'full' | 'itemsOnly' | 'holidayOnly'>('full');
+427:  const [showAdvancedCustomerSettings, setShowAdvancedCustomerSettings] = useState(false);
+428:  const [isEditingProduct, setIsEditingProduct] = useState<string | null>(null);
+429:  const [productForm, setProductForm] = useState<Partial<Product>>({});
+430:  const [customerSearch, setCustomerSearch] = useState('');
+431:  const [localCustomerSearch, setLocalCustomerSearch] = useState('');
+432:  const [visibleCustomerCount, setVisibleCustomerCount] = useState(50);
+434:  useEffect(() => {
+442:  const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
+443:  const [visibleModalOrderCount, setVisibleModalOrderCount] = useState(20);
+445:  const [isScrollingDown, setIsScrollingDown] = useState(false);
+446:  const lastScrollYRef = useRef(0);
+448:  const [initialProductOrder, setInitialProductOrder] = useState<string[]>([]);
+449:  const [hasReorderedProducts, setHasReorderedProducts] = useState(false);
+450:  const [localProducts, setLocalProducts] = useState(products);
+452:  useEffect(() => {
+456:  const [lastOrderCandidate, setLastOrderCandidate] = useState<{date: string, items: OrderItem[], sourceLabel?: string} | null>(null);
+458:  const [hasChanges, setHasChanges] = useState(false);
+461:  useEffect(() => {
+472:  useEffect(() => {
+500:  useEffect(() => {
+506:  const handleCloseModal = useCallback(() => {
+519:  const handleOrderFormChange = useCallback((field: keyof typeof orderForm, value: any) => {
+545:  useEffect(() => {
+618:  useEffect(() => {
+628:  useEffect(() => {
+634:  useEffect(() => {
+678:  useEffect(() => {
+861:  const actionsRef = useRef({
+870:  useEffect(() => {
+881:  const handleToggleSelectionStable = useCallback((orderId: string) => {
+890:  const handleDeleteOrderStable = useCallback((orderId: string) => {
+894:  const handleEditOrderStable = useCallback((orderToEdit: Order) => {
+898:  const handleModalEditOrderStable = useCallback((orderToEdit: Order) => {
+905:  const handleModalViewCustomerStable = useCallback((name: string) => {
+910:  const handleSwipeStatusChangeStable = useCallback((orderId: string, status: OrderStatus) => {
+914:  const handleShareOrderStable = useCallback((order: Order) => {
+918:  const openGoogleMapsStable = useCallback((name: string) => {
+925:  useEffect(() => {
+1127:  const virtuosoOrderData = useMemo(() => {
+1179:  const virtuosoContext = useMemo(() => ({
+1208:  const renderVirtuosoItem = useCallback((_index: number, data: any, context: any) => {

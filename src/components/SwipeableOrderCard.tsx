@@ -287,6 +287,7 @@ function areEqual(prevProps: SwipeableOrderCardProps, nextProps: SwipeableOrderC
     prevProps.isSelectionMode === nextProps.isSelectionMode &&
     prevProps.isSelected === nextProps.isSelected &&
     prevProps.isLoadingProducts === nextProps.isLoadingProducts
+    // ⚠️ 絕對不要在這裡加上函數的比較
   );
 }
 

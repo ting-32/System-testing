@@ -3,6 +3,7 @@ import { Customer, Product, Order, OrderStatus } from '../types';
 import { PRODUCT_CATEGORIES } from '../constants';
 
 interface UseOrderCalculationsProps {
+  activeTab?: 'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance';
   orders: Order[];
   customers: Customer[];
   products: Product[];
@@ -25,6 +26,7 @@ interface UseOrderCalculationsProps {
 }
 
 export const useOrderCalculations = ({
+  activeTab,
   orders,
   customers,
   products,
@@ -138,6 +140,7 @@ export const useOrderCalculations = ({
 
   // 4. Schedule Tab Orders
   const scheduleOrders = useMemo(() => {
+    if (activeTab && activeTab !== 'schedule') return [];
     const rawOrders = orders.filter(o => {
       if (o.deliveryDate !== scheduleDate) return false;
       if (scheduleDeliveryMethodFilter.length > 0) {
@@ -156,7 +159,7 @@ export const useOrderCalculations = ({
       seen.add(o.id);
       return true;
     });
-  }, [orders, scheduleDate, scheduleDeliveryMethodFilter, customers]);
+  }, [orders, scheduleDate, scheduleDeliveryMethodFilter, customers, activeTab]);
 
   // 5. Schedule Money Summary
   const scheduleMoneySummary = useMemo(() => {
@@ -174,6 +177,8 @@ export const useOrderCalculations = ({
 
   // 6. Finance Data (Outstanding Debts & Revenue)
   const financeData = useMemo(() => {
+    if (activeTab && activeTab !== 'finance') return { grandTotalDebt: 0, outstanding: [], thisMonthRevenue: 0, thisMonthCollected: 0 };
+    
     const outstandingMap = new Map<string, { totalDebt: number, count: number, orderIds: string[], orders: Order[], oldestDate: string }>();
     let grandTotalDebt = 0;
     
@@ -226,7 +231,7 @@ export const useOrderCalculations = ({
       .sort((a, b) => b.totalDebt - a.totalDebt);
 
     return { grandTotalDebt, outstanding: sortedOutstanding, thisMonthRevenue, thisMonthCollected };
-  }, [orders, customers, products]);
+  }, [orders, customers, products, activeTab]);
 
   // 7. Settlement Preview
   const settlementPreview = useMemo(() => {
@@ -294,6 +299,7 @@ export const useOrderCalculations = ({
 
   // 10. Work Sheet Data (Production List)
   const workSheetData = useMemo(() => {
+    if (activeTab && activeTab !== 'work') return [];
     let filtered = orders.filter(o => workDates.includes(o.deliveryDate));
     
     // Deduplicate
@@ -366,7 +372,7 @@ export const useOrderCalculations = ({
     })).filter(g => g.items.length > 0);
     
     return result;
-  }, [orders, workDates, workCustomerFilter, workProductFilter, workDeliveryMethodFilter, products, customers]);
+  }, [orders, workDates, workCustomerFilter, workProductFilter, workDeliveryMethodFilter, products, customers, activeTab]);
 
   return {
     orderSummary,

@@ -98,6 +98,8 @@ import { modalVariants, buttonTap, buttonHover, triggerHaptic, containerVariants
 
 
 // ... (SortableProductItem, SwipeableOrderCard, ScheduleOrderCard moved to components) ...
+import { WorkGroupItem } from './components/WorkGroupItem';
+import { DebouncedSearchInput } from './components/DebouncedSearchInput';
 
 // ... (LoginScreen, ConfirmModal, ProductPicker, CustomerPicker, HolidayCalendar, WorkCalendar, DatePickerModal, SettingsModal, NavItem, ToastNotification moved to components) ...
 
@@ -309,6 +311,11 @@ const App: React.FC = () => {
   const [expandedFilterCats, setExpandedFilterCats] = useState<Set<string>>(new Set());
   const [workDeliveryMethodFilter, setWorkDeliveryMethodFilter] = useState<string[]>([]);
   
+  const [visibleWorkCount, setVisibleWorkCount] = useState(10);
+  useEffect(() => {
+    setVisibleWorkCount(10);
+  }, [workCustomerFilter, workProductFilter, workDeliveryMethodFilter, workDates]);
+
   const [scheduleDate, setScheduleDate] = useState<string>(getTomorrowDate());
   const [scheduleDeliveryMethodFilter, setScheduleDeliveryMethodFilter] = useState<string[]>([]);
   const [showScheduleDeliveryFilters, setShowScheduleDeliveryFilters] = useState(false);
@@ -340,16 +347,8 @@ const App: React.FC = () => {
 
   // NEW: Order Search & Filter
   const [orderSearch, setOrderSearch] = useState('');
-  const [localOrderSearch, setLocalOrderSearch] = useState('');
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<string[]>([]);
   const [showOrderDeliveryFilters, setShowOrderDeliveryFilters] = useState(false);
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setOrderSearch(localOrderSearch);
-    }, 300);
-    return () => clearTimeout(handler);
-  }, [localOrderSearch]);
 
   const [holidayEditorId, setHolidayEditorId] = useState<string | null>(null);
 
@@ -428,16 +427,7 @@ const App: React.FC = () => {
   const [isEditingProduct, setIsEditingProduct] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<Partial<Product>>({});
   const [customerSearch, setCustomerSearch] = useState('');
-  const [localCustomerSearch, setLocalCustomerSearch] = useState('');
   const [visibleCustomerCount, setVisibleCustomerCount] = useState(50);
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setCustomerSearch(localCustomerSearch);
-      setVisibleCustomerCount(50); // reset visible count on search
-    }, 300);
-    return () => clearTimeout(handler);
-  }, [localCustomerSearch]);
   
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
   const [visibleModalOrderCount, setVisibleModalOrderCount] = useState(20);
@@ -653,6 +643,7 @@ const App: React.FC = () => {
     workSheetData,
     calculateOrderTotalAmount
   } = useOrderCalculations({
+    activeTab,
     orders,
     customers,
     products,
@@ -858,6 +849,26 @@ const App: React.FC = () => {
     setToasts
   });
   
+  const actionsRef = useRef({
+    handleDeleteOrder,
+    handleEditOrder,
+    requireAuth,
+    handleSwipeStatusChange,
+    handleShareOrder,
+    openGoogleMaps: (name: string) => openGoogleMaps(name)
+  });
+
+  useEffect(() => {
+    actionsRef.current = {
+      handleDeleteOrder,
+      handleEditOrder,
+      requireAuth,
+      handleSwipeStatusChange,
+      handleShareOrder,
+      openGoogleMaps: (name: string) => openGoogleMaps(name)
+    };
+  });
+  
   const handleToggleSelectionStable = useCallback((orderId: string) => {
     setSelectedOrderIds(prev => {
       const newSet = new Set(prev);
@@ -868,23 +879,53 @@ const App: React.FC = () => {
   }, []);
 
   const handleDeleteOrderStable = useCallback((orderId: string) => {
-    requireAuth(() => handleDeleteOrder(orderId));
-  }, [requireAuth, handleDeleteOrder]);
+    actionsRef.current.requireAuth(() => actionsRef.current.handleDeleteOrder(orderId));
+  }, []);
 
   const handleEditOrderStable = useCallback((orderToEdit: Order) => {
-    requireAuth(() => handleEditOrder(orderToEdit));
-  }, [requireAuth, handleEditOrder]);
+    actionsRef.current.requireAuth(() => actionsRef.current.handleEditOrder(orderToEdit));
+  }, []);
 
   const handleModalEditOrderStable = useCallback((orderToEdit: Order) => {
-    requireAuth(() => {
-      handleEditOrder(orderToEdit);
+    actionsRef.current.requireAuth(() => {
+      actionsRef.current.handleEditOrder(orderToEdit);
       setSelectedCustomerForModal(null);
     });
-  }, [requireAuth, handleEditOrder]);
+  }, []);
 
   const handleModalViewCustomerStable = useCallback((name: string) => {
     setSelectedCustomerForModal(null);
     setViewingCustomerProfile(name);
+  }, []);
+
+  const handleSwipeStatusChangeStable = useCallback((orderId: string, status: OrderStatus) => {
+    actionsRef.current.handleSwipeStatusChange(orderId, status);
+  }, []);
+
+  const handleShareOrderStable = useCallback((order: Order) => {
+    actionsRef.current.handleShareOrder(order);
+  }, []);
+
+  const openGoogleMapsStable = useCallback((name: string) => {
+    actionsRef.current.openGoogleMaps(name);
+  }, []);
+
+  const handleToggleWorkGroupCollapse = useCallback((groupId: string) => {
+    setCollapsedWorkGroups(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupId)) newSet.delete(groupId);
+      else newSet.add(groupId);
+      return newSet;
+    });
+  }, []);
+
+  const handleToggleWorkItemComplete = useCallback((itemKey: string) => {
+    setCompletedWorkItems(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemKey)) newSet.delete(itemKey);
+      else newSet.add(itemKey);
+      return newSet;
+    });
   }, []);
 
   // REFACTORED: syncData logic moved to useDataSync hook
@@ -1092,17 +1133,6 @@ const App: React.FC = () => {
     printWindow.document.close(); 
   };
 
-  if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} />;
-  
-  if (isInitialLoading) {
-    return (
-      <div className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal p-4 space-y-3">
-        <div className="h-16 bg-white rounded-2xl shadow-sm mb-6 animate-pulse"></div>
-        {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
-      </div>
-    );
-  }
-
   const virtuosoOrderData = useMemo(() => {
     return Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => {
       let totalAmount = 0;
@@ -1161,26 +1191,26 @@ const App: React.FC = () => {
     requireAuth, 
     setQuickAddData, 
     handleCopyOrder, 
-    openGoogleMaps, 
+    openGoogleMaps: openGoogleMapsStable, 
     productMap, 
     customerMap, 
     isLoadingProducts, 
     isSelectionMode, 
     selectedOrderIds, 
     handleToggleSelectionStable, 
-    handleSwipeStatusChange, 
+    handleSwipeStatusChange: handleSwipeStatusChangeStable, 
     handleDeleteOrderStable, 
-    handleShareOrder, 
+    handleShareOrder: handleShareOrderStable, 
     handleEditOrderStable, 
     handleRetryOrder, 
     setViewingCustomerProfile, 
     buttonTap
   }), [
     expandedCustomer, setExpandedCustomer, requireAuth, setQuickAddData, 
-    handleCopyOrder, openGoogleMaps, productMap, customerMap, 
+    handleCopyOrder, openGoogleMapsStable, productMap, customerMap, 
     isLoadingProducts, isSelectionMode, selectedOrderIds, 
-    handleToggleSelectionStable, handleSwipeStatusChange, 
-    handleDeleteOrderStable, handleShareOrder, handleEditOrderStable, 
+    handleToggleSelectionStable, handleSwipeStatusChangeStable, 
+    handleDeleteOrderStable, handleShareOrderStable, handleEditOrderStable, 
     handleRetryOrder, setViewingCustomerProfile, buttonTap
   ]);
 
@@ -1219,9 +1249,8 @@ const App: React.FC = () => {
             <div className="bg-morandi-oatmeal/20 border-t border-slate-100 overflow-hidden">
               <div className="p-5 flex flex-col gap-3">
                 {custOrders.map((order: any) => (
-                  <div key={order.id}>
-                     <SwipeableOrderCard 
-                    key={order.id} 
+                  <SwipeableOrderCard 
+                    key={`card-${order.id}`} 
                     order={order} 
                     productMap={productMap} 
                     customerMap={customerMap}
@@ -1236,8 +1265,7 @@ const App: React.FC = () => {
                     onEdit={handleEditOrderStable}
                     onRetry={handleRetryOrder}
                     onViewCustomer={setViewingCustomerProfile}
-                 />
-                  </div>
+                  />
               ))}
               <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
               <div className="flex gap-2 pt-2">
@@ -1251,6 +1279,17 @@ const App: React.FC = () => {
       </div>
     );
   }, []); // 🚨 空依賴保證參照不變
+
+  if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} />;
+  
+  if (isInitialLoading) {
+    return (
+      <div className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal p-4 space-y-3">
+        <div className="h-16 bg-white rounded-2xl shadow-sm mb-6 animate-pulse"></div>
+        {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
+      </div>
+    );
+  }
 
   return (
     <div className="h-[100dvh] flex flex-col max-w-md mx-auto bg-morandi-oatmeal relative shadow-2xl overflow-hidden text-morandi-charcoal font-sans">
@@ -1535,20 +1574,14 @@ const App: React.FC = () => {
                >
                  <div className="flex gap-2 items-center">
                    <div className="relative flex-1 flex items-center">
-                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                     <input 
-                       type="text" 
-                       placeholder="搜尋客戶名稱或電話..." 
-                       className="w-full pl-10 pr-20 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" 
-                       value={localOrderSearch} 
-                       onChange={(e) => setLocalOrderSearch(e.target.value)} 
+                     <DebouncedSearchInput
+                       value={orderSearch}
+                       onSearch={(val) => setOrderSearch(val)}
+                       placeholder="搜尋客戶名稱或電話..."
+                       className="w-full flex-1"
+                       inputClassName="w-full pl-10 pr-20 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300"
                      />
-                     <div className="absolute right-2 flex items-center gap-1">
-                       {localOrderSearch && (
-                         <button onClick={() => { setOrderSearch(''); setLocalOrderSearch(''); }} className="p-1 rounded-full bg-gray-100 text-gray-400 hover:bg-gray-200">
-                           <X className="w-3 h-3" />
-                         </button>
-                       )}
+                     <div className="absolute right-2 flex items-center gap-1 z-10">
                        <button 
                          onClick={() => setIsVoiceModalOpen(true)}
                          className={`p-1.5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-morandi-blue bg-transparent ${isProcessingVoice ? 'text-rose-500 animate-pulse' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-100'}`}
@@ -1635,7 +1668,7 @@ const App: React.FC = () => {
                   {orderSearch || orderDeliveryFilter.length > 0 ? (
                      <>
                        <p className="text-gray-400 font-bold text-sm tracking-wide">找不到符合條件的訂單</p>
-                       <button onClick={() => { setOrderSearch(''); setLocalOrderSearch(''); setOrderDeliveryFilter([]); }} className="text-xs text-morandi-blue font-bold underline">清除篩選條件</button>
+                       <button onClick={() => { setOrderSearch(''); setOrderDeliveryFilter([]); }} className="text-xs text-morandi-blue font-bold underline">清除篩選條件</button>
                      </>
                   ) : (
                      <p className="text-gray-300 italic text-sm tracking-wide">此日期尚無訂單</p>
@@ -1697,7 +1730,16 @@ const App: React.FC = () => {
            <motion.div key="customers" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="relative">
             <div className="sticky top-0 z-20 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
               <div className="flex justify-between items-center mb-3"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2><motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setCustomerForm({ name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div>
-              <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="搜尋店家名稱..." className="w-full pl-10 pr-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400" value={localCustomerSearch} onChange={(e) => setLocalCustomerSearch(e.target.value)} /></div>
+              <DebouncedSearchInput
+                value={customerSearch}
+                onSearch={(val) => {
+                  setCustomerSearch(val);
+                  setVisibleCustomerCount(50);
+                }}
+                placeholder="搜尋店家名稱..."
+                className="w-full"
+                inputClassName="w-full pl-10 pr-10 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400"
+              />
             </div>
             <motion.div variants={containerVariants} initial="hidden" animate="show" className="pt-4">
             {filteredCustomers.slice(0, visibleCustomerCount).map(c => {
@@ -1977,9 +2019,9 @@ const App: React.FC = () => {
                             isSelectionMode={isSelectionMode}
                             selectedOrderIds={selectedOrderIds}
                             handleToggleSelectionStable={handleToggleSelectionStable}
-                            handleSwipeStatusChange={handleSwipeStatusChange}
-                            handleShareOrder={handleShareOrder}
-                            openGoogleMaps={openGoogleMaps}
+                            handleSwipeStatusChange={handleSwipeStatusChangeStable}
+                            handleShareOrder={handleShareOrderStable}
+                            openGoogleMaps={openGoogleMapsStable}
                           />
                         ) : (
                           <div className="space-y-3">
@@ -1993,9 +2035,9 @@ const App: React.FC = () => {
                                   isSelectionMode={isSelectionMode}
                                   isSelected={selectedOrderIds.has(order.id)}
                                   onToggleSelection={handleToggleSelectionStable}
-                                  onStatusChange={handleSwipeStatusChange}
-                                  onShare={handleShareOrder}
-                                  onMap={openGoogleMaps}
+                                  onStatusChange={handleSwipeStatusChangeStable}
+                                  onShare={handleShareOrderStable}
+                                  onMap={openGoogleMapsStable}
                                 />
                               </div>
                             ))}
@@ -2175,91 +2217,34 @@ const App: React.FC = () => {
                   
                   <motion.div variants={containerVariants} initial="hidden" animate="show" className="space-y-6">
                       {workSheetData.length > 0 ? (
-                          workSheetData.map((group) => {
-                              const isCollapsed = collapsedWorkGroups.has(group.id);
-                              
-                              return (
-                                  <motion.section variants={itemVariants} key={group.id} className="bg-white rounded-[24px] overflow-hidden border border-slate-200 shadow-sm">
-                                      {/* Group Header */}
-                                      <div 
-                                          onClick={() => {
-                                              const newSet = new Set(collapsedWorkGroups);
-                                              if (newSet.has(group.id)) newSet.delete(group.id);
-                                              else newSet.add(group.id);
-                                              setCollapsedWorkGroups(newSet);
-                                          }}
-                                          className="px-5 py-4 flex justify-between items-center cursor-pointer transition-colors hover:bg-opacity-80 active:scale-[0.99]"
-                                          style={{ backgroundColor: group.color + '40' }} // 25% opacity using hex code
-                                      >
-                                          <h3 className="font-extrabold text-slate-800 flex items-center gap-3 text-lg">
-                                              <span className="w-3 h-3 rounded-full shadow-sm" style={{ background: group.color, border: '1px solid rgba(0,0,0,0.1)' }}></span>
-                                              {group.label}
-                                          </h3>
-                                          <div className="flex items-center gap-3">
-                                              <span className="text-xs font-black text-slate-600 bg-white/60 px-2 py-1 rounded-lg">共 {Math.round(group.totalWeight * 10) / 10} 單位</span>
-                                              {isCollapsed ? <ChevronDown className="w-5 h-5 text-slate-500" /> : <ChevronUp className="w-5 h-5 text-slate-500" />}
-                                          </div>
-                                      </div>
-
-                                      {/* Items List */}
-                                      <AnimatePresence>
-                                          {!isCollapsed && (
-                                              <motion.div 
-                                                  key={`group-${group.id}`}
-                                                  initial={{ height: 0, opacity: 0 }} 
-                                                  animate={{ height: 'auto', opacity: 1 }} 
-                                                  exit={{ height: 0, opacity: 0 }} 
-                                                  className="divide-y divide-gray-100"
-                                              >
-                                                  {group.items.map((item, idx) => {
-                                                      const itemKey = `${group.id}-${item.name}-${item.unit}`;
-                                                      const isCompleted = completedWorkItems.has(itemKey);
-
-                                                      return (
-                                                          <div 
-                                                              key={idx} 
-                                                              onClick={() => {
-                                                                  const newSet = new Set(completedWorkItems);
-                                                                  if (newSet.has(itemKey)) newSet.delete(itemKey);
-                                                                  else newSet.add(itemKey);
-                                                                  setCompletedWorkItems(newSet);
-                                                                  triggerHaptic(5);
-                                                              }}
-                                                              className={`p-5 transition-all cursor-pointer select-none ${isCompleted ? 'bg-gray-50' : 'hover:bg-gray-50/50'}`}
-                                                          >
-                                                              <div className="flex justify-between items-center mb-2">
-                                                                  <div className="flex items-center gap-3">
-                                                                      <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${isCompleted ? 'bg-slate-400 border-slate-400' : 'bg-white border-slate-300'}`}>
-                                                                          {isCompleted && <CheckSquare className="w-3.5 h-3.5 text-white" />}
-                                                                      </div>
-                                                                      <span className={`font-bold text-lg transition-all ${isCompleted ? 'text-gray-400 line-through decoration-2 decoration-gray-300' : 'text-slate-800'}`}>{item.name}</span>
-                                                                  </div>
-                                                                  <div className={`text-right transition-all ${isCompleted ? 'opacity-40' : 'opacity-100'}`}>
-                                                                      <span className="font-black text-3xl text-slate-800 tracking-tight">{item.totalQty}</span>
-                                                                      <span className="text-xs text-gray-400 font-bold ml-1">{item.unit}</span>
-                                                                  </div>
-                                                              </div>
-                                                              
-                                                              {/* Details */}
-                                                              {!isCompleted && (
-                                                                  <div className="pl-8 flex flex-wrap gap-2 mt-3">
-                                                                      {item.details.map((detail, dIdx) => (
-                                                                          <span key={dIdx} className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 shadow-sm flex items-center gap-1">
-                                                                              <span className="font-bold">{detail.customerName}</span>
-                                                                              <span className="bg-slate-100 px-1.5 rounded text-[10px] font-black text-slate-500">{detail.qty}</span>
-                                                                          </span>
-                                                                      ))}
-                                                                  </div>
-                                                              )}
-                                                          </div>
-                                                      );
-                                                  })}
-                                              </motion.div>
-                                          )}
-                                      </AnimatePresence>
-                                  </motion.section>
-                              );
-                          })
+                          <>
+                            {workSheetData.slice(0, visibleWorkCount).map((group) => {
+                                const isCollapsed = collapsedWorkGroups.has(group.id);
+                                
+                                return (
+                                    <WorkGroupItem 
+                                        key={group.id} 
+                                        group={group} 
+                                        isCollapsed={isCollapsed} 
+                                        onToggleCollapse={handleToggleWorkGroupCollapse}
+                                        completedWorkItems={completedWorkItems}
+                                        onToggleComplete={handleToggleWorkItemComplete}
+                                        itemVariants={itemVariants}
+                                    />
+                                );
+                            })}
+                            
+                            {workSheetData.length > visibleWorkCount && (
+                               <div className="flex justify-center pb-8 pt-4">
+                                  <button 
+                                    onClick={() => setVisibleWorkCount(v => v + 10)}
+                                    className="px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-full font-bold shadow-sm hover:bg-slate-50 transition-colors"
+                                  >
+                                    向下展開更多組合 ({workSheetData.length - visibleWorkCount})
+                                  </button>
+                               </div>
+                            )}
+                          </>
                       ) : (
                           <div className="text-center py-10">
                               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -2818,10 +2803,10 @@ const App: React.FC = () => {
                     isSelectionMode={false}
                     isSelected={false}
                     onToggleSelection={handleToggleSelectionStable}
-                    onStatusChange={handleSwipeStatusChange}
+                    onStatusChange={handleSwipeStatusChangeStable}
                     onDelete={handleDeleteOrderStable}
-                    onShare={handleShareOrder}
-                    onMap={openGoogleMaps}
+                    onShare={handleShareOrderStable}
+                    onMap={openGoogleMapsStable}
                     onEdit={handleModalEditOrderStable}
                     onRetry={handleRetryOrder}
                     onViewCustomer={handleModalViewCustomerStable}
