@@ -20,14 +20,14 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
   isOpen, onClose, customerName, customers, orders, products, onCreateOrder, onOpenReport
 }) => {
   const [activeTab, setActiveTab] = useState<'info' | 'history'>('history');
+  const [visibleCount, setVisibleCount] = useState(20);
 
   const customer = customers.find(c => c.name === customerName);
   
   const customerOrders = useMemo(() => {
     return orders
       .filter(o => o.customerName === customerName)
-      .sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime())
-      .slice(0, 10); // Show recent 10 orders
+      .sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime());
   }, [orders, customerName]);
 
   const handleCreateB2B = () => {
@@ -96,41 +96,53 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
             {activeTab === 'history' && (
               <div className="space-y-4 pb-20">
                 {customerOrders.length > 0 ? (
-                  customerOrders.map(order => {
-                    const statusConfig = getStatusStyles(order.status);
-                    const totalAmount = order.items.reduce((sum, item) => {
-                      const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
-                      const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
-                      const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
-                      return sum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
-                    }, 0);
+                  <>
+                    {customerOrders.slice(0, visibleCount).map(order => {
+                      const statusConfig = getStatusStyles(order.status);
+                      const totalAmount = order.items.reduce((sum, item) => {
+                        const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+                        const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
+                        const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+                        return sum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
+                      }, 0);
 
-                    return (
-                      <div key={order.id} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm flex flex-col gap-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm font-extrabold text-slate-700 tracking-wide">{order.deliveryDate.replace(/-/g, '/')}</span>
-                          <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ backgroundColor: statusConfig.tagBg, color: statusConfig.tagText }}>
-                            {statusConfig.label}
-                          </span>
+                      return (
+                        <div key={order.id} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm flex flex-col gap-3">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-extrabold text-slate-700 tracking-wide">{order.deliveryDate.replace(/-/g, '/')}</span>
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ backgroundColor: statusConfig.tagBg, color: statusConfig.tagText }}>
+                              {statusConfig.label}
+                            </span>
+                          </div>
+                          <div className="space-y-1.5">
+                             {order.items.map((item, idx) => {
+                               const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+                               return (
+                                 <div key={idx} className="flex justify-between items-center text-xs text-slate-600 font-bold">
+                                   <span>{item.productName || p?.name || item.productId}</span>
+                                   <span className="text-morandi-blue">{item.quantity} {item.unit || p?.unit || '斤'}</span>
+                                 </div>
+                               );
+                             })}
+                          </div>
+                          <div className="pt-2 border-t border-gray-50 flex justify-between items-end">
+                             <div className="text-[10px] text-gray-400 font-bold bg-gray-50 px-2 py-1 rounded-md">{formatTimeDisplay(order.deliveryTime)}</div>
+                             <div className="text-slate-800 font-black tracking-tight">${totalAmount.toLocaleString()}</div>
+                          </div>
                         </div>
-                        <div className="space-y-1.5">
-                           {order.items.map((item, idx) => {
-                             const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
-                             return (
-                               <div key={idx} className="flex justify-between items-center text-xs text-slate-600 font-bold">
-                                 <span>{item.productName || p?.name || item.productId}</span>
-                                 <span className="text-morandi-blue">{item.quantity} {item.unit || p?.unit || '斤'}</span>
-                               </div>
-                             );
-                           })}
-                        </div>
-                        <div className="pt-2 border-t border-gray-50 flex justify-between items-end">
-                           <div className="text-[10px] text-gray-400 font-bold bg-gray-50 px-2 py-1 rounded-md">{formatTimeDisplay(order.deliveryTime)}</div>
-                           <div className="text-slate-800 font-black tracking-tight">${totalAmount.toLocaleString()}</div>
-                        </div>
+                      )
+                    })}
+                    {customerOrders.length > visibleCount && (
+                      <div className="flex justify-center mt-4">
+                        <button 
+                          onClick={() => setVisibleCount(v => v + 20)}
+                          className="px-6 py-2 bg-white border border-slate-200 text-slate-600 rounded-full text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors"
+                        >
+                          載入更多 ({customerOrders.length - visibleCount})
+                        </button>
                       </div>
-                    )
-                  })
+                    )}
+                  </>
                 ) : (
                   <div className="text-center py-10 text-gray-400 font-bold text-sm tracking-wide">
                     尚無歷史訂單紀錄

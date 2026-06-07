@@ -19,7 +19,18 @@ interface ScheduleOrderCardProps {
   isLoadingProducts?: boolean;
 }
 
-export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({ 
+function areEqual(prevProps: ScheduleOrderCardProps, nextProps: ScheduleOrderCardProps) {
+  return (
+    prevProps.order.id === nextProps.order.id &&
+    prevProps.order.lastUpdated === nextProps.order.lastUpdated &&
+    prevProps.order.status === nextProps.order.status &&
+    prevProps.isSelectionMode === nextProps.isSelectionMode &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.isLoadingProducts === nextProps.isLoadingProducts
+  );
+}
+
+const ScheduleOrderCardComponent: React.FC<ScheduleOrderCardProps> = ({ 
   order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
   onStatusChange, onShare, onMap, hideActions, isLoadingProducts
 }) => {
@@ -190,3 +201,5 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
     </div> 
   ); 
 };
+
+export const ScheduleOrderCard = React.memo(ScheduleOrderCardComponent, areEqual);

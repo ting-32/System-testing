@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { throttle } from 'lodash';
 import { 
   Users, 
   Package, 
@@ -69,6 +70,7 @@ import { SortableProductItem } from './components/SortableProductItem';
 import { SwipeableOrderCard } from './components/SwipeableOrderCard';
 import { SkeletonCard } from './components/SkeletonCard';
 import { ScheduleOrderCard } from './components/ScheduleOrderCard';
+import { TripReorderGroup } from './components/TripReorderGroup';
 import { LoginScreen } from './components/LoginScreen';
 import { useDataSync } from './hooks/useDataSync';
 import { useOrderCalculations } from './hooks/useOrderCalculations';
@@ -103,6 +105,15 @@ import { modalVariants, buttonTap, buttonHover, triggerHaptic, containerVariants
 const App: React.FC = () => {
   // ... (State declarations remain unchanged) ...
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    // 元件掛載完成後，確保 DOM 已經存在再獲取
+    const el = document.getElementById('main-scroll-container');
+    if (el) {
+      setScrollElement(el);
+    }
+  }, []);
 
   const addToast = useCallback((message: string, type: ToastType = 'info') => {
     const id = Date.now().toString();
@@ -329,8 +340,16 @@ const App: React.FC = () => {
 
   // NEW: Order Search & Filter
   const [orderSearch, setOrderSearch] = useState('');
+  const [localOrderSearch, setLocalOrderSearch] = useState('');
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<string[]>([]);
   const [showOrderDeliveryFilters, setShowOrderDeliveryFilters] = useState(false);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setOrderSearch(localOrderSearch);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [localOrderSearch]);
 
   const [holidayEditorId, setHolidayEditorId] = useState<string | null>(null);
 
@@ -409,14 +428,30 @@ const App: React.FC = () => {
   const [isEditingProduct, setIsEditingProduct] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<Partial<Product>>({});
   const [customerSearch, setCustomerSearch] = useState('');
+  const [localCustomerSearch, setLocalCustomerSearch] = useState('');
+  const [visibleCustomerCount, setVisibleCustomerCount] = useState(50);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setCustomerSearch(localCustomerSearch);
+      setVisibleCustomerCount(50); // reset visible count on search
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [localCustomerSearch]);
   
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
+  const [visibleModalOrderCount, setVisibleModalOrderCount] = useState(20);
   
   const [isScrollingDown, setIsScrollingDown] = useState(false);
-  const [lastScrollY, setLastScrollY] = useState(0);
+  const lastScrollYRef = useRef(0);
   
   const [initialProductOrder, setInitialProductOrder] = useState<string[]>([]);
   const [hasReorderedProducts, setHasReorderedProducts] = useState(false);
+  const [localProducts, setLocalProducts] = useState(products);
+
+  useEffect(() => {
+    setLocalProducts(products);
+  }, [products]);
 
   const [lastOrderCandidate, setLastOrderCandidate] = useState<{date: string, items: OrderItem[], sourceLabel?: string} | null>(null);
 
@@ -435,21 +470,32 @@ const App: React.FC = () => {
   }, [isProductFilterOpen, actionMenuTarget]);
 
   useEffect(() => {
-    const handleScroll = () => {
-      const currentScrollY = window.scrollY; // 如果你的滾動容器是特定 div，這裡改為該 div 的 scrollTop
+    // 1. 綁定到真正的內部滾動主體
+    const scrollContainer = document.getElementById('main-scroll-container');
+    if (!scrollContainer) return;
+
+    const handleScroll = throttle(() => {
+      const currentScrollY = scrollContainer.scrollTop; 
       
-      // 當向下滑動超過 50px 時隱藏，向上滑動時顯示
-      if (currentScrollY > lastScrollY && currentScrollY > 50) {
+      // 2. 使用 ref 的最新值來判斷滑動方向
+      if (currentScrollY > lastScrollYRef.current && currentScrollY > 50) {
         setIsScrollingDown(true);
-      } else if (currentScrollY < lastScrollY) {
+      } else if (currentScrollY < lastScrollYRef.current) {
         setIsScrollingDown(false);
       }
-      setLastScrollY(currentScrollY);
-    };
+      
+      // 3. 直接寫入 ref，這不會觸發整頁重新渲染！(拯救效能的關鍵)
+      lastScrollYRef.current = currentScrollY;
+    }, 300);
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [lastScrollY]);
+    // 掛載事件監聽
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
+    // 清除機制
+    return () => {
+      scrollContainer.removeEventListener('scroll', handleScroll);
+      handleScroll.cancel();
+    };
+  }, []); // 🚨 依賴項務必為空！保證整個生命週期只會綁定這 1 次！
 
   useEffect(() => {
     if (isAddingOrder || isEditingCustomer || isEditingProduct || editingOrderId) {
@@ -623,7 +669,9 @@ const App: React.FC = () => {
     settlementTarget,
     settlementDate,
     orderForm,
-    quickAddData
+    quickAddData,
+    customerMap,
+    productMap
   });
 
   // 👇 新增這段：當展開的客戶訂單被刪光時，自動關閉 Modal
@@ -1055,6 +1103,155 @@ const App: React.FC = () => {
     );
   }
 
+  const virtuosoOrderData = useMemo(() => {
+    return Object.entries(groupedOrders as Record<string, Order[]>).map(([custName, custOrders]) => {
+      let totalAmount = 0;
+      const itemTotals = new Map<string, number>();
+      const currentCustomer = customerMap[custName];
+
+      custOrders.forEach(o => { 
+        o.items.forEach(item => { 
+          const p = productMap[item.productId]; 
+          const pName = item.productName || p?.name || (isBackgroundSyncing && products.length === 0 ? '載入中...' : item.productId); 
+          const unit = item.unit || p?.unit || '斤'; 
+          
+          const key = `${pName}::${unit}`;
+          itemTotals.set(key, (itemTotals.get(key) || 0) + item.quantity);
+
+          if (unit === '元') { 
+            totalAmount += item.quantity; 
+          } else { 
+            const priceInfo = currentCustomer?.priceList?.find(pl => pl.productId === item.productId); 
+            const price = priceInfo ? priceInfo.price : (p?.price || 0); 
+            totalAmount += Math.round(item.quantity * price); 
+          } 
+        }); 
+      });
+
+      const itemSummaries = Array.from(itemTotals.entries()).map(([key, qty]) => {
+        const [name, unit] = key.split('::');
+        return `${name} ${qty}${unit}`;
+      });
+      const summaryText = itemSummaries.join('、');
+
+      const allPaid = custOrders.every(o => o.status === OrderStatus.PAID);
+      const allShipped = custOrders.every(o => o.status === OrderStatus.SHIPPED || o.status === OrderStatus.PAID);
+      let statusTag = { label: '待處理', color: 'bg-blue-50 text-blue-600 border-blue-100' };
+      if (allPaid) statusTag = { label: '已收款', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
+      else if (allShipped) statusTag = { label: '已配送', color: 'bg-amber-50 text-amber-600 border-amber-100' };
+      const totalItemCount = custOrders.reduce((sum, o) => sum + o.items.length, 0);
+
+      return {
+        custName,
+        custOrders,
+        currentCustomer,
+        totalAmount,
+        summaryText,
+        statusTag,
+        allPaid,
+        allShipped,
+        totalItemCount
+      };
+    });
+  }, [groupedOrders, productMap, customerMap, products.length, isBackgroundSyncing]);
+
+  const virtuosoContext = useMemo(() => ({
+    expandedCustomer, 
+    setExpandedCustomer, 
+    requireAuth, 
+    setQuickAddData, 
+    handleCopyOrder, 
+    openGoogleMaps, 
+    productMap, 
+    customerMap, 
+    isLoadingProducts, 
+    isSelectionMode, 
+    selectedOrderIds, 
+    handleToggleSelectionStable, 
+    handleSwipeStatusChange, 
+    handleDeleteOrderStable, 
+    handleShareOrder, 
+    handleEditOrderStable, 
+    handleRetryOrder, 
+    setViewingCustomerProfile, 
+    buttonTap
+  }), [
+    expandedCustomer, setExpandedCustomer, requireAuth, setQuickAddData, 
+    handleCopyOrder, openGoogleMaps, productMap, customerMap, 
+    isLoadingProducts, isSelectionMode, selectedOrderIds, 
+    handleToggleSelectionStable, handleSwipeStatusChange, 
+    handleDeleteOrderStable, handleShareOrder, handleEditOrderStable, 
+    handleRetryOrder, setViewingCustomerProfile, buttonTap
+  ]);
+
+  const renderVirtuosoItem = useCallback((_index: number, data: any, context: any) => {
+    const { custName, custOrders, totalAmount, summaryText, statusTag, totalItemCount } = data;
+    const { 
+      expandedCustomer, setExpandedCustomer, requireAuth, setQuickAddData, 
+      handleCopyOrder, openGoogleMaps, productMap, customerMap, 
+      isLoadingProducts, isSelectionMode, selectedOrderIds, 
+      handleToggleSelectionStable, handleSwipeStatusChange, 
+      handleDeleteOrderStable, handleShareOrder, handleEditOrderStable, 
+      handleRetryOrder, setViewingCustomerProfile, buttonTap 
+    } = context;
+
+    const isExpanded = expandedCustomer === custName;
+    
+    return (
+      <div key={custName} className="pb-3 px-1">
+        <div className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-all duration-300">
+          <button onClick={() => setExpandedCustomer(isExpanded ? null : custName)} className="w-full flex items-center justify-between p-5 text-left active:bg-morandi-oatmeal/30 transition-colors">
+            <div className="flex items-center gap-4 overflow-hidden">
+              <div className={`w-12 h-12 rounded-[16px] flex-shrink-0 flex items-center justify-center text-xl font-extrabold transition-colors ${isExpanded ? 'bg-morandi-blue text-white' : 'bg-morandi-oatmeal text-morandi-pebble'}`}>{String(custName || '').charAt(0)}</div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className={`font-bold text-lg truncate tracking-tight ${isExpanded ? 'text-morandi-charcoal' : 'text-slate-700'}`}>{custName}</h3>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold flex-shrink-0 border ${statusTag.color}`}>{statusTag.label}</span>
+                  {totalAmount > 0 && (<span className="bg-morandi-amber-bg text-morandi-amber-text text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 tracking-wide">${totalAmount.toLocaleString()}</span>)}
+                </div>
+                {!isExpanded && (<p className="text-xs text-morandi-pebble font-medium truncate leading-relaxed tracking-wide">{summaryText || `${totalItemCount} 個品項`}</p>)}
+              </div>
+            </div>
+            {isExpanded ? <ChevronUp className="w-5 h-5 text-morandi-pebble flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-morandi-pebble flex-shrink-0" />}
+          </button>
+          
+          {isExpanded && (
+            <div className="bg-morandi-oatmeal/20 border-t border-slate-100 overflow-hidden">
+              <div className="p-5 flex flex-col gap-3">
+                {custOrders.map((order: any) => (
+                  <div key={order.id}>
+                     <SwipeableOrderCard 
+                    key={order.id} 
+                    order={order} 
+                    productMap={productMap} 
+                    customerMap={customerMap}
+                    isLoadingProducts={isLoadingProducts}
+                    isSelectionMode={isSelectionMode}
+                    isSelected={selectedOrderIds.has(order.id)}
+                    onToggleSelection={handleToggleSelectionStable}
+                    onStatusChange={handleSwipeStatusChange}
+                    onDelete={handleDeleteOrderStable}
+                    onShare={handleShareOrder}
+                    onMap={openGoogleMaps}
+                    onEdit={handleEditOrderStable}
+                    onRetry={handleRetryOrder}
+                    onViewCustomer={setViewingCustomerProfile}
+                 />
+                  </div>
+              ))}
+              <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
+              <div className="flex gap-2 pt-2">
+                 <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => handleCopyOrder(custName, custOrders))} className="flex-1 py-3 px-4 rounded-[16px] bg-white text-morandi-pebble border border-slate-200 font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors shadow-sm tracking-wide"><Copy className="w-4 h-4" /> 複製</motion.button>
+                 <motion.button whileTap={buttonTap} onClick={() => openGoogleMaps(custName)} className="flex-1 py-3 px-4 rounded-[16px] bg-morandi-blue text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors shadow-lg shadow-morandi-blue/20 tracking-wide"><MapPin className="w-4 h-4" /> 導航</motion.button>
+              </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, []); // 🚨 空依賴保證參照不變
+
   return (
     <div className="h-[100dvh] flex flex-col max-w-md mx-auto bg-morandi-oatmeal relative shadow-2xl overflow-hidden text-morandi-charcoal font-sans">
       {/* 熱機 UI 橫幅 */}
@@ -1281,7 +1478,7 @@ const App: React.FC = () => {
             animate={{ opacity: 1, x: 0, zIndex: 10 }} // Step 3: Ensure Z-index high
             exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} // Step 1: Pointer events none + Low Z-index
             transition={{ duration: 0.2 }}
-            className="space-y-6 relative"
+            className="space-y-6 relative flex flex-col h-full"
           >
             {/* ... (Orders Tab Content) */}
             <div className="sticky top-0 z-30 bg-morandi-oatmeal py-2 space-y-2 px-1 mb-2 shadow-sm rounded-b-[20px] pb-4">
@@ -1343,12 +1540,12 @@ const App: React.FC = () => {
                        type="text" 
                        placeholder="搜尋客戶名稱或電話..." 
                        className="w-full pl-10 pr-20 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300" 
-                       value={orderSearch} 
-                       onChange={(e) => setOrderSearch(e.target.value)} 
+                       value={localOrderSearch} 
+                       onChange={(e) => setLocalOrderSearch(e.target.value)} 
                      />
                      <div className="absolute right-2 flex items-center gap-1">
-                       {orderSearch && (
-                         <button onClick={() => setOrderSearch('')} className="p-1 rounded-full bg-gray-100 text-gray-400 hover:bg-gray-200">
+                       {localOrderSearch && (
+                         <button onClick={() => { setOrderSearch(''); setLocalOrderSearch(''); }} className="p-1 rounded-full bg-gray-100 text-gray-400 hover:bg-gray-200">
                            <X className="w-3 h-3" />
                          </button>
                        )}
@@ -1418,142 +1615,35 @@ const App: React.FC = () => {
                  </AnimatePresence>
                </motion.div>
             </div>
-             {/* ... (Orders List - same logic as before but using toast handlers) */}
-             <div className="space-y-3">
+            
+             <div className="space-y-3 flex-1 flex flex-col h-full">
               <div className="flex items-center justify-between px-2 mb-2">
-                <h2 className="text-sm font-bold text-morandi-pebble flex items-center gap-2 uppercase tracking-widest"><Layers className="w-4 h-4" /> 配送列表 [{selectedDate}] ({Object.keys(groupedOrders).length} 家)</h2>
+                <h2 className="text-sm font-bold text-morandi-pebble flex items-center gap-2 uppercase tracking-widest"><Layers className="w-4 h-4" /> 配送列表 [{selectedDate}] ({virtuosoOrderData.length} 家)</h2>
               </div>
-              <motion.div variants={containerVariants} initial="hidden" animate="show">
-              {Object.keys(groupedOrders).length > 0 ? (
+              <motion.div variants={containerVariants} initial="hidden" animate="show" className="flex-1 h-full">
+              {scrollElement && virtuosoOrderData.length > 0 ? (
                 <Virtuoso
-                  customScrollParent={mainRef.current || undefined}
-                  data={Object.entries(groupedOrders as Record<string, Order[]>)}
-                  itemContent={(index, [custName, custOrders]) => {
-                    const isExpanded = expandedCustomer === custName;
-                    const currentCustomer = customerMap[custName];
-                    
-                    // 1. 計算商品總和與總價格
-                    let totalAmount = 0;
-                    const itemTotals = new Map<string, number>();
-
-                    custOrders.forEach(o => { 
-                      o.items.forEach(item => { 
-                        const p = productMap[item.productId]; 
-                        const pName = item.productName || p?.name || (isBackgroundSyncing && products.length === 0 ? '載入中...' : item.productId); 
-                        const unit = item.unit || p?.unit || '斤'; 
-                        
-                        // 加總相同品項與單位
-                        const key = `${pName}::${unit}`;
-                        itemTotals.set(key, (itemTotals.get(key) || 0) + item.quantity);
-
-                        // 計算總價格
-                        if (unit === '元') { 
-                          totalAmount += item.quantity; 
-                        } else { 
-                          const priceInfo = currentCustomer?.priceList?.find(pl => pl.productId === item.productId); 
-                          const price = priceInfo ? priceInfo.price : (p?.price || 0); 
-                          totalAmount += Math.round(item.quantity * price); 
-                        } 
-                      }); 
-                    });
-
-                    // 轉換為字串陣列 (例如: 油麵 3斤)
-                    const itemSummaries = Array.from(itemTotals.entries()).map(([key, qty]) => {
-                      const [name, unit] = key.split('::');
-                      return `${name} ${qty}${unit}`;
-                    });
-                    const summaryText = itemSummaries.join('、');
-
-                    // 2. 判斷綜合狀態
-                    const allPaid = custOrders.every(o => o.status === OrderStatus.PAID);
-                    const allShipped = custOrders.every(o => o.status === OrderStatus.SHIPPED || o.status === OrderStatus.PAID);
-                    let statusTag = { label: '待處理', color: 'bg-blue-50 text-blue-600 border-blue-100' };
-                    if (allPaid) statusTag = { label: '已收款', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
-                    else if (allShipped) statusTag = { label: '已配送', color: 'bg-amber-50 text-amber-600 border-amber-100' };
-
-                    return (
-                      <div key={custName} className="pb-3 px-1">
-                        <motion.div variants={itemVariants} className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow duration-300">
-                          <button onClick={() => setExpandedCustomer(isExpanded ? null : custName)} className="w-full flex items-center justify-between p-5 text-left active:bg-morandi-oatmeal/30 transition-colors">
-                            <div className="flex items-center gap-4 overflow-hidden">
-                              <div className={`w-12 h-12 rounded-[16px] flex-shrink-0 flex items-center justify-center text-xl font-extrabold transition-colors ${isExpanded ? 'bg-morandi-blue text-white' : 'bg-morandi-oatmeal text-morandi-pebble'}`}>{String(custName || '').charAt(0)}</div>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <h3 className={`font-bold text-lg truncate tracking-tight ${isExpanded ? 'text-morandi-charcoal' : 'text-slate-700'}`}>{custName}</h3>
-                                  {/* 新增狀態標籤 */}
-                                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold flex-shrink-0 border ${statusTag.color}`}>{statusTag.label}</span>
-                                  {/* 原本的總價格 */}
-                                  {totalAmount > 0 && (<span className="bg-morandi-amber-bg text-morandi-amber-text text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 tracking-wide">${totalAmount.toLocaleString()}</span>)}
-                                </div>
-                                {!isExpanded && (<p className="text-xs text-morandi-pebble font-medium truncate leading-relaxed tracking-wide">{summaryText || `${custOrders.reduce((sum, o) => sum + o.items.length, 0)} 個品項`}</p>)}
-                              </div>
-                            </div>
-                            {isExpanded ? <ChevronUp className="w-5 h-5 text-morandi-pebble flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-morandi-pebble flex-shrink-0" />}
-                          </button>
-                          
-                          <AnimatePresence>
-                          {isExpanded && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="bg-morandi-oatmeal/20 border-t border-slate-100 overflow-hidden">
-                              <div className="p-5 flex flex-col gap-3">
-                                <AnimatePresence initial={false}>
-                                {custOrders.map((order) => (
-                                  <motion.div
-                                     key={order.id}
-                                     layout="position"
-                                     initial={{ opacity: 0, height: 0, y: -20, overflow: 'hidden' }}
-                                     animate={{ opacity: 1, height: 'auto', y: 0, overflow: 'visible' }}
-                                     exit={{ opacity: 0, height: 0, scale: 0.95, overflow: 'hidden' }}
-                                     transition={{ 
-                                       opacity: { duration: 0.2 },
-                                       height: { type: "spring", stiffness: 300, damping: 30 },
-                                       y: { type: "spring", stiffness: 300, damping: 30 }
-                                     }}
-                                  >
-                                     <SwipeableOrderCard 
-                                    key={order.id} 
-                                    order={order} 
-                                    productMap={productMap} 
-                                    customerMap={customerMap}
-                                    isLoadingProducts={isLoadingProducts}
-                                    isSelectionMode={isSelectionMode}
-                                    isSelected={selectedOrderIds.has(order.id)}
-                                    onToggleSelection={handleToggleSelectionStable}
-                                    onStatusChange={handleSwipeStatusChange} // Use Undo handler
-                                    onDelete={handleDeleteOrderStable}
-                                    onShare={handleShareOrder}
-                                    onMap={openGoogleMaps}
-                                    onEdit={handleEditOrderStable}
-                                    onRetry={handleRetryOrder}
-                                    onViewCustomer={setViewingCustomerProfile}
-                                 />
-                                  </motion.div>
-                              ))}
-                              </AnimatePresence>
-                              <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
-                              <div className="flex gap-2 pt-2">
-                                 <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => handleCopyOrder(custName, custOrders))} className="flex-1 py-3 px-4 rounded-[16px] bg-white text-morandi-pebble border border-slate-200 font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors shadow-sm tracking-wide"><Copy className="w-4 h-4" /> 複製</motion.button>
-                                 <motion.button whileTap={buttonTap} onClick={() => openGoogleMaps(custName)} className="flex-1 py-3 px-4 rounded-[16px] bg-morandi-blue text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors shadow-lg shadow-morandi-blue/20 tracking-wide"><MapPin className="w-4 h-4" /> 導航</motion.button>
-                              </div>
-                              </div>
-                            </motion.div>
-                          )}
-                          </AnimatePresence>
-                        </motion.div>
-                      </div>
-                    );
-                  }}
+                  customScrollParent={scrollElement}
+                  className="custom-scrollbar"
+                  data={virtuosoOrderData}
+                  context={virtuosoContext}
+                  itemContent={renderVirtuosoItem}
                 />
-              ) : (
+              ) : virtuosoOrderData.length === 0 ? (
                 <div className="py-20 flex flex-col items-center text-center gap-4">
                   <ClipboardList className="w-16 h-16 text-gray-200" />
                   {orderSearch || orderDeliveryFilter.length > 0 ? (
                      <>
                        <p className="text-gray-400 font-bold text-sm tracking-wide">找不到符合條件的訂單</p>
-                       <button onClick={() => { setOrderSearch(''); setOrderDeliveryFilter([]); }} className="text-xs text-morandi-blue font-bold underline">清除篩選條件</button>
+                       <button onClick={() => { setOrderSearch(''); setLocalOrderSearch(''); setOrderDeliveryFilter([]); }} className="text-xs text-morandi-blue font-bold underline">清除篩選條件</button>
                      </>
                   ) : (
                      <p className="text-gray-300 italic text-sm tracking-wide">此日期尚無訂單</p>
                   )}
+                </div>
+              ) : (
+                <div className="py-20 text-center text-gray-400">
+                  載入清單中...
                 </div>
               )}
               </motion.div>
@@ -1607,10 +1697,10 @@ const App: React.FC = () => {
            <motion.div key="customers" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="relative">
             <div className="sticky top-0 z-20 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
               <div className="flex justify-between items-center mb-3"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2><motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setCustomerForm({ name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div>
-              <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="搜尋店家名稱..." className="w-full pl-10 pr-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} /></div>
+              <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="搜尋店家名稱..." className="w-full pl-10 pr-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400" value={localCustomerSearch} onChange={(e) => setLocalCustomerSearch(e.target.value)} /></div>
             </div>
             <motion.div variants={containerVariants} initial="hidden" animate="show" className="pt-4">
-            {filteredCustomers.map(c => {
+            {filteredCustomers.slice(0, visibleCustomerCount).map(c => {
                const hasOrderToday = groupedOrders[c.name] && groupedOrders[c.name].length > 0;
                return (
                   <motion.div variants={itemVariants} key={c.id} className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-200 mb-4 hover:shadow-md transition-all relative overflow-hidden">
@@ -1646,15 +1736,32 @@ const App: React.FC = () => {
                );
             })}
             </motion.div>
+            {filteredCustomers.length > visibleCustomerCount && (
+              <div className="flex justify-center mt-4 mb-8">
+                <button 
+                  onClick={() => setVisibleCustomerCount(prev => prev + 50)} 
+                  className="px-6 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-full text-sm font-bold shadow-sm hover:bg-slate-50 transition-colors"
+                >
+                  載入更多 ({filteredCustomers.length - visibleCustomerCount})
+                </button>
+              </div>
+            )}
             {filteredCustomers.length === 0 && <div className="text-center py-10 text-gray-300 text-sm font-bold tracking-wide">查無店家</div>}
            </motion.div>
         )}
         {activeTab === 'products' && (
           <motion.div key="products" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
              <div className="flex justify-between items-center px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Package className="w-5 h-5 text-morandi-blue" /> 品項清單</h2><div className="flex gap-2">{hasReorderedProducts && (<motion.button initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} whileTap={buttonTap} onClick={() => requireAuth(handleSaveProductOrder)} disabled={isSaving || isWarmingUp} className="p-3 rounded-2xl text-white shadow-lg bg-emerald-500 hover:bg-emerald-600 transition-colors flex items-center gap-2">{isSaving || isWarmingUp || isRetrying ? <Loader2 className="w-6 h-6 animate-spin"/> : <Save className="w-6 h-6" />}<span className="text-xs font-bold hidden sm:inline">{isRetrying ? '重試中...' : '儲存排序'}</span></motion.button>)}<motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setProductForm({ name: '', unit: '斤', price: 0, category: 'other' }); setIsEditingProduct('new'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div></div>
-             <Reorder.Group axis="y" values={products} onReorder={(newOrder) => { setProducts(newOrder); setHasReorderedProducts(true); }} className="space-y-0">
-               {products.map(p => (<SortableProductItem key={p.id} product={p} onEdit={(p) => requireAuth(() => { setProductForm(p); setIsEditingProduct(p.id); })} onDelete={(id) => requireAuth(() => handleDeleteProduct(id))} />))}
-             </Reorder.Group>
+             <div onPointerUp={() => {
+                 if (localProducts !== products) {
+                   setProducts(localProducts);
+                   setHasReorderedProducts(true);
+                 }
+               }}>
+               <Reorder.Group axis="y" values={localProducts} onReorder={setLocalProducts} className="space-y-0">
+                 {localProducts.map(p => (<SortableProductItem key={p.id} product={p} onEdit={(p) => requireAuth(() => { setProductForm(p); setIsEditingProduct(p.id); })} onDelete={(id) => requireAuth(() => handleDeleteProduct(id))} />))}
+               </Reorder.Group>
+             </div>
           </motion.div>
         )}
         {/* ... (Other Tabs code remains same) ... */}
@@ -1858,51 +1965,22 @@ const App: React.FC = () => {
                         </div>
                         
                         {isOrderReorderMode ? (
-                          <Reorder.Group 
-                            axis="y" 
-                            values={tripOrders} 
-                            onReorder={(newOrderList) => {
-                              const newSet = new Set(reorderedOrderIds);
-                              const updatedOrders = orders.map(o => {
-                                const index = newOrderList.findIndex(no => no.id === o.id);
-                                if (index !== -1) {
-                                  const newSortOrder = index * 10;
-                                  if (o.sortOrder !== newSortOrder) {
-                                    newSet.add(o.id);
-                                    return { ...o, sortOrder: newSortOrder, syncStatus: 'pending' as const, pendingAction: 'update' as const };
-                                  }
-                                }
-                                return o;
-                              });
-                              setReorderedOrderIds(newSet);
-                              setOrders(updatedOrders);
-                            }}
-                            className="space-y-3"
-                          >
-                            {tripOrders.map((order) => (
-                              <Reorder.Item key={order.id} value={order} className="relative">
-                                <div className="flex items-center gap-2">
-                                  <div className="cursor-grab active:cursor-grabbing p-2">
-                                    <GripVertical className="w-5 h-5 text-gray-400" />
-                                  </div>
-                                  <div className="flex-1 pointer-events-none">
-                                    <ScheduleOrderCard 
-                                      order={order}
-                                      productMap={productMap}
-                                      customerMap={customerMap}
-                                      isLoadingProducts={isLoadingProducts}
-                                      isSelectionMode={isSelectionMode}
-                                      isSelected={selectedOrderIds.has(order.id)}
-                                      onToggleSelection={handleToggleSelectionStable}
-                                      onStatusChange={handleSwipeStatusChange}
-                                      onShare={handleShareOrder}
-                                      onMap={openGoogleMaps}
-                                    />
-                                  </div>
-                                </div>
-                              </Reorder.Item>
-                            ))}
-                          </Reorder.Group>
+                          <TripReorderGroup
+                            tripOrders={tripOrders}
+                            orders={orders}
+                            setOrders={setOrders}
+                            reorderedOrderIds={reorderedOrderIds}
+                            setReorderedOrderIds={setReorderedOrderIds}
+                            productMap={productMap}
+                            customerMap={customerMap}
+                            isLoadingProducts={isLoadingProducts}
+                            isSelectionMode={isSelectionMode}
+                            selectedOrderIds={selectedOrderIds}
+                            handleToggleSelectionStable={handleToggleSelectionStable}
+                            handleSwipeStatusChange={handleSwipeStatusChange}
+                            handleShareOrder={handleShareOrder}
+                            openGoogleMaps={openGoogleMaps}
+                          />
                         ) : (
                           <div className="space-y-3">
                             {tripOrders.map((order) => (
@@ -2718,7 +2796,7 @@ const App: React.FC = () => {
           >
             <div className="space-y-3">
               <AnimatePresence initial={false}>
-              {groupedOrders[selectedCustomerForModal].map(order => (
+              {groupedOrders[selectedCustomerForModal].slice(0, visibleModalOrderCount).map(order => (
                 <motion.div
                   key={order.id}
                   layout="position"
@@ -2751,6 +2829,16 @@ const App: React.FC = () => {
                 </motion.div>
               ))}
               </AnimatePresence>
+              {groupedOrders[selectedCustomerForModal].length > visibleModalOrderCount && (
+                <div className="flex justify-center mt-2 mb-2">
+                  <button 
+                    onClick={() => setVisibleModalOrderCount(v => v + 20)}
+                    className="px-6 py-2 bg-white border border-slate-200 text-slate-600 rounded-full text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors"
+                  >
+                    載入更多 ({groupedOrders[selectedCustomerForModal].length - visibleModalOrderCount})
+                  </button>
+                </div>
+              )}
             </div>
             <div className="bg-white rounded-[24px] p-4 mt-2 shadow-sm">
               <motion.button 

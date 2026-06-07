@@ -20,6 +20,8 @@ interface UseOrderCalculationsProps {
   settlementDate: string;
   orderForm?: { customerId?: string; items: { productId: string; quantity: number; unit: string }[] };
   quickAddData?: { customerName: string; items: { productId: string; quantity: number; unit: string }[] } | null;
+  customerMap: Record<string, Customer>;
+  productMap: Record<string, Product>;
 }
 
 export const useOrderCalculations = ({
@@ -39,7 +41,9 @@ export const useOrderCalculations = ({
   settlementTarget,
   settlementDate,
   orderForm,
-  quickAddData
+  quickAddData,
+  customerMap,
+  productMap
 }: UseOrderCalculationsProps) => {
 
   // 0. Order Summary (for Order Form)
@@ -47,11 +51,11 @@ export const useOrderCalculations = ({
     if (!orderForm) return { totalPrice: 0, details: [] };
     
     // 1. 取得目前選擇的客戶
-    const customer = customers.find(c => c.id === orderForm.customerId);
+    const customer = orderForm.customerId ? customerMap[orderForm.customerId] : undefined;
     
     let total = 0;
     const details = orderForm.items.map(item => {
-      const p = products.find(prod => prod.id === item.productId);
+      const p = productMap[item.productId];
       if (!p) return { name: '未知', rawQty: 0, displayQty: 0, displayUnit: item.unit, subtotal: 0, isCalculated: false, unitPrice: 0 };
       
       // 2. 判斷是否有專屬價格
@@ -89,10 +93,10 @@ export const useOrderCalculations = ({
 
   // 1. Helper: Calculate Total Amount for a single Order
   const calculateOrderTotalAmount = (order: Order) => {
-    const customer = customers.find(c => c.name === order.customerName);
+    const customer = customerMap[order.customerName];
     let total = 0;
     (Array.isArray(order.items) ? order.items : []).forEach(item => {
-      const product = products.find(p => p.id === item.productId || p.name === item.productId);
+      const product = productMap[item.productId];
       const priceItem = customer?.priceList?.find(pl => pl.productId === (product?.id || item.productId));
       const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
 
@@ -108,13 +112,13 @@ export const useOrderCalculations = ({
   // 3. Quick Add Preview
   const getQuickAddPricePreview = () => {
     if (!quickAddData || quickAddData.items.length === 0) return null;
-    const customer = customers.find(c => c.name === quickAddData.customerName);
+    const customer = customerMap[quickAddData.customerName];
     if (!customer) return null;
 
     let totalOrderPrice = 0;
     quickAddData.items.forEach(item => {
       if (!item.productId) return;
-      const product = products.find(p => p.id === item.productId);
+      const product = productMap[item.productId];
       if (!product) return;
 
       const priceItem = customer.priceList?.find(pl => pl.productId === product.id);
@@ -137,7 +141,7 @@ export const useOrderCalculations = ({
     const rawOrders = orders.filter(o => {
       if (o.deliveryDate !== scheduleDate) return false;
       if (scheduleDeliveryMethodFilter.length > 0) {
-        const customer = customers.find(c => c.name === o.customerName);
+        const customer = customerMap[o.customerName];
         const method = o.deliveryMethod || customer?.deliveryMethod || '';
         if (!scheduleDeliveryMethodFilter.includes(method)) return false;
       }
@@ -250,7 +254,7 @@ export const useOrderCalculations = ({
       const term = orderSearch.toLowerCase();
       dayOrders = dayOrders.filter(o => {
         const matchName = String(o.customerName || '').toLowerCase().includes(term);
-        const customer = customers.find(c => c.name === o.customerName);
+        const customer = customerMap[o.customerName];
         const matchPhone = String(customer?.phone || '').includes(term);
         return matchName || matchPhone;
       });
@@ -259,7 +263,7 @@ export const useOrderCalculations = ({
     // Filter by Delivery Method
     if (orderDeliveryFilter.length > 0) {
       dayOrders = dayOrders.filter(o => {
-        const customer = customers.find(c => c.name === o.customerName);
+        const customer = customerMap[o.customerName];
         const method = o.deliveryMethod || customer?.deliveryMethod || '';
         return orderDeliveryFilter.includes(method);
       });
@@ -304,7 +308,7 @@ export const useOrderCalculations = ({
     
     if (workDeliveryMethodFilter.length > 0) {
       filtered = filtered.filter(o => {
-        const c = customers.find(cust => cust.name === o.customerName);
+        const c = customerMap[o.customerName];
         const m = o.deliveryMethod || c?.deliveryMethod || '';
         return workDeliveryMethodFilter.includes(m);
       });
@@ -314,7 +318,7 @@ export const useOrderCalculations = ({
 
     filtered.forEach(o => {
       o.items.forEach(item => {
-        const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+        const p = productMap[item.productId];
         const pName = item.productName || p?.name || item.productId;
         const unit = item.unit || p?.unit || '斤';
         const key = `${pName}::${unit}`; 
@@ -343,7 +347,7 @@ export const useOrderCalculations = ({
     groups['other'] = [];
 
     flatList.forEach(item => { 
-      const product = products.find(p => p.name === item.name); 
+      const product = productMap[item.name]; 
       
       // 👇 新增這段：如果有設定特定麵種篩選，且該產品不在篩選名單內，則跳過不計算
       if (workProductFilter.size > 0 && product && !workProductFilter.has(product.id)) {
