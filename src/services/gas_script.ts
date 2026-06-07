@@ -171,11 +171,15 @@ function doPost(e) {
         result = checkReminders(params.data.ruleId, true);
         break;
       case "getNotificationLogs":
-        result = getNotificationLogs();
-        break;
+        return ContentService.createTextOutput(JSON.stringify({
+          success: true,
+          data: []
+        })).setMimeType(ContentService.MimeType.JSON);
       case "getSystemLogs":
-        result = getSystemLogs(params.data?.limit || 200);
-        break;
+        return ContentService.createTextOutput(JSON.stringify({
+          success: true,
+          data: []
+        })).setMimeType(ContentService.MimeType.JSON);
       default:
         throw new Error("Unknown action: " + action);
     }

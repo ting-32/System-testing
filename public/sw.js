@@ -8,6 +8,8 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // We just let the request pass through
-  event.respondWith(fetch(event.request));
+  // IMPORTANT: For a simple passthrough Service Worker, do NOT use event.respondWith().
+  // Calling event.respondWith(fetch(event.request)) can break Vite's HMR, Server-Sent Events, 
+  // and cause Uncaught Promise rejections if the network disconnects.
+  // Leaving this empty allows the browser to handle all network requests natively.
 });
