@@ -1,56 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { throttle } from 'lodash';
-import { 
-  Users, 
-  Package, 
-  ClipboardList, 
-  History,
-  Settings,
-  BellRing,
-  ChevronLeft,
-  ChevronDown,
-  ChevronUp,
-  Search,
-  Clock,
-  X,
-  Plus,
-  Trash2,
-  Edit2, // Used for Edit Icon
-  Layers,
-  CalendarDays,
-  Loader2,
-  WifiOff,
-  CheckCircle2,
-  FileText,
-  ListChecks,
-  Printer,
-  RefreshCw,
-  Save,
-  DollarSign,
-  Calculator,
-  CalendarCheck,
-  Copy,
-  MapPin,
-  Banknote,
-  CheckSquare,
-  Wallet,
-  Mic, // New Import
-  Filter,
-  Check,
-  GripVertical,
-  Navigation,
-  Info,
-  MoreVertical,
-  Bot,
-  Lock,
-  Unlock,
-  ArrowUp
-} from 'lucide-react';
-import { motion, AnimatePresence, Reorder } from 'framer-motion';
-import { Virtuoso } from 'react-virtuoso';
+import { Users, Package, ClipboardList, History, Settings, BellRing, ChevronDown, ChevronUp, X, Plus, Trash2, // Used for Edit Icon
+  CalendarDays, CheckCircle2, RefreshCw, Calculator, CalendarCheck, Copy, MapPin, Wallet, // New Import
+  Check, Info, Lock, Unlock, ArrowUp } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+;
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
-import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES } from './constants';
+import { WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, } from './constants';
 import { ConfirmModal } from './components/ConfirmModal';
+import { ProductEditModal } from './components/ProductEditModal';
 import { NetworkTimeoutModal } from './components/NetworkTimeoutModal';
 import { VoiceInputModal } from './components/VoiceInputModal';
 import { ConflictModal } from './components/ConflictModal';
@@ -60,17 +18,17 @@ import { TripManagerModal } from './components/TripManagerModal';
 import { ProductPicker } from './components/ProductPicker';
 import { CustomerPicker } from './components/CustomerPicker';
 import { HolidayCalendar } from './components/HolidayCalendar';
-import { WorkCalendar } from './components/WorkCalendar';
+;
 import { CustomerProfileDrawer } from './components/CustomerProfileDrawer';
 import { CustomerReportModal } from './components/CustomerReportModal';
 import { ToastNotification } from './components/ToastNotification';
 import { NotificationCenterModal } from './components/NotificationCenterModal';
 import { NavItem } from './components/NavItem';
-import { SortableProductItem } from './components/SortableProductItem';
+;
 import { SwipeableOrderCard } from './components/SwipeableOrderCard';
 import { SkeletonCard } from './components/SkeletonCard';
-import { ScheduleOrderCard } from './components/ScheduleOrderCard';
-import { TripReorderGroup } from './components/TripReorderGroup';
+;
+;
 import { LoginScreen } from './components/LoginScreen';
 import { useDataSync } from './hooks/useDataSync';
 import { useOrderCalculations } from './hooks/useOrderCalculations';
@@ -81,8 +39,8 @@ import { useAutoOrderPrediction } from './hooks/useAutoOrderPrediction';
 import { useCompactMode } from './hooks/useCompactMode';
 import { fetchWithRetry } from './utils/fetchUtils';
 import { AutoOrderDashboardModal } from './components/modals/AutoOrderDashboardModal';
-import { getTomorrowDate, getSmartDefaultDate, getLastMonthEndDate, formatTimeDisplay, formatTimeForInput, getUpcomingHolidays, isDateInOffDays } from './utils';
-import { modalVariants, buttonTap, buttonHover, triggerHaptic, containerVariants, itemVariants } from './components/animations';
+import { getTomorrowDate, getSmartDefaultDate, getLastMonthEndDate, formatTimeForInput, getUpcomingHolidays, isDateInOffDays } from './utils';
+import { modalVariants, buttonTap, triggerHaptic } from './components/animations';
 
 // ... (Toast Types, Variants, Haptic Helper, Helper Functions remain unchanged) ...
 // --- Toast Types ---
@@ -98,8 +56,15 @@ import { modalVariants, buttonTap, buttonHover, triggerHaptic, containerVariants
 
 
 // ... (SortableProductItem, SwipeableOrderCard, ScheduleOrderCard moved to components) ...
-import { WorkGroupItem } from './components/WorkGroupItem';
-import { DebouncedSearchInput } from './components/DebouncedSearchInput';
+;
+;
+import { CustomersView } from './views/CustomersView';
+import { ProductsView } from './views/ProductsView';
+
+import { FinanceView } from './views/FinanceView';
+import { WorkView } from './views/WorkView';
+import { ScheduleView } from './views/ScheduleView';
+import { OrdersView } from './views/OrdersView';
 
 // ... (LoginScreen, ConfirmModal, ProductPicker, CustomerPicker, HolidayCalendar, WorkCalendar, DatePickerModal, SettingsModal, NavItem, ToastNotification moved to components) ...
 
@@ -343,7 +308,7 @@ const App: React.FC = () => {
     target: 'order' | 'customer'; // 用來區分是「訂單表單」還是「客戶表單」在呼叫
   }>({ isOpen: false, type: null, target: 'order' });
 
-  // NEW: Order Search & Filter
+  // NEW: Order Search
   const [orderSearch, setOrderSearch] = useState('');
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<string[]>([]);
   const [showOrderDeliveryFilters, setShowOrderDeliveryFilters] = useState(false);
@@ -357,8 +322,6 @@ const App: React.FC = () => {
   const [tempPriceValue, setTempPriceValue] = useState('');
   const [tempPriceUnit, setTempPriceUnit] = useState('斤');
 
-  const [collapsedWorkGroups, setCollapsedWorkGroups] = useState<Set<string>>(new Set());
-  const [completedWorkItems, setCompletedWorkItems] = useState<Set<string>>(new Set());
 
   const [pickerConfig, setPickerConfig] = useState<{
     isOpen: boolean;
@@ -388,7 +351,6 @@ const App: React.FC = () => {
   const [isSettling, setIsSettling] = useState(false);
   const [settlementTarget, setSettlementTarget] = useState<{name: string, allOrderIds: string[]} | null>(null);
   const [settlementDate, setSettlementDate] = useState<string>(getLastMonthEndDate());
-  const [financeFilter, setFinanceFilter] = useState<'all' | 'thisMonth' | 'over30' | 'over60'>('all');
   const [partialSettlementTarget, setPartialSettlementTarget] = useState<{name: string, orders: Order[]} | null>(null);
   const [selectedPartialOrderIds, setSelectedPartialOrderIds] = useState<Set<string>>(new Set());
 
@@ -423,9 +385,6 @@ const App: React.FC = () => {
   const [editCustomerMode, setEditCustomerMode] = useState<'full' | 'itemsOnly' | 'holidayOnly'>('full');
   const [showAdvancedCustomerSettings, setShowAdvancedCustomerSettings] = useState(false);
   const [isEditingProduct, setIsEditingProduct] = useState<string | null>(null);
-  const [productForm, setProductForm] = useState<Partial<Product>>({});
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [visibleCustomerCount, setVisibleCustomerCount] = useState(50);
   
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
   const [visibleModalOrderCount, setVisibleModalOrderCount] = useState(20);
@@ -435,11 +394,6 @@ const App: React.FC = () => {
   
   const [initialProductOrder, setInitialProductOrder] = useState<string[]>([]);
   const [hasReorderedProducts, setHasReorderedProducts] = useState(false);
-  const [localProducts, setLocalProducts] = useState(products);
-
-  useEffect(() => {
-    setLocalProducts(products);
-  }, [products]);
 
   const [lastOrderCandidate, setLastOrderCandidate] = useState<{date: string, items: OrderItem[], sourceLabel?: string} | null>(null);
 
@@ -636,7 +590,6 @@ const App: React.FC = () => {
     financeData,
     settlementPreview,
     groupedOrders,
-    filteredCustomers,
     workSheetData,
     calculateOrderTotalAmount
   } = useOrderCalculations({
@@ -653,7 +606,7 @@ const App: React.FC = () => {
     workCustomerFilter,
     workProductFilter,
     workDeliveryMethodFilter,
-    customerSearch,
+    customerSearch: '',
     settlementTarget,
     settlementDate,
     orderForm,
@@ -705,44 +658,7 @@ const App: React.FC = () => {
     setIsSelectionMode(false);
   };
 
-  const handleNavigateTrip = (tripOrders: Order[]) => {
-    // 1. 取得該趟數所有不重複的店家名稱 (依照原本的訂單排序)
-    const customerNames = Array.from(new Set(tripOrders.map(o => o.customerName)));
-    
-    if (customerNames.length === 0) return;
-
-    // 取得對應的客戶資料，優先使用座標，其次使用地址，最後使用客戶名稱
-    const getCustomerLocation = (name: string) => {
-      const customer = customers.find(c => c.name === name);
-      
-      if (customer?.coordinates) {
-        return customer.coordinates;
-      }
-
-      if (customer?.address) {
-        return customer.address;
-      }
-      return name;
-    };
-
-    const locations = customerNames.map(getCustomerLocation);
-
-    // 2. 終點是最後一個地點 (需進行 URL 編碼)
-    const destination = encodeURIComponent(locations[locations.length - 1]);
-    
-    // 3. 中間的地點是停靠站 (waypoints)
-    const waypoints = locations.slice(0, -1).map(loc => encodeURIComponent(loc)).join('|');
-    
-    // 4. 組合 Google Maps 導航網址 (未指定 origin 預設為使用者當前位置)
-    let url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
-    
-    if (waypoints) {
-      url += `&waypoints=${waypoints}`;
-    }
-    
-    // 5. 開啟新分頁導航 (在手機上會自動喚醒 Google Maps App)
-    window.open(url, '_blank');
-  };
+  
 
   // @ts-ignore
   const handleDeleteTrip = (tripToDelete: string) => {
@@ -767,34 +683,7 @@ const App: React.FC = () => {
     }
   };
 
-  const getTripSummary = (tripOrders: Order[]) => {
-    let totalWeight = 0;
-    let totalAmount = 0;
-    let totalQuantity = 0;
-    
-    tripOrders.forEach(order => {
-      const customer = customers.find(c => c.name === order.customerName);
-      
-      order.items.forEach(item => {
-        const product = products.find(p => p.id === item.productId || p.name === item.productId);
-        const priceItem = customer?.priceList?.find(pl => pl.productId === (product?.id || item.productId));
-        const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
-        
-        if (item.unit === '元') {
-          totalAmount += item.quantity;
-        } else {
-          totalAmount += Math.round(item.quantity * unitPrice);
-          if (item.unit === '斤' || item.unit === '公斤') {
-            totalWeight += item.quantity;
-          } else {
-            totalQuantity += item.quantity;
-          }
-        }
-      });
-    });
-    
-    return { totalWeight, totalQuantity, totalAmount };
-  };
+  
 
   // ... (Other handlers remain unchanged until handleCreateOrderFromCustomer) ...
   const {
@@ -907,23 +796,9 @@ const App: React.FC = () => {
     actionsRef.current.openGoogleMaps(name);
   }, []);
 
-  const handleToggleWorkGroupCollapse = useCallback((groupId: string) => {
-    setCollapsedWorkGroups(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(groupId)) newSet.delete(groupId);
-      else newSet.add(groupId);
-      return newSet;
-    });
-  }, []);
+  
 
-  const handleToggleWorkItemComplete = useCallback((itemKey: string) => {
-    setCompletedWorkItems(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(itemKey)) newSet.delete(itemKey);
-      else newSet.add(itemKey);
-      return newSet;
-    });
-  }, []);
+  
 
   // REFACTORED: syncData logic moved to useDataSync hook
 
@@ -1032,7 +907,6 @@ const App: React.FC = () => {
     isSaving,
     setIsSaving,
     customerForm,
-    productForm,
     isEditingCustomer,
     setIsEditingCustomer,
     isEditingProduct,
@@ -1508,892 +1382,142 @@ const App: React.FC = () => {
         {/* ... (Main content remains unchanged) ... */}
         <AnimatePresence mode="popLayout">
         {activeTab === 'orders' && (
-          <motion.div 
-            key="orders"
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0, zIndex: 10 }} // Step 3: Ensure Z-index high
-            exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} // Step 1: Pointer events none + Low Z-index
-            transition={{ duration: 0.2 }}
-            className="space-y-6 relative flex flex-col h-full"
-          >
-            {/* ... (Orders Tab Content) */}
-            <div className="sticky top-0 z-30 bg-morandi-oatmeal py-2 space-y-2 px-1 mb-2 shadow-sm rounded-b-[20px] pb-4">
-               {/* 建議1: 長輩舒適模式下，向下滑動隱藏頂部標題列 */}
-               <motion.div 
-                 initial={false}
-                 animate={{
-                   height: (isScrollingDown && layoutMode === 'compact') ? 0 : 'auto',
-                   opacity: (isScrollingDown && layoutMode === 'compact') ? 0 : 1,
-                   overflow: 'hidden'
-                 }}
-                 transition={{ duration: 0.3, ease: 'easeInOut' }}
-                 className="flex items-center justify-between"
-               >
-                  <motion.button whileTap={buttonTap} onClick={() => setIsDatePickerOpen(true)} className="flex-1 mr-2 flex items-center gap-3 bg-white p-3 rounded-[20px] shadow-sm border border-slate-200 active:scale-95 transition-all">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-morandi-blue/10"><CalendarDays className="w-5 h-5 text-morandi-blue" /></div>
-                    <div><p className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest">出貨日期</p><p className="font-bold text-morandi-charcoal text-lg tracking-tight">{selectedDate}</p></div>
-                  </motion.button>
-                  
-                  <div className="flex gap-2 shrink-0">
-                    <motion.button 
-                      whileTap={buttonTap} 
-                      onClick={() => {
-                        triggerHaptic();
-                        setIsAutoOrderDashboardOpen(true);
-                      }} 
-                      className="relative flex items-center justify-center gap-2 w-14 h-14 md:w-auto md:px-4 rounded-[20px] text-white font-bold shadow-md transition-all bg-gradient-to-br from-morandi-blue to-indigo-500 hover:shadow-lg"
-                    >
-                      <Bot className="w-6 h-6" />
-                      <span className="hidden md:inline">自動建單預覽</span>
-                      {prediction.greenZone.length > 0 && (
-                        <span className="absolute -top-2 -right-2 bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm border-2 border-white">
-                          預計 {prediction.greenZone.length} 單
-                        </span>
-                      )}
-                    </motion.button>
-                    <motion.button whileTap={buttonTap} onClick={() => setActiveTab('work')} className="w-14 h-14 rounded-[20px] bg-white text-morandi-pebble border border-slate-200 shadow-sm flex items-center justify-center hover:bg-slate-50 transition-all">
-                       <FileText className="w-6 h-6" />
-                    </motion.button>
-                  </div>
-               </motion.div>
-
-               {/* Sticky Search Bar & Filter Button */}
-               <motion.div
-                 initial={false}
-                 animate={{ 
-                   height: isScrollingDown ? 0 : 'auto', 
-                   opacity: isScrollingDown ? 0 : 1,
-                   overflow: 'hidden',
-                   marginTop: (isScrollingDown && layoutMode === 'compact') ? 0 : undefined
-                 }}
-                 transition={{ duration: 0.3, ease: 'easeInOut' }}
-                 className="space-y-2"
-               >
-                 <div className="flex gap-2 items-center">
-                   <div className="relative flex-1 flex items-center">
-                     <DebouncedSearchInput
-                       value={orderSearch}
-                       onSearch={(val) => setOrderSearch(val)}
-                       placeholder="搜尋客戶名稱或電話..."
-                       className="w-full flex-1"
-                       inputClassName="w-full pl-10 pr-20 py-3 bg-white rounded-[20px] border border-slate-200 shadow-sm text-sm font-bold text-morandi-charcoal focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300"
-                     />
-                     <div className="absolute right-2 flex items-center gap-1 z-10">
-                       <button 
-                         onClick={() => setIsVoiceModalOpen(true)}
-                         className={`p-1.5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-morandi-blue bg-transparent ${isProcessingVoice ? 'text-rose-500 animate-pulse' : 'text-gray-400 hover:text-blue-500 hover:bg-gray-100'}`}
-                         aria-label="語音輸入"
-                         title="語音輸入"
-                       >
-                         <Mic className="w-5 h-5" />
-                       </button>
-                     </div>
-                   </div>
-                   
-                   {/* 新增的漏斗篩選按鈕 */}
-                   <button 
-                     onClick={() => setShowOrderDeliveryFilters(!showOrderDeliveryFilters)}
-                     className={`relative flex-shrink-0 w-12 h-12 rounded-[20px] border flex items-center justify-center transition-all shadow-sm ${showOrderDeliveryFilters || orderDeliveryFilter.length > 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-slate-200 hover:bg-slate-50'}`}
-                   >
-                     <Filter className="w-5 h-5" />
-                     {/* 如果有選取條件，顯示一個小紅點提示 */}
-                     {orderDeliveryFilter.length > 0 && (
-                       <span className="absolute -top-1 -right-1 bg-rose-500 border-2 border-white text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
-                         {orderDeliveryFilter.length}
-                       </span>
-                     )}
-                   </button>
-                 </div>
-
-                 {/* 展開的篩選選項區塊 */}
-                 <AnimatePresence>
-                   {showOrderDeliveryFilters && (
-                     <motion.div 
-                       key="order-delivery-filters"
-                       initial={{ height: 0, opacity: 0, marginTop: 0 }} 
-                       animate={{ height: 'auto', opacity: 1, marginTop: 8 }} 
-                       exit={{ height: 0, opacity: 0, marginTop: 0 }} 
-                       transition={{ duration: 0.2 }}
-                       className="overflow-hidden"
-                     >
-                       <div className="flex gap-2 overflow-x-auto pb-2 pt-1 custom-scrollbar">
-                         <button 
-                           onClick={() => setOrderDeliveryFilter([])} 
-                           className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${orderDeliveryFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}
-                         >
-                           全部
-                         </button>
-                         {DELIVERY_METHODS.map(m => {
-                           const isSelected = orderDeliveryFilter.includes(m);
-                           return (
-                             <button 
-                               key={m} 
-                               onClick={() => {
-                                  if (isSelected) setOrderDeliveryFilter(orderDeliveryFilter.filter(x => x !== m));
-                                  else setOrderDeliveryFilter([...orderDeliveryFilter, m]);
-                               }} 
-                               className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
-                               style={{ backgroundColor: isSelected ? COLORS.primary : '' }}
-                             >
-                               {m}
-                             </button>
-                           );
-                         })}
-                       </div>
-                     </motion.div>
-                   )}
-                 </AnimatePresence>
-               </motion.div>
-            </div>
-            
-             <div className="space-y-3 flex-1 flex flex-col h-full">
-              <div className="flex items-center justify-between px-2 mb-2">
-                <h2 className="text-sm font-bold text-morandi-pebble flex items-center gap-2 uppercase tracking-widest"><Layers className="w-4 h-4" /> 配送列表 [{selectedDate}] ({virtuosoOrderData.length} 家)</h2>
-              </div>
-              <motion.div variants={containerVariants} initial="hidden" animate="show" className="flex-1 h-full">
-              {scrollElement && virtuosoOrderData.length > 0 ? (
-                <Virtuoso
-                  customScrollParent={scrollElement}
-                  className="custom-scrollbar"
-                  data={virtuosoOrderData}
-                  context={virtuosoContext}
-                  itemContent={renderVirtuosoItem}
-                />
-              ) : virtuosoOrderData.length === 0 ? (
-                <div className="py-20 flex flex-col items-center text-center gap-4">
-                  <ClipboardList className="w-16 h-16 text-gray-200" />
-                  {orderSearch || orderDeliveryFilter.length > 0 ? (
-                     <>
-                       <p className="text-gray-400 font-bold text-sm tracking-wide">找不到符合條件的訂單</p>
-                       <button onClick={() => { setOrderSearch(''); setOrderDeliveryFilter([]); }} className="text-xs text-morandi-blue font-bold underline">清除篩選條件</button>
-                     </>
-                  ) : (
-                     <p className="text-gray-300 italic text-sm tracking-wide">此日期尚無訂單</p>
-                  )}
-                </div>
-              ) : (
-                <div className="py-20 text-center text-gray-400">
-                  載入清單中...
-                </div>
-              )}
-              </motion.div>
-            </div>
-            {/* 👇 新增這層外掛容器來限制按鈕位置，使其與 App 寬度一致 */}
-            <motion.div 
-              initial={false}
-              animate={{ 
-                opacity: isScrollingDown ? 0 : 1,
-                scale: isScrollingDown ? 0.8 : 1,
-                x: isScrollingDown ? 60 : 0
-              }}
-              transition={{ duration: 0.3 }}
-              className="fixed bottom-24 left-0 right-0 mx-auto w-full max-w-md pointer-events-none z-50 flex justify-end px-4 sm:px-6"
-            >
-              <motion.button 
-                whileTap={buttonTap} 
-                whileHover={buttonHover} 
-                onClick={() => requireAuth(() => { 
-                  setEditingOrderId(null); 
-                  setOrderForm({
-                    customerType: 'existing',
-                    customerId: '',
-                    customerName: '',
-                    deliveryTime: '',
-                    deliveryMethod: '',
-                    trip: '',
-                    items: [{ productId: '', quantity: 10, unit: '斤' }],
-                    note: '',
-                    date: selectedDate
-                  });
-                  setIsAddingOrder(true); 
-                })} 
-                className={`pointer-events-auto text-white shadow-2xl shadow-morandi-blue/40 hover:bg-slate-600 active:scale-95 transition-all flex items-center justify-center bg-morandi-blue ${
-                  layoutMode === 'compact' 
-                    ? 'h-14 px-6 rounded-full gap-2'
-                    : 'w-14 h-14 rounded-full'
-                }`}
-              >
-                <Plus className={layoutMode === 'compact' ? "w-6 h-6" : "w-8 h-8"} />
-                {layoutMode === 'compact' && (
-                  <span className="font-bold text-lg tracking-wide whitespace-nowrap">建立訂單</span>
-                )}
-              </motion.button>
-            </motion.div>
-          </motion.div>
+          <OrdersView
+            isScrollingDown={isScrollingDown}
+            layoutMode={layoutMode}
+            selectedDate={selectedDate}
+            setIsDatePickerOpen={setIsDatePickerOpen}
+            triggerHaptic={triggerHaptic}
+            setIsAutoOrderDashboardOpen={setIsAutoOrderDashboardOpen}
+            prediction={prediction}
+            setActiveTab={setActiveTab}
+            orderSearch={orderSearch}
+            setOrderSearch={setOrderSearch}
+            setIsVoiceModalOpen={setIsVoiceModalOpen}
+            isProcessingVoice={isProcessingVoice}
+            showOrderDeliveryFilters={showOrderDeliveryFilters}
+            setShowOrderDeliveryFilters={setShowOrderDeliveryFilters}
+            orderDeliveryFilter={orderDeliveryFilter}
+            setOrderDeliveryFilter={setOrderDeliveryFilter}
+            virtuosoOrderData={virtuosoOrderData}
+            virtuosoContext={virtuosoContext}
+            renderVirtuosoItem={renderVirtuosoItem}
+            scrollElement={scrollElement}
+            requireAuth={requireAuth}
+            setEditingOrderId={setEditingOrderId}
+            setOrderForm={setOrderForm}
+            setIsAddingOrder={setIsAddingOrder}
+          />
         )}
         
         {/* ... (Other Tabs remain unchanged) ... */}
-        {activeTab === 'customers' && (
-           <motion.div key="customers" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="relative">
-            <div className="sticky top-0 z-20 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
-              <div className="flex justify-between items-center mb-3"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2><motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setCustomerForm({ name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div>
-              <DebouncedSearchInput
-                value={customerSearch}
-                onSearch={(val) => {
-                  setCustomerSearch(val);
-                  setVisibleCustomerCount(50);
-                }}
-                placeholder="搜尋店家名稱..."
-                className="w-full"
-                inputClassName="w-full pl-10 pr-10 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400"
-              />
-            </div>
-            <motion.div variants={containerVariants} initial="hidden" animate="show" className="pt-4">
-            {filteredCustomers.slice(0, visibleCustomerCount).map(c => {
-               const hasOrderToday = groupedOrders[c.name] && groupedOrders[c.name].length > 0;
-               return (
-                  <motion.div variants={itemVariants} key={c.id} className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-200 mb-4 hover:shadow-md transition-all relative overflow-hidden">
-                    {hasOrderToday && <div className="absolute top-0 right-0 bg-amber-100 text-amber-700 text-[9px] font-bold px-3 py-1 rounded-bl-xl z-10">今日已下單</div>}
-                    <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{String(c.name || '').charAt(0)}</div><div><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p>{(c.address || c.coordinates) && (() => {
-  const targetUrl = c.coordinates ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.coordinates)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address || '')}`;
-  const tooltipText = c.coordinates ? "開啟精準地圖連結" : "在 Google 地圖上搜尋此地址";
 
-  return (
-    <div className="mt-1.5">
-      <a 
-        href={targetUrl} 
-        target="_blank" 
-        rel="noopener noreferrer" 
-        title={tooltipText}
-        className="group inline-flex items-start gap-1.5 px-1.5 py-1 -ml-1.5 rounded-md transition-all hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-100"
-      >
-        <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400 group-hover:text-blue-500 transition-colors mt-0.5" />
-        <span className="text-xs text-slate-500 group-hover:text-blue-600 transition-colors font-medium tracking-wide">
-          {c.address || '查看 Google 地圖'}
-        </span>
-      </a>
-    </div>
-  );
-})()}</div></div><div className="flex flex-col items-end gap-1 mt-2"><div className="flex gap-1">{WEEKDAYS.map(d => (<div key={d.value} className={`w-4 h-4 rounded-full text-[8px] flex items-center justify-center font-bold ${c.offDays?.includes(d.value) ? 'bg-rose-100 text-rose-400' : 'bg-gray-50 text-gray-300'}`}>{d.label}</div>))}</div>{c.holidayDates && c.holidayDates.length > 0 && <span className="text-[8px] font-bold text-rose-300">+{c.holidayDates.length} 特定休</span>}{c.priceList && c.priceList.length > 0 && <span className="text-[8px] font-bold text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded mt-1">已設 {c.priceList.length} 種單價</span>}</div></div>
-                    <div className="space-y-3 mb-4 bg-gray-50/60 p-4 rounded-[24px] border border-gray-100"><div className="flex justify-between"><div className="text-[11px] font-bold text-slate-700 tracking-wide">配送時間:{formatTimeDisplay(c.deliveryTime)}</div><div className="flex gap-1">{c.defaultTrip && <div className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">{c.defaultTrip}</div>}{c.deliveryMethod && <div className="text-[11px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-lg border border-gray-100">{c.deliveryMethod}</div>}{c.paymentTerm && (<div className="text-[11px] font-bold text-morandi-blue bg-white px-2 py-0.5 rounded-lg border border-gray-100">{ORDERING_HABITS.find(t => t.value === c.paymentTerm)?.label}</div>)}</div></div>{c.defaultItems && c.defaultItems.length > 0 ? (<div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-200/50">{c.defaultItems.map((di, idx) => { const p = products.find(prod => prod.id === di.productId); return (<div key={idx} className="bg-white px-2 py-1 rounded-xl text-[10px] border border-gray-200 flex items-center gap-1 shadow-sm"><span className="font-bold text-slate-700">{p?.name || '未知品項'}</span><span className="font-extrabold text-morandi-blue">{di.quantity}{di.unit || p?.unit || '斤'}</span></div>); })}</div>) : (<div className="text-[10px] text-gray-400 font-medium italic pt-2 border-t border-gray-200/50 tracking-wide">尚未設定預設品項</div>)}</div>
-                    <div className="flex gap-2">
-                       <motion.button whileTap={buttonTap} onClick={() => setViewingCustomerProfile(c.name)} className="flex-1 py-3 bg-slate-800 rounded-2xl text-white font-bold text-xs flex items-center justify-center gap-2 hover:bg-slate-700 transition-colors shadow-md shadow-slate-200"><History className="w-3.5 h-3.5" /> 歷史/報表</motion.button>
-                       <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => { setCustomerForm({ ...c, address: c.address || '', coordinates: c.coordinates || '', deliveryTime: formatTimeForInput(c.deliveryTime), paymentTerm: c.paymentTerm || 'regular', defaultTrip: c.defaultTrip || '' }); setIsEditingCustomer(c.id); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); })} className="flex-1 py-3 bg-gray-50 rounded-2xl text-slate-700 font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"><Edit2 className="w-3.5 h-3.5" /></motion.button>
-                       <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => handleDeleteCustomer(c.id))} className="px-4 py-3 bg-gray-50 rounded-2xl text-morandi-pink hover:text-rose-500 transition-colors border border-gray-100"><Trash2 className="w-4 h-4" /></motion.button>
-                    </div>
-                  </motion.div>
-               );
-            })}
-            </motion.div>
-            {filteredCustomers.length > visibleCustomerCount && (
-              <div className="flex justify-center mt-4 mb-8">
-                <button 
-                  onClick={() => setVisibleCustomerCount(prev => prev + 50)} 
-                  className="px-6 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-full text-sm font-bold shadow-sm hover:bg-slate-50 transition-colors"
-                >
-                  載入更多 ({filteredCustomers.length - visibleCustomerCount})
-                </button>
-              </div>
-            )}
-            {filteredCustomers.length === 0 && <div className="text-center py-10 text-gray-300 text-sm font-bold tracking-wide">查無店家</div>}
-           </motion.div>
+        {activeTab === 'customers' && (
+          <CustomersView
+            customers={customers}
+            products={products}
+            groupedOrders={groupedOrders}
+            requireAuth={requireAuth}
+            setCustomerForm={setCustomerForm}
+            setIsEditingCustomer={setIsEditingCustomer}
+            setEditCustomerMode={setEditCustomerMode}
+            setTempPriceProdId={setTempPriceProdId}
+            setTempPriceValue={setTempPriceValue}
+            setTempPriceUnit={setTempPriceUnit}
+            setViewingCustomerProfile={setViewingCustomerProfile}
+            handleDeleteCustomer={handleDeleteCustomer}
+          />
         )}
         {activeTab === 'products' && (
-          <motion.div key="products" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
-             <div className="flex justify-between items-center px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Package className="w-5 h-5 text-morandi-blue" /> 品項清單</h2><div className="flex gap-2">{hasReorderedProducts && (<motion.button initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} whileTap={buttonTap} onClick={() => requireAuth(handleSaveProductOrder)} disabled={isSaving || isWarmingUp} className="p-3 rounded-2xl text-white shadow-lg bg-emerald-500 hover:bg-emerald-600 transition-colors flex items-center gap-2">{isSaving || isWarmingUp || isRetrying ? <Loader2 className="w-6 h-6 animate-spin"/> : <Save className="w-6 h-6" />}<span className="text-xs font-bold hidden sm:inline">{isRetrying ? '重試中...' : '儲存排序'}</span></motion.button>)}<motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setProductForm({ name: '', unit: '斤', price: 0, category: 'other' }); setIsEditingProduct('new'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button></div></div>
-             <div onPointerUp={() => {
-                 if (localProducts !== products) {
-                   setProducts(localProducts);
-                   setHasReorderedProducts(true);
-                 }
-               }}>
-               <Reorder.Group axis="y" values={localProducts} onReorder={setLocalProducts} className="space-y-0">
-                 {localProducts.map(p => (<SortableProductItem key={p.id} product={p} onEdit={(p) => requireAuth(() => { setProductForm(p); setIsEditingProduct(p.id); })} onDelete={(id) => requireAuth(() => handleDeleteProduct(id))} />))}
-               </Reorder.Group>
-             </div>
-          </motion.div>
+          <ProductsView
+            products={products}
+            setProducts={setProducts}
+            hasReorderedProducts={hasReorderedProducts}
+            setHasReorderedProducts={setHasReorderedProducts}
+            isSaving={isSaving}
+            isWarmingUp={isWarmingUp}
+            isRetrying={isRetrying}
+            requireAuth={requireAuth}
+            handleSaveProductOrder={handleSaveProductOrder}
+            setIsEditingProduct={setIsEditingProduct}
+            handleDeleteProduct={handleDeleteProduct}
+          />
         )}
         {/* ... (Other Tabs code remains same) ... */}
         {activeTab === 'schedule' && (
-           <motion.div key="schedule" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
-              <div className="px-1"><h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 mb-4 tracking-tight"><CalendarCheck className="w-5 h-5 text-morandi-blue" /> 配送行程</h2><div className="mb-6"><WorkCalendar selectedDate={scheduleDate} onSelect={setScheduleDate} orders={orders} /></div>
-              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4, delay: 0.2 }} className="bg-slate-700 rounded-[28px] p-5 shadow-lg text-white mb-6 relative overflow-hidden"><div className="absolute right-[-10px] bottom-[-20px] text-slate-600 opacity-20 rotate-12"><Banknote className="w-32 h-32" /></div><div className="flex justify-between items-start mb-2 relative z-10"><div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">本日應收總額</p><h3 className="text-3xl font-black mt-1 text-white tracking-tight">${scheduleMoneySummary.totalReceivable.toLocaleString()}</h3></div><div className="text-right"><p className="text-[10px] font-bold text-morandi-green-text uppercase tracking-widest">已收款</p><h3 className="text-xl font-bold text-emerald-300 mt-1 tracking-tight">${scheduleMoneySummary.totalCollected.toLocaleString()}</h3></div></div><div className="w-full bg-slate-600 rounded-full h-1.5 mt-2 relative z-10"><motion.div className="bg-emerald-400 h-1.5 rounded-full" initial={{ width: 0 }} animate={{ width: `${scheduleMoneySummary.totalReceivable > 0 ? (scheduleMoneySummary.totalCollected / scheduleMoneySummary.totalReceivable) * 100 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} /></div><p className="text-[9px] text-slate-400 mt-2 text-right relative z-10 tracking-wide">尚有 ${(scheduleMoneySummary.totalReceivable - scheduleMoneySummary.totalCollected).toLocaleString()} 未收</p></motion.div>
-              <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar mb-4 items-center">
-                <button onClick={() => setIsSelectionMode(!isSelectionMode)} className={`flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border flex items-center gap-1 ${isSelectionMode ? 'bg-rose-500 text-white border-rose-500' : 'bg-white text-morandi-blue border-morandi-blue'}`}>{isSelectionMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5" />}{isSelectionMode ? '取消選取' : '批量操作'}</button>
-                
-                {isSelectionMode && selectedOrderIds.size > 0 && (
-                  <>
-                    <div className="w-[1px] h-6 bg-gray-300 mx-1"></div>
-                    {availableTrips.map((trip, idx) => {
-                      const colorClasses = [
-                        'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100',
-                        'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100',
-                        'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100',
-                        'bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100',
-                        'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100',
-                        'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100',
-                      ];
-                      const colorClass = trip === '未分配' ? 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100' : colorClasses[idx % colorClasses.length];
-                      
-                      return (
-                        <button key={trip} onClick={() => handleSetTrip(trip)} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${colorClass}`}>
-                          設為{trip}
-                        </button>
-                      );
-                    })}
-                  </>
-                )}
-                
-                <div className="w-[1px] h-6 bg-gray-300 mx-1"></div>
-                <button 
-                  onClick={() => setShowScheduleDeliveryFilters(!showScheduleDeliveryFilters)} 
-                  className={`flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border flex items-center gap-1 ${showScheduleDeliveryFilters || scheduleDeliveryMethodFilter.length > 0 ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-white text-gray-400 border-gray-200'}`}
-                >
-                  <Filter className="w-3.5 h-3.5" />
-                  篩選配送方式
-                  {scheduleDeliveryMethodFilter.length > 0 && (
-                    <span className="ml-1 bg-slate-700 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
-                      {scheduleDeliveryMethodFilter.length}
-                    </span>
-                  )}
-                </button>
-
-                {showScheduleDeliveryFilters && (
-                  <>
-                    <button onClick={() => setScheduleDeliveryMethodFilter([])} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${scheduleDeliveryMethodFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部方式</button>
-                    {DELIVERY_METHODS.map(m => { 
-                      const isSelected = scheduleDeliveryMethodFilter.includes(m); 
-                      return (
-                        <button 
-                          key={m} 
-                          onClick={() => { 
-                            if (isSelected) { 
-                              setScheduleDeliveryMethodFilter(scheduleDeliveryMethodFilter.filter(x => x !== m)); 
-                            } else { 
-                              setScheduleDeliveryMethodFilter([...scheduleDeliveryMethodFilter, m]); 
-                            } 
-                          }} 
-                          className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`} 
-                          style={{ backgroundColor: isSelected ? COLORS.primary : '' }}
-                        >
-                          {m}
-                        </button>
-                      ); 
-                    })}
-                  </>
-                )}
-              </div>
-              <div className="space-y-6 pb-20">
-                <div className="flex justify-between items-center px-2">
-                  <h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2"><Clock className="w-4 h-4" /> 配送明細 [{scheduleDate}]</h3>
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs font-bold text-gray-300 tracking-wide">共 {scheduleOrders.length} 筆</div>
-                    <button 
-                      onClick={() => setIsTripManagerOpen(true)}
-                      className="px-3 py-1 bg-white text-slate-600 border border-slate-200 text-xs font-bold rounded-full shadow-sm flex items-center gap-1 hover:bg-slate-50 transition-colors"
-                    >
-                      <Settings className="w-3 h-3" /> 編輯趟數
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setSelectedDate(scheduleDate);
-                        setOrderForm({
-                          customerType: 'existing',
-                          customerId: '',
-                          customerName: '',
-                          deliveryTime: '',
-                          deliveryMethod: '',
-                          trip: '',
-                          items: [{ productId: '', quantity: 10, unit: '斤' }],
-                          note: '',
-                          date: scheduleDate
-                        });
-                        setEditingOrderId(null);
-                        setIsAddingOrder(true);
-                      }}
-                      className="px-3 py-1 bg-morandi-blue text-white text-xs font-bold rounded-full shadow-sm flex items-center gap-1"
-                    >
-                      <Plus className="w-3 h-3" /> 臨時加單
-                    </button>
-                    <button 
-                      onClick={async () => {
-                        if (isOrderReorderMode) {
-                          // Save reordered orders to cloud
-                          if (reorderedOrderIds.size > 0) {
-                            const ordersToSync = orders.filter(o => reorderedOrderIds.has(o.id));
-                            ordersToSync.forEach(order => {
-                              saveOrderToCloud(order, 'updateOrderContent', order.version, () => {
-                                setOrders((prev: Order[]) => prev.map(o => o.id === order.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
-                              }, (errMsg: string) => {
-                                setOrders((prev: Order[]) => prev.map(o => o.id === order.id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
-                              });
-                            });
-                            setReorderedOrderIds(new Set());
-                            addToast('排序已儲存', 'success');
-                          }
-                        }
-                        setIsOrderReorderMode(!isOrderReorderMode);
-                      }}
-                      className={`px-3 py-1 text-xs font-bold rounded-full shadow-sm flex items-center gap-1 transition-colors ${isOrderReorderMode ? 'bg-rose-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
-                    >
-                      {isOrderReorderMode ? <CheckSquare className="w-3 h-3" /> : <GripVertical className="w-3 h-3" />}
-                      {isOrderReorderMode ? '完成排序' : '調整排序'}
-                    </button>
-                  </div>
-                </div>
-                
-                {(() => {
-                  const groupedByTrip = availableTrips.reduce((acc, trip) => {
-                    acc[trip] = [];
-                    return acc;
-                  }, {} as Record<string, Order[]>);
-
-                  scheduleOrders.forEach(order => {
-                    const trip = order.trip || '未分配';
-                    if (!groupedByTrip[trip]) groupedByTrip[trip] = [];
-                    groupedByTrip[trip].push(order);
-                  });
-
-                  const sortedTrips = Object.keys(groupedByTrip).sort((a, b) => {
-                    const indexA = availableTrips.indexOf(a);
-                    const indexB = availableTrips.indexOf(b);
-                    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-                    if (indexA !== -1) return -1;
-                    if (indexB !== -1) return 1;
-                    return a.localeCompare(b);
-                  });
-
-                  return sortedTrips.map(trip => {
-                    const tripOrders = groupedByTrip[trip].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-                    const summary = getTripSummary(tripOrders);
-                    
-                    const colorClasses = [
-                      'bg-blue-50 text-blue-600 border-blue-100',
-                      'bg-indigo-50 text-indigo-600 border-indigo-100',
-                      'bg-emerald-50 text-emerald-600 border-emerald-100',
-                      'bg-amber-50 text-amber-600 border-amber-100',
-                      'bg-rose-50 text-rose-600 border-rose-100',
-                      'bg-purple-50 text-purple-600 border-purple-100',
-                    ];
-                    
-                    let headerColor = trip === '未分配' ? 'bg-gray-100 text-gray-600 border-gray-200' : colorClasses[availableTrips.indexOf(trip) % colorClasses.length];
-
-                    return (
-                      <div key={trip} className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
-                        <div className={`flex justify-between items-center mb-3 px-3 py-2 rounded-xl border ${headerColor}`}>
-                          <h4 className="text-sm font-bold flex items-center gap-2">
-                            {trip}
-                            <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded-full">{tripOrders.length}</span>
-                            
-                            {/* 新增：Google 導航按鈕 */}
-                            {tripOrders.length > 0 && (
-                              <button 
-                                onClick={() => handleNavigateTrip(tripOrders)} 
-                                className="ml-2 p-1.5 bg-blue-500 text-white hover:bg-blue-600 rounded-full shadow-sm transition-all flex items-center gap-1"
-                                title="Google 路線導航"
-                              >
-                                <Navigation className="w-3.5 h-3.5" />
-                                <span className="text-[10px] font-bold pr-1">導航</span>
-                              </button>
-                            )}
-
-                            {/* 下面是你原本的刪除趟數按鈕 
-                            {trip !== '未分配' && (
-                              <button onClick={() => handleDeleteTrip(trip)} className="ml-1 p-1 text-current opacity-50 hover:opacity-100 hover:bg-white/50 rounded-full transition-all">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            */}
-                          </h4>
-                          {trip !== '未分配' && (
-                            <div className="text-right">
-                              <div className="text-[10px] font-bold opacity-70">總重: {summary.totalWeight}斤 / 數量: {summary.totalQuantity}</div>
-                              <div className="text-xs font-bold">金額: ${summary.totalAmount.toLocaleString()}</div>
-                            </div>
-                          )}
-                        </div>
-                        
-                        {isOrderReorderMode ? (
-                          <TripReorderGroup
-                            tripOrders={tripOrders}
-                            orders={orders}
-                            setOrders={setOrders}
-                            reorderedOrderIds={reorderedOrderIds}
-                            setReorderedOrderIds={setReorderedOrderIds}
-                            productMap={productMap}
-                            customerMap={customerMap}
-                            isLoadingProducts={isLoadingProducts}
-                            isSelectionMode={isSelectionMode}
-                            selectedOrderIds={selectedOrderIds}
-                            handleToggleSelectionStable={handleToggleSelectionStable}
-                            handleSwipeStatusChange={handleSwipeStatusChangeStable}
-                            handleShareOrder={handleShareOrderStable}
-                            openGoogleMaps={openGoogleMapsStable}
-                          />
-                        ) : (
-                          <div className="space-y-3">
-                            {tripOrders.map((order) => (
-                              <div key={order.id} className="relative">
-                                <ScheduleOrderCard 
-                                  order={order}
-                                  productMap={productMap}
-                                  customerMap={customerMap}
-                                  isLoadingProducts={isLoadingProducts}
-                                  isSelectionMode={isSelectionMode}
-                                  isSelected={selectedOrderIds.has(order.id)}
-                                  onToggleSelection={handleToggleSelectionStable}
-                                  onStatusChange={handleSwipeStatusChangeStable}
-                                  onShare={handleShareOrderStable}
-                                  onMap={openGoogleMapsStable}
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  });
-                })()}
-                
-                {scheduleOrders.length === 0 && (
-                  <div className="text-center py-10"><p className="text-gray-300 font-bold text-sm tracking-wide">本日無配送行程</p></div>
-                )}
-              </div>
-              </div>
-           </motion.div>
+          <ScheduleView
+            scheduleDate={scheduleDate}
+            setScheduleDate={setScheduleDate}
+            orders={orders}
+            setOrders={setOrders}
+            scheduleMoneySummary={scheduleMoneySummary}
+            isSelectionMode={isSelectionMode}
+            setIsSelectionMode={setIsSelectionMode}
+            selectedOrderIds={selectedOrderIds}
+            availableTrips={availableTrips}
+            handleSetTrip={handleSetTrip}
+            showScheduleDeliveryFilters={showScheduleDeliveryFilters}
+            setShowScheduleDeliveryFilters={setShowScheduleDeliveryFilters}
+            scheduleDeliveryMethodFilter={scheduleDeliveryMethodFilter}
+            setScheduleDeliveryMethodFilter={setScheduleDeliveryMethodFilter}
+            scheduleOrders={scheduleOrders}
+            setIsTripManagerOpen={setIsTripManagerOpen}
+            setSelectedDate={setSelectedDate}
+            setOrderForm={setOrderForm}
+            setEditingOrderId={setEditingOrderId}
+            setIsAddingOrder={setIsAddingOrder}
+            isOrderReorderMode={isOrderReorderMode}
+            setIsOrderReorderMode={setIsOrderReorderMode}
+            requireAuth={requireAuth}
+            customers={customers}
+            products={products}
+            handleToggleSelectionStable={handleToggleSelectionStable}
+            handleDeleteOrderStable={handleDeleteOrderStable}
+            handleSwipeStatusChangeStable={handleSwipeStatusChangeStable}
+            handleShareOrderStable={handleShareOrderStable}
+            isLoadingProducts={isLoadingProducts}
+            openGoogleMaps={openGoogleMaps}
+            reorderedOrderIds={reorderedOrderIds}
+            setReorderedOrderIds={setReorderedOrderIds}
+          />
         )}
-        {/* ... (Finance and Work Tabs remain unchanged - they are inside ActiveTab blocks already provided in context, just ensuring closing structure) ... */}
+        {/* ... (Finance and Work Tabs remain unchanged) ... */}
+
         {activeTab === 'finance' && (
-           <motion.div key="finance" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
-             <div className="px-1">
-               <div className="flex justify-between items-center mb-4">
-                 <h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Wallet className="w-5 h-5 text-morandi-blue" /> 帳務總覽</h2>
-                 {/* 暫停使用帳務頁面的建立訂單按鈕 
-                 <motion.button 
-                   whileTap={buttonTap} 
-                   whileHover={buttonHover} 
-                   onClick={() => { 
-                     setEditingOrderId(null); 
-                     setOrderForm({
-                       customerType: 'existing',
-                       customerId: '',
-                       customerName: '',
-                       deliveryTime: '',
-                       deliveryMethod: '',
-                       trip: '',
-                       items: [{ productId: '', quantity: 10, unit: '斤' }],
-                       note: '',
-                       date: selectedDate
-                     });
-                     setIsAddingOrder(true); 
-                   }} 
-                   className="p-2.5 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors flex items-center gap-1.5"
-                 >
-                   <Plus className="w-5 h-5" />
-                   <span className="text-xs font-bold">建立訂單</span>
-                 </motion.button>
-                 */}
-               </div>
-               
-               {/* Revenue Overview Cards */}
-               <div className="grid grid-cols-2 gap-3 mb-6">
-                 <div className="bg-morandi-charcoal rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
-                   <div className="absolute right-[-10px] top-[-10px] opacity-10"><DollarSign className="w-24 h-24" /></div>
-                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">未結總金額</p>
-                   <h3 className="text-2xl font-black text-white tracking-tight">${financeData.grandTotalDebt.toLocaleString()}</h3>
-                 </div>
-                 <div className="bg-emerald-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
-                   <div className="absolute right-[-10px] top-[-10px] opacity-10"><CheckCircle2 className="w-24 h-24" /></div>
-                   <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-widest mb-1">本月已收帳款</p>
-                   <h3 className="text-2xl font-black text-white tracking-tight">${financeData.thisMonthCollected.toLocaleString()}</h3>
-                   <p className="text-[9px] text-emerald-100 mt-1 font-medium tracking-wide">佔本月營收 {financeData.thisMonthRevenue > 0 ? Math.round((financeData.thisMonthCollected / financeData.thisMonthRevenue) * 100) : 0}%</p>
-                 </div>
-               </div>
-
-               <div className="space-y-4">
-                 <div className="flex justify-between items-center px-2">
-                   <h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2"><ListChecks className="w-4 h-4" /> 欠款客戶列表</h3>
-                 </div>
-                 
-                 {/* Aging Filters */}
-                 <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar px-2 -mx-2">
-                   <button onClick={() => setFinanceFilter('all')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'all' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部</button>
-                   <button onClick={() => setFinanceFilter('thisMonth')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'thisMonth' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>本月新增</button>
-                   <button onClick={() => setFinanceFilter('over30')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'over30' ? 'bg-rose-500 text-white border-rose-500' : 'bg-white text-gray-400 border-gray-200'}`}>逾期 30 天</button>
-                   <button onClick={() => setFinanceFilter('over60')} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-all border ${financeFilter === 'over60' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-gray-400 border-gray-200'}`}>逾期 60 天</button>
-                 </div>
-
-                 <motion.div variants={containerVariants} initial="hidden" animate="show">
-                   {financeData.outstanding.length > 0 ? (
-                     financeData.outstanding
-                       .filter(item => {
-                         if (financeFilter === 'all') return true;
-                         if (financeFilter === 'thisMonth') return item.agingDays <= 30;
-                         if (financeFilter === 'over30') return item.agingDays > 30;
-                         if (financeFilter === 'over60') return item.agingDays > 60;
-                         return true;
-                       })
-                       .map((item, idx) => (
-                       <motion.div variants={itemVariants} key={idx} className="bg-white rounded-[24px] p-5 shadow-sm border border-slate-200 mb-3 relative overflow-hidden">
-                         <div className="flex justify-between items-start mb-4 relative z-10">
-                           <div className="flex items-center gap-3">
-                             <div className="w-12 h-12 rounded-[16px] bg-rose-50 flex items-center justify-center text-rose-400 font-extrabold text-xl">{String(item.name || '').charAt(0)}</div>
-                             <div>
-                               <h4 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                                 {item.name}
-                                 {item.agingDays > 60 ? (
-                                   <span className="text-[9px] bg-rose-600 text-white px-1.5 py-0.5 rounded-md font-bold">⚠️ 逾期 60 天</span>
-                                 ) : item.agingDays > 30 ? (
-                                   <span className="text-[9px] bg-rose-500 text-white px-1.5 py-0.5 rounded-md font-bold">⚠️ 逾期 30 天</span>
-                                 ) : null}
-                               </h4>
-                               <p className="text-xs text-rose-400 font-bold bg-rose-50 inline-block px-1.5 rounded mt-0.5">{item.count} 筆未結</p>
-                             </div>
-                           </div>
-                           <div className="flex items-start gap-2">
-                             <div className="text-right">
-                               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">應收金額</p>
-                               <p className="text-2xl font-black text-morandi-charcoal tracking-tight">${item.totalDebt.toLocaleString()}</p>
-                             </div>
-                             <button
-                               onClick={() => setActionMenuTarget(item)}
-                               className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors -mt-1 -mr-1"
-                             >
-                               <MoreVertical className="w-5 h-5" />
-                             </button>
-                           </div>
-                         </div>
-                         <div className="relative z-10 pt-2 border-t border-gray-100">
-                           <button onClick={() => {
-                             setPartialSettlementTarget({ name: item.name, orders: item.orders });
-                             setSelectedPartialOrderIds(new Set(item.orders.map(o => o.id)));
-                           }} className="w-full py-3 rounded-xl bg-blue-50 text-blue-600 font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-100 transition-colors"><ListChecks className="w-4 h-4" /> 查看明細 / 部分結帳</button>
-                         </div>
-                       </motion.div>
-                     ))
-                   ) : (
-                     <div className="text-center py-10">
-                       <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-8 h-8 text-emerald-400" /></div>
-                       <p className="text-gray-400 font-bold text-sm">目前沒有未結款項</p>
-                       <p className="text-xs text-gray-300 mt-1">所有配送單皆已完成收款</p>
-                     </div>
-                   )}
-                 </motion.div>
-               </div>
-             </div>
-           </motion.div>
+          <FinanceView 
+            financeData={financeData}
+            setSettlementTarget={setSettlementTarget}
+            setViewingCustomerReport={setViewingCustomerReport}
+            setActionMenuTarget={setActionMenuTarget}
+            setPartialSettlementTarget={setPartialSettlementTarget}
+            setSelectedPartialOrderIds={setSelectedPartialOrderIds}
+          />
         )}
         
         {activeTab === 'work' && (
-           <motion.div key="work" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0, zIndex: 10 }} exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} transition={{ duration: 0.2 }} className="space-y-6 relative">
-             <div className="px-1"><div className="flex items-center gap-2 mb-4"><button onClick={() => setActiveTab('orders')} className="p-2 bg-white rounded-xl shadow-sm border border-slate-200 text-morandi-pebble"><ChevronLeft className="w-5 h-5"/></button><h2 className="text-xl font-extrabold text-morandi-charcoal tracking-tight">工作小抄</h2></div>
-              <div className="space-y-3 mb-4"><div className="relative"><Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" /><input type="text" placeholder="篩選特定店家..." className="w-full pl-12 pr-6 py-4 bg-white rounded-[24px] border border-slate-100 shadow-sm text-slate-800 font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-300 text-sm" value={workCustomerFilter} onChange={(e) => setWorkCustomerFilter(e.target.value)} />{workCustomerFilter && <button onClick={() => setWorkCustomerFilter('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500"><X className="w-4 h-4" /></button>}</div>
-              <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar mb-2"><button onClick={() => setWorkDeliveryMethodFilter([])} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${workDeliveryMethodFilter.length === 0 ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-400 border-gray-200'}`}>全部方式</button>{DELIVERY_METHODS.map(m => { const isSelected = workDeliveryMethodFilter.includes(m); return (<button key={m} onClick={() => { if (isSelected) { setWorkDeliveryMethodFilter(workDeliveryMethodFilter.filter(x => x !== m)); } else { setWorkDeliveryMethodFilter([...workDeliveryMethodFilter, m]); } }} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${isSelected ? 'text-white border-transparent' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: isSelected ? COLORS.primary : '' }}>{m}</button>); })}</div>
-              {/* 麵種進階篩選區塊 (觸發按鈕) */}
-              <div className="flex items-center gap-2 mb-4">
-                <button
-                  onClick={() => setIsProductFilterOpen(true)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border flex items-center gap-1 ${
-                    workProductFilter.size > 0
-                      ? 'bg-morandi-blue/10 text-morandi-blue border-morandi-blue/20'
-                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  {workProductFilter.size > 0 ? `🍜 已選 ${workProductFilter.size} 種麵 ▾` : '🍜 篩選麵種 ▾'}
-                </button>
-                {workProductFilter.size > 0 && (
-                  <button
-                    onClick={() => setWorkProductFilter(new Set())}
-                    className="text-xs text-morandi-pebble font-bold px-2 py-1 rounded-md transition-colors hover:text-slate-600 hover:bg-slate-100"
-                  >
-                    清除全部
-                  </button>
-                )}
-              </div>
-              </div>
-              <div className="mb-6"><WorkCalendar selectedDate={workDates} onSelect={setWorkDates} orders={orders} /></div>
-              
-              <div className="space-y-4">
-                  <div className="flex justify-between items-center px-2">
-                      <h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2"><ListChecks className="w-4 h-4" /> 生產總表 [{workDates.length}天]</h3>
-                      <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-gray-300 tracking-wide">{workSheetData.reduce((sum, g) => sum + g.items.length, 0)} 種品項</span>
-                          <motion.button whileTap={buttonTap} onClick={handlePrint} className="bg-slate-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-slate-800 transition-colors shadow-sm active:scale-95"><Printer className="w-3.5 h-3.5" /> 列印 / 匯出 PDF</motion.button>
-                      </div>
-                  </div>
-                  
-                  <motion.div variants={containerVariants} initial="hidden" animate="show" className="space-y-6">
-                      {workSheetData.length > 0 ? (
-                          <>
-                            {workSheetData.slice(0, visibleWorkCount).map((group) => {
-                                const isCollapsed = collapsedWorkGroups.has(group.id);
-                                
-                                return (
-                                    <WorkGroupItem 
-                                        key={group.id} 
-                                        group={group} 
-                                        isCollapsed={isCollapsed} 
-                                        onToggleCollapse={handleToggleWorkGroupCollapse}
-                                        completedWorkItems={completedWorkItems}
-                                        onToggleComplete={handleToggleWorkItemComplete}
-                                        itemVariants={itemVariants}
-                                    />
-                                );
-                            })}
-                            
-                            {workSheetData.length > visibleWorkCount && (
-                               <div className="flex justify-center pb-8 pt-4">
-                                  <button 
-                                    onClick={() => setVisibleWorkCount(v => v + 10)}
-                                    className="px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-full font-bold shadow-sm hover:bg-slate-50 transition-colors"
-                                  >
-                                    向下展開更多組合 ({workSheetData.length - visibleWorkCount})
-                                  </button>
-                               </div>
-                            )}
-                          </>
-                      ) : (
-                          <div className="text-center py-10">
-                              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                  <WifiOff className="w-8 h-8 text-gray-300" />
-                              </div>
-                              <p className="text-gray-300 font-bold text-sm tracking-wide">所選日期無生產需求</p>
-                              <p className="text-xs text-gray-200 mt-1">請選擇其他日期或調整篩選條件</p>
-                          </div>
-                      )}
-                  </motion.div>
-              </div>
-             </div>
-           </motion.div>
+          <WorkView
+            orders={orders}
+            products={products}
+            workDates={workDates}
+            setWorkDates={setWorkDates}
+            workCustomerFilter={workCustomerFilter}
+            setWorkCustomerFilter={setWorkCustomerFilter}
+            workDeliveryMethodFilter={workDeliveryMethodFilter}
+            setWorkDeliveryMethodFilter={setWorkDeliveryMethodFilter}
+            workProductFilter={workProductFilter}
+            setWorkProductFilter={setWorkProductFilter}
+            workSheetData={workSheetData}
+            handlePrint={handlePrint}
+            setActiveTab={setActiveTab}
+            isProductFilterOpen={isProductFilterOpen}
+            setIsProductFilterOpen={setIsProductFilterOpen}
+            expandedFilterCats={expandedFilterCats}
+            setExpandedFilterCats={setExpandedFilterCats}
+            visibleWorkCount={visibleWorkCount}
+            setVisibleWorkCount={setVisibleWorkCount}
+          />
         )}
         </AnimatePresence>
-
-        {/* 麵種篩選 Bottom Sheet */}
-        <AnimatePresence>
-          {isProductFilterOpen && (
-            <div className="fixed inset-0 z-[100] flex flex-col justify-end">
-              {/* 半透明遮罩 */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsProductFilterOpen(false)}
-                className="absolute inset-0 bg-black/40"
-              />
-              
-              {/* 視窗本體 */}
-              <motion.div
-                initial={{ y: "100%" }}
-                animate={{ y: 0 }}
-                exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                className="relative w-full bg-white rounded-t-[32px] max-h-[85vh] flex flex-col shadow-2xl"
-              >
-                {/* 視窗頭部 */}
-                <div className="flex-shrink-0 pb-2">
-                  <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mt-3 mb-4" />
-                  <div className="flex items-center justify-between px-6">
-                    <h3 className="text-lg font-extrabold text-slate-800">選擇麵種</h3>
-                    <button 
-                      onClick={() => setIsProductFilterOpen(false)}
-                      className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition-colors"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* 視窗內容區 */}
-                <div className="overflow-y-auto p-5 space-y-3 custom-scrollbar">
-                  {PRODUCT_CATEGORIES.map(cat => {
-                    const catProducts = products.filter(p => (p.category || 'other') === cat.id);
-                    if (catProducts.length === 0) return null;
-                    
-                    const isExpanded = expandedFilterCats.has(cat.id);
-                    const selectedCount = catProducts.filter(p => workProductFilter.has(p.id)).length;
-                    const isAllSelected = selectedCount === catProducts.length && catProducts.length > 0;
-                    const hasSelection = selectedCount > 0;
-
-                    return (
-                      <div key={cat.id} className={`bg-white rounded-[20px] border transition-colors overflow-hidden ${hasSelection ? 'border-morandi-blue/30 bg-blue-50/10' : 'border-slate-200'}`}>
-                        <div 
-                          className="flex items-center justify-between p-4 min-h-[56px] cursor-pointer hover:bg-slate-50 transition-colors"
-                          onClick={() => {
-                            const newExpanded = new Set(expandedFilterCats);
-                            if (isExpanded) newExpanded.delete(cat.id);
-                            else newExpanded.add(cat.id);
-                            setExpandedFilterCats(newExpanded);
-                          }}
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="w-4 h-4 rounded-full" style={{ backgroundColor: cat.color, border: '1px solid rgba(0,0,0,0.1)' }}></span>
-                            <span className="font-bold text-base text-slate-700">{cat.label}</span>
-                            {selectedCount > 0 && (
-                              <span className="bg-morandi-blue text-white text-xs px-2.5 py-0.5 rounded-full font-bold">
-                                已選 {selectedCount}
-                              </span>
-                            )}
-                          </div>
-                          <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                        </div>
-                        
-                        <AnimatePresence>
-                          {isExpanded && (
-                            <motion.div 
-                              initial={{ height: 0, opacity: 0 }} 
-                              animate={{ height: 'auto', opacity: 1 }} 
-                              exit={{ height: 0, opacity: 0 }}
-                              className="overflow-hidden"
-                            >
-                              <div className="p-4 pt-0 border-t border-slate-100 bg-slate-50/50 flex flex-wrap gap-2.5">
-                                <button 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const newFilter = new Set(workProductFilter);
-                                    if (isAllSelected) {
-                                      catProducts.forEach(p => newFilter.delete(p.id));
-                                    } else {
-                                      catProducts.forEach(p => newFilter.add(p.id));
-                                    }
-                                    setWorkProductFilter(newFilter);
-                                  }}
-                                  className={`px-4 py-2.5 min-h-[44px] rounded-xl text-sm font-bold transition-all border ${isAllSelected ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
-                                >
-                                  {isAllSelected ? '取消全選' : '全選此類'}
-                                </button>
-                                
-                                {catProducts.map(p => {
-                                  const isSelected = workProductFilter.has(p.id);
-                                  return (
-                                    <button
-                                      key={p.id}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        const newFilter = new Set(workProductFilter);
-                                        if (isSelected) newFilter.delete(p.id);
-                                        else newFilter.add(p.id);
-                                        setWorkProductFilter(newFilter);
-                                      }}
-                                      className={`px-4 py-2.5 min-h-[44px] rounded-xl text-sm font-bold transition-all border flex items-center gap-1.5 ${isSelected ? 'bg-morandi-blue text-white border-morandi-blue shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-morandi-blue/50'}`}
-                                    >
-                                      {isSelected && <Check className="w-4 h-4" />}
-                                      {p.name}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* 視窗底部 */}
-                <div className="flex-shrink-0 sticky bottom-0 bg-white p-5 border-t border-gray-100 rounded-b-[32px]">
-                  <button
-                    onClick={() => setIsProductFilterOpen(false)}
-                    className="w-full py-4 bg-morandi-blue text-white rounded-2xl font-bold text-lg shadow-lg shadow-morandi-blue/30 hover:bg-slate-600 active:scale-[0.98] transition-all"
-                  >
-                    查看結果
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
       </main>
       
       {/* ... (Modals code remains same - ConfirmModal, HolidayCalendar, DatePickerModal, SettingsModal, QuickAdd, etc.) ... */}
@@ -2743,21 +1867,17 @@ const App: React.FC = () => {
       {/* 連線逾時/死鎖彈窗 */}
       <NetworkTimeoutModal isOpen={showDeadlockModal} />
 
-      <AnimatePresence>
-      {isEditingProduct && (
-         <motion.div key="product-modal" className="fixed inset-0 bg-morandi-oatmeal z-[60] flex flex-col">
-           <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="flex flex-col h-full">
-           <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10"><motion.button whileTap={buttonTap} onClick={() => setIsEditingProduct(null)} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button><h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">品項資料</h2><motion.button whileTap={buttonTap} onClick={() => requireAuth(handleSaveProduct)} disabled={isSaving || isWarmingUp} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isWarmingUp ? '連線中...' : (isRetrying ? '↻ 正在重試...' : (isSaving ? '儲存中...' : '完成儲存'))}</motion.button></div>
-           <div className="p-6 space-y-6">
-              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">品項名稱</label><input type="text" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="例如：油麵 (小)" value={productForm.name || ''} onChange={(e) => setProductForm({...productForm, name: e.target.value})} /></div>
-              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">分類</label><div className="flex flex-wrap gap-2 p-2 bg-white rounded-[24px] border border-slate-200">{PRODUCT_CATEGORIES.map(cat => (<button key={cat.id} onClick={() => setProductForm({...productForm, category: cat.id})} className={`px-4 py-2 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 ${productForm.category === cat.id ? 'border-transparent shadow-sm' : 'bg-white text-gray-400 border-gray-200'}`} style={{ backgroundColor: productForm.category === cat.id ? cat.color : '', color: productForm.category === cat.id ? '#3E3C3A' : '' }}><span className={`w-2 h-2 rounded-full`} style={{ backgroundColor: cat.color, border: '1px solid rgba(0,0,0,0.1)' }}></span>{cat.label}</button>))}</div></div>
-              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">計算單位</label><input type="text" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="例如：斤" value={productForm.unit || ''} onChange={(e) => setProductForm({...productForm, unit: e.target.value})} /></div>
-              <div className="space-y-2"><label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">預設單價</label><input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="例如：35" value={productForm.price === 0 ? '' : productForm.price} onChange={(e) => { const val = parseFloat(e.target.value); setProductForm({...productForm, price: isNaN(val) ? 0 : Math.max(0, val)}); }} /></div>
-           </div>
-           </motion.div>
-         </motion.div>
-      )}
-      </AnimatePresence>
+      
+      <ProductEditModal 
+        isOpen={!!isEditingProduct}
+        onClose={() => setIsEditingProduct(null)}
+        initialData={isEditingProduct === 'new' ? null : productMap[isEditingProduct as string]}
+        onSave={async (data) => requireAuth(() => handleSaveProduct(data))}
+        isSaving={isSaving}
+        isWarmingUp={isWarmingUp}
+        isRetrying={isRetrying}
+      />
+
 
       <AnimatePresence>
       {selectedCustomerForModal && groupedOrders[selectedCustomerForModal] && (

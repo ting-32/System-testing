@@ -11,7 +11,6 @@ interface UseDataManagementProps {
   isSaving: boolean;
   setIsSaving: (isSaving: boolean) => void;
   customerForm: any;
-  productForm: any;
   isEditingCustomer: string | null;
   setIsEditingCustomer: (id: string | null) => void;
   isEditingProduct: string | null;
@@ -31,7 +30,6 @@ export const useDataManagement = ({
   isSaving,
   setIsSaving,
   customerForm,
-  productForm,
   isEditingCustomer,
   setIsEditingCustomer,
   isEditingProduct,
@@ -112,10 +110,10 @@ export const useDataManagement = ({
     addToast('店家資料已儲存', 'success'); 
   };
 
-  const handleSaveProduct = async () => { 
-    if (!productForm.name || isSaving) return; 
+  const handleSaveProduct = async (formData: Partial<Product>) => { 
+    if (!formData.name || isSaving) return; 
     setIsSaving(true); 
-    const finalProduct = { id: isEditingProduct === 'new' ? 'p' + Date.now() : (isEditingProduct as string), name: productForm.name || '', unit: productForm.unit || '斤', price: Number(productForm.price) || 0, category: productForm.category || 'other', lastUpdated: Date.now() }; 
+    const finalProduct = { id: isEditingProduct === 'new' ? 'p' + Date.now() : (isEditingProduct as string), name: formData.name || '', unit: formData.unit || '斤', price: Number(formData.price) || 0, category: formData.category || 'other', lastUpdated: Date.now() }; 
     
     const previousProducts = [...products];
     if (isEditingProduct === 'new') setProducts([...products, finalProduct]); 
