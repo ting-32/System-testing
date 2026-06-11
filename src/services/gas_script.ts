@@ -503,6 +503,7 @@ function getData(startDateStr, since = 0) {
     trip: o.Trip || o.trip || o.趟次 || ''
   }));
 
+  let allOrderIds = [];
   if (startDateStr) {
     const startStr = startDateStr.replace(/-/g, '');
     orders = orders.filter(o => {
@@ -517,8 +518,10 @@ function getData(startDateStr, since = 0) {
     });
   }
 
+  allOrderIds = orders.map(o => o.id);
+
   if (since > 0) {
-    orders = orders.filter(o => o.lastUpdated > since);
+    orders = orders.filter(o => o.lastUpdated > since || o.lastUpdated === 0);
   }
   
   // Get settings
@@ -532,7 +535,7 @@ function getData(startDateStr, since = 0) {
   if (!settings) settings = {};
   settings.rules = getRemindRulesFromSheet();
 
-  return { customers, products, orders, trips, settings, serverGlobalTs: new Date().getTime() };
+  return { customers, products, orders, allOrderIds, trips, settings, serverGlobalTs: new Date().getTime() };
 }
 
 function getRemindRulesSheet() {
@@ -1338,6 +1341,9 @@ function generateTomorrowDefaultOrders() {
   } finally {
     SpreadsheetApp.flush(); // 強制將快取變更寫入 Sheets，確保後續 Lock 拿到最新資料
     lock.releaseLock();
+    
+    // ▼ ▼ ▼ 補上這一行，建單完成後通知所有前端拉取資料 ▼ ▼ ▼
+    notifyFirebase(); 
   }
 }
 

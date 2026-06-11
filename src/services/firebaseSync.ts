@@ -12,7 +12,7 @@ const db = getDatabase(app);
 
 export const broadcastDataChange = async () => {
   try {
-    const syncRef = ref(db, 'sync/lastUpdated');
+    const syncRef = ref(db, 'sync/lastUpdateTime');
     await set(syncRef, Date.now());
   } catch (error) {
     console.error('Failed to broadcast data change:', error);
@@ -20,7 +20,7 @@ export const broadcastDataChange = async () => {
 };
 
 export const listenToDataChange = (onSignalReceived: () => void) => {
-  const syncRef = ref(db, 'sync/lastUpdated');
+  const syncRef = ref(db, 'sync/lastUpdateTime');
   let isFirstLoad = true;
 
   const unsubscribe = onValue(syncRef, (snapshot) => {

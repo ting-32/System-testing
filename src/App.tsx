@@ -62,6 +62,7 @@ import { useAutoOrderPrediction } from './hooks/useAutoOrderPrediction';
 import { useCompactMode } from './hooks/useCompactMode';
 import { useUIStore } from './store/useUIStore';
 import { fetchWithRetry } from './utils/fetchUtils';
+import { broadcastDataChange } from './services/firebaseSync';
 import { OrdersPage } from './pages/OrdersPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { ProductsPage } from './pages/ProductsPage';
@@ -669,6 +670,7 @@ const App: React.FC = () => {
     }
     setIsSaving(false);
     addToast('店家資料已儲存', 'success');
+    broadcastDataChange();
     return true;
   };
 
@@ -676,6 +678,7 @@ const App: React.FC = () => {
     if (!apiEndpoint) return;
     try {
       await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteCustomer', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) });
+      broadcastDataChange();
     } catch (e) {
       console.error("刪除失敗:", e);
       addToast("雲端同步刪除失敗，請檢查網路", 'error');
@@ -818,6 +821,7 @@ const App: React.FC = () => {
       return false;
     }
     setIsSaving(false);
+    broadcastDataChange();
     return true;
   };
 
@@ -825,6 +829,7 @@ const App: React.FC = () => {
     if (!apiEndpoint) return;
     try {
       await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteProduct', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) });
+      broadcastDataChange();
     } catch (e) {
       console.error("刪除失敗:", e);
       addToast("雲端同步刪除失敗，請檢查網路", 'error');
@@ -838,6 +843,7 @@ const App: React.FC = () => {
      try {
        await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', data: orderedIds }) });
        setInitialProductOrder(orderedIds);
+       broadcastDataChange();
        return true;
      } catch (e) {
        console.error(e);

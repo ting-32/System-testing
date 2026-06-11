@@ -6,6 +6,7 @@ import { GAS_URL as DEFAULT_GAS_URL } from '../constants';
 import { formatDateStr, normalizeDate, safeNumber } from '../utils';
 import { container } from '../core/di/AppContainer';
 import { DataMapper } from '../core/mappers/DataMapper';
+import { listenToDataChange, broadcastDataChange } from '../services/firebaseSync';
 
 localforage.config({
   name: 'NMR_App_DB',
@@ -163,9 +164,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       let lastSyncStr = localStorage.getItem('nm_last_sync_ts');
       
       // 強制執行一次全量同步，確保近期人工新增但沒有 LastUpdated 的資料能被抓下來
-      if (localStorage.getItem('nm_force_full_sync_2') !== 'done') {
+      if (localStorage.getItem('nm_force_full_sync_3') !== 'done') {
         lastSyncStr = null;
-        localStorage.setItem('nm_force_full_sync_2', 'done');
+        localStorage.setItem('nm_force_full_sync_3', 'done');
       }
 
       const since = lastSyncStr && isSilent ? Number(lastSyncStr) : 0;
@@ -272,10 +273,22 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            if (fetchedTrips.length > 0) {
               setTrips(fetchedTrips);
            }
-           if (newOrders.length > 0) {
+           if (true) {
               setOrders(currentOrders => {
                  const mergedMap = new Map();
                  currentOrders.forEach(o => mergedMap.set(o.id, o));
+                 
+                 if (result.allOrderIds && Array.isArray(result.allOrderIds)) {
+                     const remoteIdSet = new Set(result.allOrderIds);
+                     currentOrders.forEach(localOrder => {
+                         if (localOrder.syncStatus !== 'pending' && localOrder.syncStatus !== 'error') {
+                            if (!remoteIdSet.has(localOrder.id) && !String(localOrder.id).startsWith('AUTO-')) {
+                                mergedMap.delete(localOrder.id);
+                            }
+                         }
+                     });
+                 }
+
                  newOrders.forEach(newOrder => {
                     // ✅ 修改後：若是發現帶有 DELETED 狀態的資料，直接從 Map 中連根拔起
                     if (String(newOrder.status) === 'DELETED') {
@@ -426,6 +439,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
       addToast('強制覆蓋成功', 'success');
       setConflictData(null);
+      broadcastDataChange();
       setTimeout(() => syncData(true), 100);
       return true;
     } catch (e: any) {
@@ -452,6 +466,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       const isOk = await container.tripsRepo.saveTrips(newTrips);
       if (isOk) {
         setTrips(newTrips);
+        broadcastDataChange();
         return true;
       }
       return false;
@@ -474,6 +489,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       const savedOrder = await container.orderService.saveOrder(actionName, newOrder, products, originalVersion);
       setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, version: savedOrder.version } : o));
       onSuccess(savedOrder);
+      broadcastDataChange();
     } catch (e: any) {
       if (e.errorCode === 'VERSION_CONFLICT' || (e.message && (e.message.includes('ERR_VERSION_CONFLICT') || e.message.includes('VERSION_CONFLICT')))) {
          setConflictData({
@@ -593,44 +609,20 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     // 只有在登入成功後才開啟監聽
     if (!isAuthenticated) return;
 
-    const firebaseUrl = 'https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app/sync.json';
-    let eventSource: EventSource | null = null;
+    let unsubscribe = () => {};
 
     try {
-      // 使用原生 EventSource 訂閱 Firebase 的 Server-Sent Events (SSE)
-      eventSource = new EventSource(firebaseUrl);
-      
-      // 我們把處理邏輯抽出來變成一個獨立的函數
-      const handleFirebaseEvent = (event: any) => {
-        if (event && event.data) {
-          const parsed = JSON.parse(event.data);
-          
-          // 如果解析到的數據內有 lastUpdateTime，就觸動背景同步
-          if (
-            (parsed && parsed.data && parsed.data.lastUpdateTime) || 
-            (parsed && parsed.path === '/lastUpdateTime') ||
-            (parsed && parsed.path === '/')
-          ) {
-            console.log(`🔔 收到 Firebase 門鈴訊號 (${event.type})！準備背景同步...`);
-            
-            // 觸發靜默更新機制 (isSilent = true)
-            syncData(true); 
-          }
-        }
-      };
-
-      // 同時拿它來接聽 put 和 patch 兩種廣播
-      eventSource.addEventListener('put', handleFirebaseEvent);
-      eventSource.addEventListener('patch', handleFirebaseEvent);
+      unsubscribe = listenToDataChange(() => {
+        console.log(`🔔 收到 Firebase 門鈴訊號！準備背景同步...`);
+        syncData(true);
+      });
     } catch (err) {
       console.warn('門鈴連線中斷', err);
     }
 
     // 當使用者關閉網頁或登出時，拔除監聽器以節省資源
     return () => {
-      if (eventSource) {
-        eventSource.close();
-      }
+      unsubscribe();
     };
   }, [isAuthenticated, syncData]);
 

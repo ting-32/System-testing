@@ -2,6 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import { Customer, Product, Order, OrderStatus, ToastType } from '../types';
 import { formatTimeForInput, formatTimeDisplay } from '../utils';
 import { fetchWithRetry } from '../utils/fetchUtils';
+import { broadcastDataChange } from '../services/firebaseSync';
 
 interface UseOrderActionsProps {
   orders: Order[];
@@ -208,6 +209,7 @@ export const useOrderActions = ({
           body: JSON.stringify({ action: 'createOrder', data: { ...newOrder, items: uploadItems } })
         });
         await res.json();
+        broadcastDataChange();
       }
     } catch (e) {
       console.error(e);
@@ -272,6 +274,7 @@ export const useOrderActions = ({
                     }
                     return o;
                 }));
+                broadcastDataChange();
             }
         }
     } catch (e: any) {
@@ -378,6 +381,7 @@ export const useOrderActions = ({
                           return o;
                       }));
                       addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
+                      broadcastDataChange();
                   }
               }
           } catch (e: any) {
@@ -769,24 +773,26 @@ export const useOrderActions = ({
         const payload = { id: orderId, version: orderBackup.version };
         const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
         const json = await res.json();
-        if (!json.success) {
-           if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
-              setOrders((prev: Order[]) => [...prev, orderBackup]); // Revert
-              setConflictData({
-                 action: 'deleteOrder',
-                 data: payload,
-                 description: `刪除訂單: ${orderBackup.customerName}`,
-                 type: 'delete_order',
-                 clientData: payload,
-                 serverData: json.serverData || json.data
-              });
-              return;
-           } else {
-              // Add back with error status
-              setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' }]);
-              addToast("刪除失敗，已標記為錯誤", 'error');
-           }
-        }
+         if (!json.success) {
+            if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
+               setOrders((prev: Order[]) => [...prev, orderBackup]); // Revert
+               setConflictData({
+                  action: 'deleteOrder',
+                  data: payload,
+                  description: `刪除訂單: ${orderBackup.customerName}`,
+                  type: 'delete_order',
+                  clientData: payload,
+                  serverData: json.serverData || json.data
+               });
+               return;
+            } else {
+               // Add back with error status
+               setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' }]);
+               addToast("刪除失敗，已標記為錯誤", 'error');
+            }
+         } else {
+            broadcastDataChange();
+         }
       } 
     } catch (e) { 
       console.error("刪除失敗:", e); 
