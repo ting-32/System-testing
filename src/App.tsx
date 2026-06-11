@@ -51,13 +51,16 @@ import { ToastNotification } from './components/ToastNotification';
 import { NavItem } from './components/NavItem';
 import { SkeletonCard } from './components/SkeletonCard';
 import { LoginScreen } from './components/LoginScreen';
-import { AppModals } from './components/layout/AppModals';
+import { GlobalModals } from './components/layout/GlobalModals';
+import { ViewManager } from './components/layout/ViewManager';
+import { useAppAuth } from './hooks/useAppAuth';
 import { useDataSync } from './hooks/useDataSync';
 import { useOrderCalculations } from './hooks/useOrderCalculations';
 import { useVoiceAssistant } from './hooks/useVoiceAssistant';
 import { useOrderActions } from './hooks/useOrderActions';
 import { useAutoOrderPrediction } from './hooks/useAutoOrderPrediction';
 import { useCompactMode } from './hooks/useCompactMode';
+import { useUIStore } from './store/useUIStore';
 import { fetchWithRetry } from './utils/fetchUtils';
 import { OrdersPage } from './pages/OrdersPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -125,6 +128,8 @@ const App: React.FC = () => {
     saveTripsToCloud
   } = useDataSync(addToast);
 
+  const auth = useAppAuth({ handleLogin, addToast });
+
   const customerMap = useMemo(() => {
     const map: Record<string, Customer> = {};
     customers.forEach(c => {
@@ -145,13 +150,6 @@ const App: React.FC = () => {
     return map;
   }, [products]);
 
-  const [isUnlocked, setIsUnlocked] = useState(false);
-  const [unlockTimeout, setUnlockTimeout] = useState<number | null>(null);
-  const [showUnlockModal, setShowUnlockModal] = useState(false);
-  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
-  const [unlockPassword, setUnlockPassword] = useState('');
-  const [unlockError, setUnlockError] = useState(false);
-  const [isUnlocking, setIsUnlocking] = useState(false);
   const [isWarmingUp, _setIsWarmingUp] = useState(false);
   const [showDeadlockModal, setShowDeadlockModal] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -189,55 +187,6 @@ const App: React.FC = () => {
     return () => clearInterval(intervalId);
   }, [apiEndpoint]);
 
-  useEffect(() => {
-    if (isUnlocked && unlockTimeout) {
-      const interval = setInterval(() => {
-        if (Date.now() > unlockTimeout) {
-          setIsUnlocked(false);
-          setUnlockTimeout(null);
-          addToast('安全時效已過，系統已自動進入檢視模式', 'info');
-        }
-      }, 60000);
-      return () => clearInterval(interval);
-    }
-  }, [isUnlocked, unlockTimeout, addToast]);
-
-  const requireAuth = useCallback((action: () => void) => {
-    if (isUnlocked) {
-      action();
-      setUnlockTimeout(Date.now() + 30 * 60 * 1000);
-    } else {
-      setPendingAction(() => action);
-      setShowUnlockModal(true);
-      setUnlockPassword('');
-      setUnlockError(false);
-    }
-  }, [isUnlocked]);
-
-  const handleAppUnlock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!unlockPassword || isUnlocking) return;
-    
-    setIsUnlocking(true);
-    try {
-      const success = await handleLogin(unlockPassword);
-      
-      if (success) {
-        setIsUnlocked(true);
-        setUnlockTimeout(Date.now() + 30 * 60 * 1000);
-        setShowUnlockModal(false);
-        if (pendingAction) {
-          pendingAction();
-          setPendingAction(null);
-        }
-      } else {
-        setUnlockError(true);
-      }
-    } finally {
-      setIsUnlocking(false);
-    }
-  };
-
   const [activeTab, setActiveTab] = useState<'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance'>(() => {
     return (localStorage.getItem('nm_active_tab') as any) || 'orders';
   });
@@ -256,10 +205,26 @@ const App: React.FC = () => {
     localStorage.setItem('nm_line_user_id', lineUserId);
   }, [lineChannelToken, lineUserId]);
   
-  const [isAutoOrderDashboardOpen, setIsAutoOrderDashboardOpen] = useState(false);
-  
   const { layoutMode, setLayoutMode } = useCompactMode();
 
+  const ui = useUIStore();
+  
+  // Compatibility wrappers for UI store
+  const setDrawerConfig = (val: any) => {
+    const next = typeof val === 'function' ? val(ui.drawerConfig) : val;
+    if (next.isOpen) ui.openDrawer(next); else ui.closeDrawer();
+  };
+  const setIsAutoOrderDashboardOpen = (open: boolean) => open ? ui.openAutoOrderDashboard() : ui.closeAutoOrderDashboard();
+  const setConfirmConfig = (val: any) => {
+    const next = typeof val === 'function' ? val({ isOpen: ui.confirmConfig.isOpen, title: ui.confirmConfig.title, message: ui.confirmConfig.message, onConfirm: ui.confirmConfig.onConfirm }) : val;
+    if (next.isOpen) ui.openConfirm(next); else ui.closeConfirm();
+  };
+  const setIsTripManagerOpen = (open: boolean) => open ? ui.openTripManager() : ui.closeTripManager();
+  const setCustomerPickerConfig = (val: any) => {
+    const next = typeof val === 'function' ? val(ui.customerPickerConfig) : val;
+    if (next.isOpen) ui.openCustomerPicker(next); else ui.closeCustomerPicker();
+  };
+  
   const mainRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -283,19 +248,14 @@ const App: React.FC = () => {
   const [expandedFilterCats, setExpandedFilterCats] = useState<Set<string>>(new Set());
   const [workDeliveryMethodFilter, setWorkDeliveryMethodFilter] = useState<string[]>([]);
   
-
   const availableTrips = trips;
   const setAvailableTrips = setTrips;
-
-  const [isTripManagerOpen, setIsTripManagerOpen] = useState(false);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isOrderReorderMode, setIsOrderReorderMode] = useState(false);
   const [reorderedOrderIds, setReorderedOrderIds] = useState<Set<string>>(new Set());
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
 
-  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
-  const [isOrderDatePickerOpen, setIsOrderDatePickerOpen] = useState(false);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   // NEW: State for editing order
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
@@ -314,12 +274,6 @@ const App: React.FC = () => {
   const __dummySelectedDate = useMemo(() => getSmartDefaultDate(), []);
   const __dummySetSelectedDate = useCallback(() => {}, []);
 
-  const [drawerConfig, setDrawerConfig] = useState<{
-    isOpen: boolean;
-    type: string;
-    target: 'order' | 'customer';
-  }>({ isOpen: false, type: '', target: 'order' });
-
   const [orderSearch, _setOrderSearch] = useState('');
   const [orderDeliveryFilter, _setOrderDeliveryFilter] = useState<string[]>([]);
   const [_showOrderDeliveryFilters, _setShowOrderDeliveryFilters] = useState(false);
@@ -329,24 +283,6 @@ const App: React.FC = () => {
 
   const [collapsedWorkGroups, setCollapsedWorkGroups] = useState<Set<string>>(new Set());
   const [completedWorkItems, setCompletedWorkItems] = useState<Set<string>>(new Set());
-
-  const [customerPickerConfig, setCustomerPickerConfig] = useState<{
-    isOpen: boolean;
-    onSelect: (customerId: string) => void;
-    currentSelectedId?: string;
-  }>({ isOpen: false, onSelect: () => {} });
-
-  const [confirmConfig, setConfirmConfig] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {}
-  });
 
   const [isSettling, setIsSettling] = useState(false);
   const [settlementTarget, setSettlementTarget] = useState<{name: string, allOrderIds: string[]} | null>(null);
@@ -378,8 +314,6 @@ const App: React.FC = () => {
   const [isEditingCustomer, setIsEditingCustomer] = useState<string | null>(null);
   const [isEditingProduct, setIsEditingProduct] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<Partial<Product>>({});
-  
-  const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<string | null>(null);
   
   const [isScrollingDown, setIsScrollingDown] = useState(false);
   const [lastScrollY, setLastScrollY] = useState(0);
@@ -447,19 +381,7 @@ const App: React.FC = () => {
     setHasChanges(true);
   }, []);
 
-  // 新增在 App.tsx 元件內部
-  const handleDrawerSelect = (value: string) => {
-    if (drawerConfig.target === 'order') {
-      setOrderForm(prev => ({ ...prev, [drawerConfig.type as string]: value }));
-    }
-    setDrawerConfig({ ...drawerConfig, isOpen: false });
-  };
 
-  const getDrawerOptions = () => {
-    if (drawerConfig.type === 'deliveryMethod') return DELIVERY_METHODS;
-    if (drawerConfig.type === 'trip') return availableTrips.filter(t => t !== '未分配');
-    return [];
-  };
 
   // NEW: History Stack Management for Android Back Button
   useEffect(() => {
@@ -472,21 +394,6 @@ const App: React.FC = () => {
         if (!handleCloseModal()) {
            window.history.pushState(null, document.title, window.location.href); // Restore stack
         }
-        return;
-      }
-      if (isSettingsOpen) {
-        setIsSettingsOpen(false);
-        window.history.pushState(null, document.title, window.location.href); // Restore stack
-        return;
-      }
-      if (isDatePickerOpen) {
-        setIsDatePickerOpen(false);
-        window.history.pushState(null, document.title, window.location.href); // Restore stack
-        return;
-      }
-      if (customerPickerConfig.isOpen) {
-        setCustomerPickerConfig(prev => ({ ...prev, isOpen: false }));
-        window.history.pushState(null, document.title, window.location.href); // Restore stack
         return;
       }
       if (quickAddData) {
@@ -521,10 +428,6 @@ const App: React.FC = () => {
     editingOrderId, 
     isEditingCustomer, 
     isEditingProduct, 
-    isSettingsOpen, 
-    isDatePickerOpen, 
-    
-    customerPickerConfig.isOpen, 
     quickAddData, 
     expandedCustomer, 
     activeTab
@@ -583,10 +486,10 @@ const App: React.FC = () => {
 
   // 👇 新增這段：當展開的客戶訂單被刪光時，自動關閉 Modal
   useEffect(() => {
-    if (selectedCustomerForModal && !groupedOrders[selectedCustomerForModal]) {
-      setSelectedCustomerForModal(null);
+    if (ui.selectedCustomerForModal && !groupedOrders[ui.selectedCustomerForModal]) {
+      ui.closeSelectedCustomerModal();
     }
-  }, [groupedOrders, selectedCustomerForModal]);
+  }, [groupedOrders, ui.selectedCustomerForModal, ui.closeSelectedCustomerModal]);
 
 
   // ... (Other handlers remain unchanged until handleCreateOrderFromCustomer) ...
@@ -965,11 +868,8 @@ const App: React.FC = () => {
       <Header
         isBackgroundSyncing={isBackgroundSyncing}
         isInitialLoading={isInitialLoading}
-        isUnlocked={isUnlocked}
-        setIsUnlocked={setIsUnlocked}
-        setShowUnlockModal={setShowUnlockModal}
-        setIsNotificationCenterOpen={setIsNotificationCenterOpen}
-        setIsSettingsOpen={setIsSettingsOpen}
+        isUnlocked={auth.isUnlocked}
+        setIsUnlocked={auth.setIsUnlocked}
       />
 
       {/* --- Toast Container --- */}
@@ -996,361 +896,114 @@ const App: React.FC = () => {
       </AnimatePresence>
 
       <main className="flex-1 overflow-y-auto pb-24 px-4" ref={mainRef}>
-        <AnimatePresence mode="popLayout">
-        {activeTab === 'orders' && (
-          <motion.div 
-            key="orders-page" 
-            initial={{ opacity: 0, x: -10 }} 
-            animate={{ opacity: 1, x: 0, zIndex: 10 }} 
-            exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} 
-            transition={{ duration: 0.2 }} 
-            className="space-y-6 relative"
-          >
-           <OrdersPage 
-              orders={orders} setOrders={setOrders} 
-              customers={customers} products={products}
-              setDrawerConfig={setDrawerConfig}
-              apiEndpoint={apiEndpoint}
-              isSaving={isSaving} setIsSaving={setIsSaving}
-              isWarmingUp={isWarmingUp} isRetrying={isRetrying} isBackgroundSyncing={isBackgroundSyncing}
-              layoutMode={layoutMode}
-              addToast={addToast} setToasts={setToasts}
-              saveOrderToCloud={saveOrderToCloud} setConflictData={setConflictData}
-              handleForceRetry={handleForceRetry} requireAuth={requireAuth}
-              setActiveTab={setActiveTab} setIsAutoOrderDashboardOpen={setIsAutoOrderDashboardOpen}
-              prediction={prediction}
-              isAddingOrder={isAddingOrder} setIsAddingOrder={setIsAddingOrder}
-              editingOrderId={editingOrderId} setEditingOrderId={setEditingOrderId}
-              quickAddData={quickAddData} setQuickAddData={setQuickAddData}
-              lastOrderCandidate={lastOrderCandidate} setLastOrderCandidate={setLastOrderCandidate}
-              orderForm={orderForm} setOrderForm={setOrderForm}
-              handleQuickAddSubmit={handleQuickAddSubmit}
-              handleSwipeStatusChange={handleSwipeStatusChange}
-              handleCopyOrder={handleCopyOrder}
-              handleShareOrder={handleShareOrder}
-              handleEditOrder={handleEditOrder}
-              handleSaveOrder={handleSaveOrder}
-              applyLastOrder={applyLastOrder}
-              handleSelectExistingCustomer={handleSelectExistingCustomer}
-              openGoogleMaps={openGoogleMaps}
-              handleDeleteOrder={handleDeleteOrder}
-              externalEditOrderId={externalEditOrderId || (externalAction?.type === 'edit' ? externalAction.id : null)}
-              onClearExternalEdit={() => { setExternalEditOrderId(null); setExternalAction(null); }}
-              externalAddOrderData={externalAddOrderData}
-              clearExternalAddOrder={() => setExternalAddOrderData(null)}
-           />
-          </motion.div>
-        )}
-        {activeTab === 'customers' && (
-          <motion.div 
-            key="customers-page" 
-            initial={{ opacity: 0, x: -10 }} 
-            animate={{ opacity: 1, x: 0, zIndex: 10 }} 
-            exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} 
-            transition={{ duration: 0.2 }} 
-            className="space-y-6 relative"
-          >
-          <CustomersPage
-            customers={customers}
-            setCustomers={setCustomers}
-            products={products}
-            orders={orders}
-            apiEndpoint={apiEndpoint}
-            isSaving={isSaving}
-            setIsSaving={setIsSaving}
-            isWarmingUp={isWarmingUp}
-            isRetrying={isRetrying}
-            addToast={addToast}
-            setConflictData={setConflictData}
-            setConfirmConfig={setConfirmConfig}
-            requireAuth={requireAuth}
-            isEditingCustomer={isEditingCustomer}
-            setIsEditingCustomer={setIsEditingCustomer}
-            customerForm={customerForm}
-            setCustomerForm={setCustomerForm}
-            editCustomerMode={editCustomerMode}
-            setEditCustomerMode={setEditCustomerMode}
-            showAdvancedCustomerSettings={showAdvancedCustomerSettings}
-            setShowAdvancedCustomerSettings={setShowAdvancedCustomerSettings}
-            onSaveCustomerCloud={onSaveCustomerCloud}
-            onDeleteCustomerCloud={onDeleteCustomerCloud}
-            availableTrips={availableTrips}
-            onCreateOrder={(c) => {
-              setExternalAddOrderData(c);
-              setActiveTab('orders');
-            }}
-          />
-          </motion.div>
-        )}
-        {activeTab === 'products' && (
-          <motion.div 
-            key="products-page" 
-            initial={{ opacity: 0, x: -10 }} 
-            animate={{ opacity: 1, x: 0, zIndex: 10 }} 
-            exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} 
-            transition={{ duration: 0.2 }} 
-            className="space-y-6 relative"
-          >
-          <ProductsPage
-            products={products}
-            setProducts={setProducts}
-            apiEndpoint={apiEndpoint}
-            isSaving={isSaving}
-            setIsSaving={setIsSaving}
-            isWarmingUp={isWarmingUp}
-            isRetrying={isRetrying}
-            addToast={addToast}
-            setConfirmConfig={setConfirmConfig}
-            requireAuth={requireAuth}
-            isEditingProduct={isEditingProduct}
-            setIsEditingProduct={setIsEditingProduct}
-            onSaveProductCloud={onSaveProductCloud}
-            onDeleteProductCloud={onDeleteProductCloud}
-            onSaveProductOrderCloud={onSaveProductOrderCloud}
-          />
-          </motion.div>
-        )}
-        {/* ... (Other Tabs code remains same) ... */}
-        {activeTab === 'schedule' && (
-          <motion.div 
-            key="schedule-page" 
-            initial={{ opacity: 0, x: -10 }} 
-            animate={{ opacity: 1, x: 0, zIndex: 10 }} 
-            exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }} 
-            transition={{ duration: 0.2 }} 
-            className="space-y-6 relative"
-          >
-          <SchedulePage
-            orders={orders}
-            setOrders={setOrders}
-            customers={customers}
-            products={products}
-            productMap={productMap}
-            customerMap={customerMap}
-            isLoadingProducts={isLoadingProducts}
-            availableTrips={availableTrips}
-            setAvailableTrips={setAvailableTrips}
-            saveOrderToCloud={saveOrderToCloud}
-            setIsTripManagerOpen={setIsTripManagerOpen}
-            onNavigateToAddOrder={(date) => {
-              setSelectedDate(date);
-              dummySetOrderForm();
-              setEditingOrderId(null);
-              dummySetIsAddingOrder(true);
-            }}
-            handleSwipeStatusChange={handleSwipeStatusChange}
-            handleShareOrder={handleShareOrder}
-            openGoogleMaps={openGoogleMaps}
-            addToast={addToast}
-            calculateOrderTotalAmount={calculateOrderTotalAmount}
-          />
-          </motion.div>
-        )}
-        {/* ... (Finance and Work Tabs remain unchanged - they are inside ActiveTab blocks already provided in context, just ensuring closing structure) ... */}
-        {activeTab === 'finance' && (
-          <FinancePage 
-             financeData={financeData}
-             calculateOrderTotalAmount={calculateOrderTotalAmount}
-             setSettlementDate={setSettlementDate}
-             setSettlementTarget={setSettlementTarget}
-             products={products}
-             customers={customers}
-             handleCopyStatement={handleCopyStatement}
-             handleShareStatementToLine={handleShareStatementToLine}
-          />
-        )}
-        
-        {activeTab === 'work' && (
-           <WorkPage
-             orders={orders}
-             products={products}
-             workCustomerFilter={workCustomerFilter}
-             setWorkCustomerFilter={setWorkCustomerFilter}
-             workDeliveryMethodFilter={workDeliveryMethodFilter}
-             setWorkDeliveryMethodFilter={setWorkDeliveryMethodFilter}
-             workProductFilter={workProductFilter}
-             setWorkProductFilter={setWorkProductFilter}
-             workDates={workDates}
-             setWorkDates={setWorkDates}
-             collapsedWorkGroups={collapsedWorkGroups}
-             setCollapsedWorkGroups={setCollapsedWorkGroups}
-             completedWorkItems={completedWorkItems}
-             setCompletedWorkItems={setCompletedWorkItems}
-             workSheetData={workSheetData}
-             isProductFilterOpen={isProductFilterOpen}
-             setIsProductFilterOpen={setIsProductFilterOpen}
-             expandedFilterCats={expandedFilterCats}
-             setExpandedFilterCats={setExpandedFilterCats}
-             handlePrint={handlePrint}
-             setActiveTab={setActiveTab}
-           />
-        )}
-        </AnimatePresence>
+        <ViewManager
+          activeTab={activeTab}
+          // OrdersPage Props
+          orders={orders} setOrders={setOrders} 
+          customers={customers} products={products}
+          setDrawerConfig={setDrawerConfig}
+          apiEndpoint={apiEndpoint}
+          isSaving={isSaving} setIsSaving={setIsSaving}
+          isWarmingUp={isWarmingUp} isRetrying={isRetrying} isBackgroundSyncing={isBackgroundSyncing}
+          layoutMode={layoutMode}
+          addToast={addToast} setToasts={setToasts}
+          saveOrderToCloud={saveOrderToCloud} setConflictData={setConflictData}
+          handleForceRetry={handleForceRetry} requireAuth={auth.requireAuth}
+          setActiveTab={setActiveTab} setIsAutoOrderDashboardOpen={setIsAutoOrderDashboardOpen}
+          prediction={prediction}
+          isAddingOrder={isAddingOrder} setIsAddingOrder={setIsAddingOrder}
+          editingOrderId={editingOrderId} setEditingOrderId={setEditingOrderId}
+          quickAddData={quickAddData} setQuickAddData={setQuickAddData}
+          lastOrderCandidate={lastOrderCandidate} setLastOrderCandidate={setLastOrderCandidate}
+          orderForm={orderForm} setOrderForm={setOrderForm}
+          handleQuickAddSubmit={handleQuickAddSubmit}
+          handleSwipeStatusChange={handleSwipeStatusChange}
+          handleCopyOrder={handleCopyOrder}
+          handleShareOrder={handleShareOrder}
+          handleEditOrder={handleEditOrder}
+          handleSaveOrder={handleSaveOrder}
+          applyLastOrder={applyLastOrder}
+          handleSelectExistingCustomer={handleSelectExistingCustomer}
+          openGoogleMaps={openGoogleMaps}
+          handleDeleteOrder={handleDeleteOrder}
+          externalEditOrderId={externalEditOrderId || (externalAction?.type === 'edit' ? externalAction.id : null)}
+          onClearExternalEdit={() => { setExternalEditOrderId(null); setExternalAction(null); }}
+          externalAddOrderData={externalAddOrderData}
+          clearExternalAddOrder={() => setExternalAddOrderData(null)}
+          // CustomersPage Props
+          setCustomers={setCustomers}
+          setConfirmConfig={setConfirmConfig}
+          isEditingCustomer={isEditingCustomer}
+          setIsEditingCustomer={setIsEditingCustomer}
+          customerForm={customerForm}
+          setCustomerForm={setCustomerForm}
+          editCustomerMode={editCustomerMode}
+          setEditCustomerMode={setEditCustomerMode}
+          showAdvancedCustomerSettings={showAdvancedCustomerSettings}
+          setShowAdvancedCustomerSettings={setShowAdvancedCustomerSettings}
+          onSaveCustomerCloud={onSaveCustomerCloud}
+          onDeleteCustomerCloud={onDeleteCustomerCloud}
+          availableTrips={availableTrips}
+          onCreateOrder={(c: any) => { setExternalAddOrderData(c); setActiveTab('orders'); }}
+          // ProductsPage Props
+          setProducts={setProducts}
+          isEditingProduct={isEditingProduct}
+          setIsEditingProduct={setIsEditingProduct}
+          onSaveProductCloud={onSaveProductCloud}
+          onDeleteProductCloud={onDeleteProductCloud}
+          onSaveProductOrderCloud={onSaveProductOrderCloud}
+          // SchedulePage Props
+          productMap={productMap}
+          customerMap={customerMap}
+          isLoadingProducts={isLoadingProducts}
+          setAvailableTrips={setAvailableTrips}
+          setIsTripManagerOpen={setIsTripManagerOpen}
+          onNavigateToAddOrder={(date: string) => {
+            setSelectedDate(date);
+            dummySetOrderForm();
+            setEditingOrderId(null);
+            dummySetIsAddingOrder(true);
+          }}
+          calculateOrderTotalAmount={calculateOrderTotalAmount}
+          // FinancePage Props
+          financeData={financeData}
+          setSettlementDate={setSettlementDate}
+          setSettlementTarget={setSettlementTarget}
+          handleCopyStatement={handleCopyStatement}
+          handleShareStatementToLine={handleShareStatementToLine}
+          // WorkPage Props
+          workCustomerFilter={workCustomerFilter}
+          setWorkCustomerFilter={setWorkCustomerFilter}
+          workDeliveryMethodFilter={workDeliveryMethodFilter}
+          setWorkDeliveryMethodFilter={setWorkDeliveryMethodFilter}
+          workProductFilter={workProductFilter}
+          setWorkProductFilter={setWorkProductFilter}
+          workDates={workDates}
+          setWorkDates={setWorkDates}
+          collapsedWorkGroups={collapsedWorkGroups}
+          setCollapsedWorkGroups={setCollapsedWorkGroups}
+          completedWorkItems={completedWorkItems}
+          setCompletedWorkItems={setCompletedWorkItems}
+          workSheetData={workSheetData}
+          isProductFilterOpen={isProductFilterOpen}
+          setIsProductFilterOpen={setIsProductFilterOpen}
+          expandedFilterCats={expandedFilterCats}
+          setExpandedFilterCats={setExpandedFilterCats}
+          handlePrint={handlePrint}
+        />
 
       </main>
-      
-      {/* ... (Modals code remains same - ConfirmModal, HolidayCalendar, DatePickerModal, SettingsModal, QuickAdd, etc.) ... */}
-      
+
       {/* (All Global Modals Moved Here) */}
-      <AppModals 
-        showUnlockModal={showUnlockModal}
-        onCloseUnlockModal={() => setShowUnlockModal(false)}
-        handleAppUnlock={handleAppUnlock}
-        isUnlocking={isUnlocking}
-        unlockError={unlockError}
-        setUnlockError={setUnlockError}
-        unlockPassword={unlockPassword}
-        setUnlockPassword={setUnlockPassword}
-
-        customerPickerConfig={customerPickerConfig}
-        onCloseCustomerPicker={() => setCustomerPickerConfig((prev: any) => ({ ...prev, isOpen: false }))}
-        customers={customers}
-        orders={orders}
-        customerPickerSelectedDate={orderForm.date || selectedDate}
-
-        conflictData={conflictData}
-        onCloseConflictModal={() => setConflictData(null)}
-        onRefreshConflictModal={() => {
-          if (conflictData?.type === 'batch_order' && conflictData.clientData) {
-            const updatedIds = conflictData.clientData.map((u: any) => u.id);
-            setOrders((prev: Order[]) => prev.map(o => updatedIds.includes(o.id) ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
-          } else if (conflictData?.type === 'order' && conflictData.clientData) {
-            setOrders((prev) => prev.map(o => o.id === conflictData.clientData.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
-          }
-          setConflictData(null);
-          syncData(true);
-          setIsAddingOrder(false);
-          setIsEditingCustomer(null);
-          setIsEditingProduct(null);
-          setEditingOrderId(null);
-        }}
-        handleForceRetry={handleForceRetry}
-        isSaving={isSaving}
-
-        isVoiceModalOpen={isVoiceModalOpen}
-        onCloseVoiceModal={() => setIsVoiceModalOpen(false)}
-        handleProcessVoiceOrder={handleProcessVoiceOrder}
-        isAiMode={isAiMode}
-        setIsAiMode={setIsAiMode}
-
-        confirmConfig={confirmConfig}
-        onCancelConfirm={() => setConfirmConfig((prev: any) => ({ ...prev, isOpen: false }))}
-
-        isDatePickerOpen={isDatePickerOpen}
-        selectedDate={selectedDate}
-        setSelectedDate={setSelectedDate}
-        onCloseDatePicker={() => setIsDatePickerOpen(false)}
-
-        isOrderDatePickerOpen={isOrderDatePickerOpen}
-        orderFormDate={orderForm.date}
-        onSelectOrderDate={(date: any) => {
-          handleOrderFormChange('date', date);
-          setIsOrderDatePickerOpen(false);
-        }}
-        onCloseOrderDatePicker={() => setIsOrderDatePickerOpen(false)}
-        orderDatePickerOffDays={customers.find(c => c.name === orderForm.customerName)?.offDays}
-        orderDatePickerHolidayDates={customers.find(c => c.name === orderForm.customerName)?.holidayDates}
-
-        isNotificationCenterOpen={isNotificationCenterOpen}
-        onCloseNotificationCenter={() => setIsNotificationCenterOpen(false)}
-        products={products}
-        lineChannelToken={lineChannelToken}
-        setLineChannelToken={setLineChannelToken}
-        lineUserId={lineUserId}
-        setLineUserId={setLineUserId}
-        apiEndpoint={apiEndpoint}
-
-        isSettingsOpen={isSettingsOpen}
-        onCloseSettings={() => setIsSettingsOpen(false)}
-        syncData={syncData}
-        handleChangePassword={handleChangePassword}
-        handleSaveApiUrl={handleSaveApiUrl}
-        layoutMode={layoutMode}
-        setLayoutMode={setLayoutMode}
-
-        isTripManagerOpen={isTripManagerOpen}
-        availableTrips={availableTrips}
-        setAvailableTrips={setAvailableTrips}
-        setOrders={setOrders}
-        onCloseTripManager={() => setIsTripManagerOpen(false)}
-        saveOrderToCloud={saveOrderToCloud}
-        saveTripsToCloud={saveTripsToCloud}
-
-        showDeadlockModal={showDeadlockModal}
-
-        selectedCustomerForModal={selectedCustomerForModal}
-        groupedOrdersForModal={selectedCustomerForModal ? groupedOrders[selectedCustomerForModal] : null}
-        onCloseSelectedCustomerModal={() => setSelectedCustomerForModal(null)}
-        productMap={productMap}
-        customerMap={customerMap}
-        isLoadingProducts={isLoadingProducts}
-        handleSwipeStatusChange={handleSwipeStatusChange}
-        handleDeleteOrder={handleDeleteOrder}
-        handleShareOrder={handleShareOrder}
-        openGoogleMaps={openGoogleMaps}
-        handleEditOrder={handleEditOrder}
-        setActiveTab={setActiveTab}
-        setQuickAddData={setQuickAddData}
-        handleCopyOrder={handleCopyOrder}
-
-        settlementTarget={settlementTarget}
-        settlementPreview={settlementPreview}
-        onCloseSettlement={() => setSettlementTarget(null)}
-        isSettling={isSettling}
-        handleBatchSettleOrders={async () => {
-          if (window.Telegram?.WebApp?.HapticFeedback) {
-            window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-          } else if (navigator.vibrate) {
-            navigator.vibrate(50);
-          }
-          setIsSettling(true);
-          await handleBatchSettleOrders(settlementPreview!.orders.map(o => o.id));
-          setIsSettling(false);
-          setSettlementTarget(null);
-        }}
-
-        drawerConfig={drawerConfig}
-        onCloseDrawer={() => setDrawerConfig({ ...drawerConfig, isOpen: false })}
-        getDrawerOptions={getDrawerOptions}
-        orderForm={orderForm}
-        handleDrawerSelect={handleDrawerSelect}
-
-        isAutoOrderDashboardOpen={isAutoOrderDashboardOpen}
-        onCloseAutoOrderDashboard={() => setIsAutoOrderDashboardOpen(false)}
-        previewDate={previewDate}
-        setPreviewDate={setPreviewDate}
-        prediction={prediction}
-        onToggleAutoOrder={async (customerId: string) => {
-          const customer = customers.find(c => c.id === customerId);
-          if (customer) {
-            const updatedCustomer = { 
-              ...customer, 
-              autoOrderEnabled: !customer.autoOrderEnabled,
-              lastUpdated: Date.now() 
-            };
-            setCustomers(prev => prev.map(c => c.id === customerId ? updatedCustomer : c));
-            if (apiEndpoint) {
-              try {
-                const payload = { ...updatedCustomer, originalLastUpdated: customer.lastUpdated, force: true };
-                const res = await fetchWithRetry(apiEndpoint, {
-                  method: 'POST',
-                  body: JSON.stringify({ action: 'updateCustomer', data: payload })
-                });
-                const json = await res.json();
-                if (!json.success) {
-                  setCustomers(prev => prev.map(c => c.id === customerId ? customer : c));
-                  addToast("儲存失敗，請重新整理後再試", "error");
-                } else {
-                  const newVersion = json.data?.lastUpdated || payload.lastUpdated;
-                  setCustomers(prev => prev.map(c => c.id === customerId ? { ...updatedCustomer, lastUpdated: newVersion } : c));
-                }
-              } catch (e) {
-                setCustomers(prev => prev.map(c => c.id === customerId ? customer : c));
-                addToast("網路連線異常，儲存失敗", "error");
-              }
-            }
-          }
-        }}
+      <GlobalModals
+         isUnlockModalOpen={auth.showUnlockModal}
+         onCloseUnlockModal={() => auth.setShowUnlockModal(false)}
+         handleAppUnlock={auth.handleAppUnlock}
+         isUnlocking={auth.isUnlocking}
+         unlockError={auth.unlockError}
+         setUnlockError={auth.setUnlockError}
+         unlockPassword={auth.unlockPassword}
+         setUnlockPassword={auth.setUnlockPassword}
       />
 
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />

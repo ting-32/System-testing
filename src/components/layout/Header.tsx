@@ -2,26 +2,23 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Unlock, Lock, BellRing, Settings } from 'lucide-react';
 import { buttonTap } from '../animations';
+import { useUIStore } from '../../store/useUIStore';
 
 interface HeaderProps {
   isBackgroundSyncing: boolean;
   isInitialLoading: boolean;
   isUnlocked: boolean;
   setIsUnlocked: (val: boolean) => void;
-  setShowUnlockModal: (val: boolean) => void;
-  setIsNotificationCenterOpen: (val: boolean) => void;
-  setIsSettingsOpen: (val: boolean) => void;
 }
 
 export function Header({
   isBackgroundSyncing,
   isInitialLoading,
   isUnlocked,
-  setIsUnlocked,
-  setShowUnlockModal,
-  setIsNotificationCenterOpen,
-  setIsSettingsOpen
+  setIsUnlocked
 }: HeaderProps) {
+  const ui = useUIStore();
+
   return (
     <header className="px-4 py-3 bg-white border-b border-gray-100 flex justify-between items-center sticky top-0 z-40">
       <div>
@@ -45,7 +42,7 @@ export function Header({
         </AnimatePresence>
         
         <button 
-          onClick={() => isUnlocked ? setIsUnlocked(false) : setShowUnlockModal(true)}
+          onClick={() => isUnlocked ? setIsUnlocked(false) : ui.openUnlockModal()}
           className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${
             isUnlocked 
               ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' 
@@ -59,10 +56,10 @@ export function Header({
           )}
         </button>
         
-        <motion.button whileTap={buttonTap} onClick={() => setIsNotificationCenterOpen(true)} className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center border border-amber-100 text-amber-500 hover:bg-amber-100 transition-colors active:scale-95">
+        <motion.button whileTap={buttonTap} onClick={() => ui.openNotificationCenter()} className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center border border-amber-100 text-amber-500 hover:bg-amber-100 transition-colors active:scale-95">
           <BellRing className="w-5 h-5" />
         </motion.button>
-        <motion.button whileTap={buttonTap} onClick={() => setIsSettingsOpen(true)} className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center border border-slate-100 text-morandi-pebble hover:text-slate-600 transition-colors active:scale-95">
+        <motion.button whileTap={buttonTap} onClick={() => ui.openSettings()} className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center border border-slate-100 text-morandi-pebble hover:text-slate-600 transition-colors active:scale-95">
           <Settings className="w-5 h-5" />
         </motion.button>
       </div>
