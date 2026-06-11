@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo } from 'framer-motion';
-import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot, MessageCircle, Copy } from 'lucide-react';
+import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot, MessageCircle } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
 import { ORDERING_HABITS } from '../constants';
 import { getStatusStyles, formatTimeDisplay } from '../utils';
@@ -12,7 +12,7 @@ interface SwipeableOrderCardProps {
   customerMap: Record<string, Customer>;
   isSelectionMode: boolean;
   isSelected: boolean;
-  onToggleSelection: (id: string) => void;
+  onToggleSelection: () => void;
   onStatusChange: (id: string, status: OrderStatus) => void;
   onDelete: (id: string) => void;
   onShare: (order: Order) => void;
@@ -23,7 +23,7 @@ interface SwipeableOrderCardProps {
   isLoadingProducts?: boolean;
 }
 
-const SwipeableOrderCardComponent: React.FC<SwipeableOrderCardProps> = ({ 
+export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({ 
   order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
   onStatusChange, onDelete, onShare, onMap, onEdit, onRetry, onViewCustomer, isLoadingProducts
 }) => {
@@ -140,7 +140,7 @@ const SwipeableOrderCardComponent: React.FC<SwipeableOrderCardProps> = ({
             opacity: isSyncPending ? 0.7 : 1
         }} 
         className={`rounded-[32px] overflow-hidden shadow-sm border-2 relative z-10 touch-pan-y ${isSelectionMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`} 
-        onClick={() => { if (isSelectionMode) onToggleSelection(order.id); }} 
+        onClick={() => { if (isSelectionMode) onToggleSelection(); }} 
       > 
         {isSelectionMode && ( 
           <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20"> 
@@ -265,10 +265,6 @@ const SwipeableOrderCardComponent: React.FC<SwipeableOrderCardProps> = ({
               <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { e.stopPropagation(); onShare(order); }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 hover:text-slate-600 hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><Share2 className="w-4 h-4" /></motion.button> 
               <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { e.stopPropagation(); onMap(order.customerName); }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-400 hover:text-blue-600 hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><MapPin className="w-4 h-4" /></motion.button> 
               <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { e.stopPropagation(); onEdit(order); }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 hover:text-morandi-blue hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><Edit2 className="w-4 h-4" /></motion.button> 
-              <motion.button disabled={isSelectionMode} whileTap={buttonTap} onClick={(e) => { 
-                e.stopPropagation(); 
-                navigator.clipboard.writeText(order.id).then(() => alert(`已複製訂單編號: ${order.id}`)).catch(() => alert('複製失敗'));
-              }} className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 hover:text-emerald-500 hover:shadow-sm transition-all border border-black/5 disabled:opacity-50"><Copy className="w-4 h-4" /></motion.button>
             </div> 
             {order.note && (<div className="text-[10px] font-bold text-gray-400 bg-white/40 px-3 py-1.5 rounded-lg max-w-[60%] truncate">備註: {order.note}</div>)} 
           </div> 
@@ -277,19 +273,4 @@ const SwipeableOrderCardComponent: React.FC<SwipeableOrderCardProps> = ({
     </div> 
   ); 
 };
-
-function areEqual(prevProps: SwipeableOrderCardProps, nextProps: SwipeableOrderCardProps) {
-  return (
-    prevProps.order.id === nextProps.order.id &&
-    prevProps.order.lastUpdated === nextProps.order.lastUpdated &&
-    prevProps.order.status === nextProps.order.status &&
-    prevProps.order.syncStatus === nextProps.order.syncStatus &&
-    prevProps.isSelectionMode === nextProps.isSelectionMode &&
-    prevProps.isSelected === nextProps.isSelected &&
-    prevProps.isLoadingProducts === nextProps.isLoadingProducts
-    // ⚠️ 絕對不要在這裡加上函數的比較
-  );
-}
-
-export const SwipeableOrderCard = React.memo(SwipeableOrderCardComponent, areEqual);
 

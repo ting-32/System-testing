@@ -19,19 +19,7 @@ interface ScheduleOrderCardProps {
   isLoadingProducts?: boolean;
 }
 
-function areEqual(prevProps: ScheduleOrderCardProps, nextProps: ScheduleOrderCardProps) {
-  return (
-    prevProps.order.id === nextProps.order.id &&
-    prevProps.order.lastUpdated === nextProps.order.lastUpdated &&
-    prevProps.order.status === nextProps.order.status &&
-    prevProps.isSelectionMode === nextProps.isSelectionMode &&
-    prevProps.isSelected === nextProps.isSelected &&
-    prevProps.isLoadingProducts === nextProps.isLoadingProducts
-    // ⚠️ 絕對不要在這裡加上函數的比較
-  );
-}
-
-const ScheduleOrderCardComponent: React.FC<ScheduleOrderCardProps> = ({ 
+export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({ 
   order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
   onStatusChange, onShare, onMap, hideActions, isLoadingProducts
 }) => {
@@ -202,5 +190,3 @@ const ScheduleOrderCardComponent: React.FC<ScheduleOrderCardProps> = ({
     </div> 
   ); 
 };
-
-export const ScheduleOrderCard = React.memo(ScheduleOrderCardComponent, areEqual);

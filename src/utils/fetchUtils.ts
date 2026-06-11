@@ -1,5 +1,3 @@
-import { logSystemError } from './errorLogger';
-
 /**
  * 具有自動重試機制的 fetch API 包裝器
  * @param url 目標 API 網址
@@ -40,12 +38,9 @@ export async function fetchWithRetry(
         options.signal.removeEventListener('abort', externalAbortHandler);
       }
 
-      // 如果 HTTP 狀態碼是 4xx 或 5xx，判定為網路層錯誤
+      // JSON syntax error usually occurs when GAS returns HTML (error page)
+      // We check for ok response
       if (!response.ok && attempt < maxRetries) {
-        logSystemError('NETWORK_ERROR', 'ERROR', 'Network', `API 失敗: ${response.status} ${response.statusText}`, {
-           url,
-           status: response.status,
-        });
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       if (attempt > 0 && !silentFail) {
@@ -65,12 +60,9 @@ export async function fetchWithRetry(
 
       // 如果是 Timeout 也當作失敗
       if (error.name === 'AbortError') {
-        const errMsg = 'TIMEOUT';
-        lastError = new Error(errMsg);
-        logSystemError('NETWORK_ERROR', 'ERROR', 'Network', `無法連線至伺服器: ${errMsg}`, { url });
+        lastError = new Error('TIMEOUT');
       } else {
         lastError = error;
-        logSystemError('NETWORK_ERROR', 'ERROR', 'Network', `無法連線至伺服器: ${error.message}`, { url });
       }
       
       if (attempt === maxRetries) {

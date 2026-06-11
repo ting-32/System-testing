@@ -137,24 +137,6 @@ export interface Toast {
   };
 }
 
-export type ActionType = 
-  | 'CREATE_CUSTOMER'
-  | 'UPDATE_CUSTOMER'
-  | 'DELETE_CUSTOMER'
-  | 'CREATE_ORDER'
-  | 'UPDATE_ORDER'
-  | 'DELETE_ORDER'
-  | 'CREATE_PRODUCT'
-  | 'UPDATE_PRODUCT'
-  | 'DELETE_PRODUCT'
-  | 'BATCH_UPDATE_ORDERS'
-  | 'SYSTEM_SYNC'
-  | 'FORCE_OVERRIDE'
-  | 'SYSTEM_ERROR'
-  | 'SYSTEM_WARNING'
-  | 'NETWORK_ERROR'
-  | 'CONSOLE_ERROR';
-
 export interface SystemLog {
   id: string; // fallback using timestamp
   timestampStr: string;
@@ -162,5 +144,4 @@ export interface SystemLog {
   actionType: string;
   target: string;
   details: string;
-  level?: 'INFO' | 'WARN' | 'ERROR';
 }

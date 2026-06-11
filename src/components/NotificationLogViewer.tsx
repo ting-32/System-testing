@@ -40,7 +40,6 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
       setLogs(fetchedLogs);
     } catch (e) {
       console.error("Failed to fetch logs", e);
-      setLogs([]);
     } finally {
       setIsLoadingLogs(false);
     }

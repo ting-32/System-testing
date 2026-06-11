@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { Customer, Product, Order, OrderStatus, ToastType } from '../types';
 import { formatTimeForInput, formatTimeDisplay } from '../utils';
 import { fetchWithRetry } from '../utils/fetchUtils';
@@ -13,6 +13,7 @@ interface UseOrderActionsProps {
   apiEndpoint: string;
   isSaving: boolean;
   setIsSaving: (isSaving: boolean) => void;
+  setIsRetrying?: (isRetrying: boolean) => void;
   orderForm: any;
   setOrderForm: React.Dispatch<React.SetStateAction<any>>;
   editingOrderId: string | null;
@@ -65,6 +66,9 @@ export const useOrderActions = ({
   setLastOrderCandidate,
   setToasts
 }: UseOrderActionsProps) => {
+
+  const pendingUpdatesRef = useRef<Map<string, any>>(new Map());
+  const batchTimeoutRef = useRef<any>(null);
 
   const findLastOrder = (customerId: string, customerName: string) => {
     const customerOrders = orders.filter(o => o.customerName === customerName || customers.find(c => c.id === customerId)?.name === o.customerName);
@@ -216,54 +220,6 @@ export const useOrderActions = ({
     addToast('追加訂單成功！', 'success');
   };
 
-  const handleRetryOrder = async (orderId: string) => {
-    const order = orders.find(o => o.id === orderId);
-    if (!order) return;
-
-    if (order.pendingAction === 'delete') {
-      await executeDeleteOrder(orderId);
-      return;
-    }
-
-    // For create/update
-    setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'pending', errorMessage: undefined } : o));
-    
-    // Determine action name
-    const actionName = order.pendingAction === 'create' ? 'createOrder' : 'updateOrderContent';
-    // Note: updateOrderStatus also sets pendingAction='update', but the payload is different.
-    // We need to distinguish between content update and status update?
-    // Actually updateOrderStatus uses 'updateOrderStatus' action name.
-    // Maybe we need more granular pendingAction or check the payload structure?
-    // For simplicity, let's assume 'update' means content update for now, unless we add 'updateStatus'.
-    // But wait, updateOrderStatus sets status directly.
-    // Let's check updateOrderStatus implementation. It calls API with 'updateOrderStatus'.
-    // If we want to retry status update, we need to know it was a status update.
-    
-    // Let's refine pendingAction: 'create' | 'update' | 'delete' | 'statusUpdate'
-    
-    let realActionName = actionName;
-    if (order.pendingAction === 'statusUpdate') {
-        realActionName = 'updateOrderStatus';
-    }
-
-    await saveOrderToCloud(
-      order,
-      realActionName,
-      order.version, // Use current version
-      () => {
-        setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
-        addToast('重試同步成功', 'success');
-      },
-      (errMsg: string) => {
-        setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
-        addToast("重試失敗", 'error');
-      }
-    );
-  };
-
-  const batchTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const pendingUpdatesRef = React.useRef<Map<string, { id: string, customerName?: string, status: OrderStatus, oldStatus?: OrderStatus, version: number, force: boolean }>>(new Map());
-
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus, showDefaultToast: boolean = true) => {
     const orderToUpdate = orders.find(o => o.id === orderId);
     if (!orderToUpdate) return;
@@ -271,96 +227,72 @@ export const useOrderActions = ({
     // Optimistic update
     setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, status: newStatus, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o));
 
-    // Add to pending updates map
-    pendingUpdatesRef.current.set(orderId, {
-      id: orderId,
-      customerName: orderToUpdate.customerName,
-      status: newStatus,
-      oldStatus: orderToUpdate.status,
-      version: orderToUpdate.version || 1,
-      force: true // Force update for status changes to avoid conflicts
-    });
+    try {
+        if (apiEndpoint) {
+            const updatesToProcess = [{ id: orderId, status: newStatus, version: orderToUpdate.version || 1, force: true }];
+            const res = await fetchWithRetry(
+                apiEndpoint, 
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ 
+                        action: 'batchUpdateOrders', 
+                        data: { updates: updatesToProcess } 
+                    })
+                },
+                undefined,
+                2,
+                1500,
+                false,
+                45000 // 傳入自訂 timeout 延長至 45 秒
+            );
+            
+            const json = await res.json();
 
-    if (batchTimeoutRef.current) {
-        clearTimeout(batchTimeoutRef.current);
-    }
-
-    batchTimeoutRef.current = setTimeout(async () => {
-        const updatesToProcess: { id: string, customerName?: string, status: OrderStatus, oldStatus?: OrderStatus, version: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
-        pendingUpdatesRef.current.clear(); // Clear the map for future updates
-        batchTimeoutRef.current = null;
-
-        if (updatesToProcess.length === 0) return;
-
-        try {
-            if (apiEndpoint) {
-                const res = await fetchWithRetry(
-                    apiEndpoint, 
-                    {
-                        method: 'POST',
-                        body: JSON.stringify({ 
-                            action: 'batchUpdateOrders', 
-                            data: { updates: updatesToProcess } 
-                        })
-                    },
-                    undefined,
-                    2,
-                    1500,
-                    false,
-                    45000 // 傳入自訂 timeout 延長至 45 秒
-                );
-                
-                const json = await res.json();
-
-                if (!json.success) {
-                    if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
-                         setConflictData({
-                           action: 'batchUpdateOrders',
-                           data: { updates: updatesToProcess },
-                           description: `批量更新狀態發生版本衝突`,
-                           type: 'batch_order',
-                           clientData: updatesToProcess,
-                           serverData: json.serverData || json.data
-                         });
-                         return;
-                    } else {
-                         throw new Error(json.error || 'Unknown error');
-                    }
+            if (!json.success) {
+                if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
+                     setConflictData({
+                       action: 'batchUpdateOrders',
+                       data: { updates: updatesToProcess },
+                       description: `狀態更新發生版本衝突`,
+                       type: 'batch_order',
+                       clientData: updatesToProcess,
+                       serverData: json.serverData || json.data
+                     });
+                     return;
                 } else {
-                    // Success!
-                    const newVersion = json.data.newLastUpdatedTs; // new version would just be previous + 1, wait backend returns newLastUpdatedTs maybe should return newVersion
-                    const updatedIds = updatesToProcess.map(u => u.id);
-                    
-                    setOrders((prev: Order[]) => prev.map(o => {
-                        if (updatedIds.includes(o.id)) {
-                            return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newVersion };
-                        }
-                        return o;
-                    }));
+                     throw new Error(json.error || 'Unknown error');
                 }
+            } else {
+                // Success!
+                const newVersion = json.data.newLastUpdatedTs; 
+                
+                setOrders((prev: Order[]) => prev.map(o => {
+                    if (o.id === orderId) {
+                        return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newVersion };
+                    }
+                    return o;
+                }));
             }
-        } catch (e: any) {
-            if (e.message === 'VERSION_CONFLICT' || e.message === 'ERR_VERSION_CONFLICT') return;
-            console.error("Batch Sync Failed:", e);
-            let errMsg = e instanceof Error ? e.message : String(e);
-
-            if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
-                errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
-            } else if (e.message === 'Failed to fetch' || String(e).includes('Failed to fetch')) {
-                errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
-            }
-
-            const updatedIds = updatesToProcess.map(u => u.id);
-            setOrders((prev: Order[]) => prev.map(o => {
-                if (updatedIds.includes(o.id)) {
-                    return { ...o, syncStatus: 'error', errorMessage: errMsg };
-                }
-                return o;
-            }));
-            if (showDefaultToast) addToast("狀態更新失敗，已標記為錯誤", 'error');
         }
-    }, 1000);
-    
+    } catch (e: any) {
+        if (e.message === 'VERSION_CONFLICT' || e.message === 'ERR_VERSION_CONFLICT') return;
+        console.error("Sync Failed:", e);
+        let errMsg = e instanceof Error ? e.message : String(e);
+
+        if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
+            errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
+        } else if (e.message === 'Failed to fetch' || String(e).includes('Failed to fetch')) {
+            errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
+        }
+
+        setOrders((prev: Order[]) => prev.map(o => {
+            if (o.id === orderId) {
+                return { ...o, syncStatus: 'error', errorMessage: errMsg };
+            }
+            return o;
+        }));
+        if (showDefaultToast) addToast("狀態更新失敗，已標記為錯誤", 'error');
+    }
   }, [orders, apiEndpoint, addToast, setOrders, setConflictData]);
 
   const handleBatchSettleOrders = useCallback(async (orderIds: string[]) => {
@@ -377,10 +309,8 @@ export const useOrderActions = ({
       if (orderToUpdate) {
         pendingUpdatesRef.current.set(orderId, {
           id: orderId,
-          customerName: orderToUpdate.customerName,
           status: OrderStatus.PAID,
-          oldStatus: orderToUpdate.status,
-          version: orderToUpdate.version || 1,
+          originalVersion: orderToUpdate.version || 1,
           force: true
         });
       }
@@ -393,7 +323,7 @@ export const useOrderActions = ({
     // Trigger batch update immediately and return a promise
     return new Promise<void>((resolve) => {
       batchTimeoutRef.current = setTimeout(async () => {
-          const updatesToProcess: { id: string, customerName?: string, status: OrderStatus, oldStatus?: OrderStatus, version: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
+          const updatesToProcess: { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
           pendingUpdatesRef.current.clear();
           batchTimeoutRef.current = null;
 
@@ -777,7 +707,7 @@ export const useOrderActions = ({
       return { productId: item.productId, quantity: Math.max(0, finalQuantity), unit: finalUnit };
     });
 
-    const newOrder: any = {
+    const newOrder: Order = {
       id: editingOrderId || 'ORD-' + Date.now(),
       createdAt: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
       customerName: orderForm.customerName,
@@ -793,21 +723,6 @@ export const useOrderActions = ({
       syncStatus: 'pending',
       pendingAction: editingOrderId ? 'update' : 'create'
     };
-
-    if (editingOrderId) {
-       const oldOrder = orders.find(o => o.id === editingOrderId);
-       if (oldOrder) {
-          const diff: any = {};
-          if (oldOrder.deliveryDate !== newOrder.deliveryDate) diff.date = { old: oldOrder.deliveryDate, new: newOrder.deliveryDate };
-          if (oldOrder.deliveryTime !== newOrder.deliveryTime) diff.time = { old: oldOrder.deliveryTime, new: newOrder.deliveryTime };
-          if (oldOrder.deliveryMethod !== newOrder.deliveryMethod) diff.deliveryMethod = { old: oldOrder.deliveryMethod, new: newOrder.deliveryMethod };
-          if (oldOrder.trip !== newOrder.trip) diff.trip = { old: oldOrder.trip, new: newOrder.trip };
-          if (oldOrder.note !== newOrder.note) diff.note = { old: oldOrder.note, new: newOrder.note };
-          // For items, just record it changed roughly
-          if (JSON.stringify(oldOrder.items) !== JSON.stringify(newOrder.items)) diff.items = { old: oldOrder.items, new: newOrder.items };
-          newOrder._diff = diff;
-       }
-    }
 
     // Optimistic Update
     if (editingOrderId) {
@@ -844,16 +759,6 @@ export const useOrderActions = ({
     );
   };
 
-  const handleForceRetryWrapper = async () => {
-    const success = await handleForceRetry();
-    if (success) {
-      setIsAddingOrder(false);
-      setEditingOrderId(null);
-      setIsEditingCustomer(null);
-      setIsEditingProduct(null);
-    }
-  };
-
   const executeDeleteOrder = async (orderId: string) => { 
     setConfirmConfig((prev: any) => ({ ...prev, isOpen: false })); 
     const orderBackup = orders.find(o => o.id === orderId); 
@@ -861,7 +766,7 @@ export const useOrderActions = ({
     setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId)); 
     try { 
       if (apiEndpoint) { 
-        const payload = { id: orderId, version: orderBackup.version, customerName: orderBackup.customerName };
+        const payload = { id: orderId, version: orderBackup.version };
         const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
         const json = await res.json();
         if (!json.success) {
@@ -941,13 +846,11 @@ export const useOrderActions = ({
     handleEditOrder,
     handleCreateOrderFromCustomer,
     handleSaveOrder,
-    handleForceRetryWrapper,
     findLastOrder,
     applyLastOrder,
     handleSelectExistingCustomer,
     openGoogleMaps,
     handleDeleteOrder,
-    handleRetryOrder,
     handleBatchUpdateTrip
   };
 };

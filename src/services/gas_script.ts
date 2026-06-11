@@ -107,7 +107,7 @@ function doPost(e) {
         break;
       case "updateOrderContent":
         result = updateOrderContent(params.data);
-        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({ id: params.data.id, customerName: params.data.customerName, _diff: params.data._diff || {} }));
+        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({ diff: params.data }));
         break;
       case "updateOrderStatus":
         result = updateOrderStatus(params.data);
@@ -115,7 +115,7 @@ function doPost(e) {
         break;
       case "batchUpdateOrders":
         result = batchUpdateOrders(params.data);
-        writeSystemLog("UPDATE_ORDER_BATCH", "多筆訂單", JSON.stringify({ updates: params.data.updates || params.data }));
+        writeSystemLog("UPDATE_ORDER_BATCH", "多筆訂單", JSON.stringify({ updates: params.data }));
         break;
       case "batchUpdatePaymentStatus":
         result = batchUpdatePaymentStatus(params.data);
@@ -123,7 +123,7 @@ function doPost(e) {
         break;
       case "deleteOrder":
         result = deleteOrder(params.data);
-        writeSystemLog("DELETE_ORDER", params.data.customerName || `Order ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id, customerName: params.data.customerName }));
+        writeSystemLog("DELETE_ORDER", `Order ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
         break;
       case "reorderProducts":
         result = reorderProducts(params.data);
@@ -133,10 +133,28 @@ function doPost(e) {
         result = updateCustomer(params.data);
         writeSystemLog("UPDATE_CUSTOMER", params.data.name || "未知", JSON.stringify({ data: params.data }));
         break;
-      case "deleteCustomer":
-        result = deleteCustomer(params.data);
-        writeSystemLog("DELETE_CUSTOMER", `Customer ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
-        break;
+            case "deleteCustomer":
+        var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Customers");
+        if (!sheet) {
+          return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到工作表" })).setMimeType(ContentService.MimeType.JSON);
+        }
+        var targetId = params.data.id;
+        var sheetData = sheet.getDataRange().getValues();
+        var deleted = false;
+        for (var i = 1; i < sheetData.length; i++) {
+          if (String(sheetData[i][0]) === String(targetId)) {
+            sheet.deleteRow(i + 1);
+            deleted = true;
+            break;
+          }
+        }
+        if (deleted) {
+          try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
+          writeSystemLog("DELETE_CUSTOMER", "Customer ID: " + (targetId || "未知"), JSON.stringify({ deletedId: targetId }));
+          return ContentService.createTextOutput(JSON.stringify({ success: true, status: "success" })).setMimeType(ContentService.MimeType.JSON);
+        } else {
+          return ContentService.createTextOutput(JSON.stringify({ success: false, status: "error", message: "找不到該店家" })).setMimeType(ContentService.MimeType.JSON);
+        }
       case "updateProduct":
         result = updateProduct(params.data);
         writeSystemLog("UPDATE_PRODUCT", params.data.name || "未知", JSON.stringify({ data: params.data }));
@@ -171,15 +189,11 @@ function doPost(e) {
         result = checkReminders(params.data.ruleId, true);
         break;
       case "getNotificationLogs":
-        return ContentService.createTextOutput(JSON.stringify({
-          success: true,
-          data: []
-        })).setMimeType(ContentService.MimeType.JSON);
+        result = getNotificationLogs();
+        break;
       case "getSystemLogs":
-        return ContentService.createTextOutput(JSON.stringify({
-          success: true,
-          data: []
-        })).setMimeType(ContentService.MimeType.JSON);
+        result = getSystemLogs(params.data?.limit || 200);
+        break;
       default:
         throw new Error("Unknown action: " + action);
     }

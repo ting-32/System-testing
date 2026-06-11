@@ -2,13 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { setupMockBackend } from './mockBackend';
-import { setupGlobalErrorInterceptors } from './setupErrorInterceptors';
-import { ErrorBoundary } from './components/ErrorBoundary';
 
-if ((import.meta as any).env?.VITE_USE_MOCK_API !== 'false') {
-  setupMockBackend();
-}
-setupGlobalErrorInterceptors();
+setupMockBackend();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -18,8 +13,6 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
+    <App />
   </React.StrictMode>
 );
