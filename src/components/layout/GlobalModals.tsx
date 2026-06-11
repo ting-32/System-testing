@@ -27,6 +27,13 @@ interface GlobalModalsProps {
   setUnlockError?: (err: boolean) => void;
   unlockPassword?: string;
   setUnlockPassword?: (pwd: string) => void;
+  setLayoutMode?: (mode: 'auto' | 'standard' | 'compact') => void;
+  apiEndpoint?: string;
+  layoutMode?: 'auto' | 'standard' | 'compact';
+  syncData?: () => void;
+  handleChangePassword?: (a: string, b: string) => void;
+  handleSaveApiUrl?: (url: string) => void;
+  handleForceRetry?: () => void;
 }
 
 export function GlobalModals(props: GlobalModalsProps) {
@@ -49,10 +56,10 @@ export function GlobalModals(props: GlobalModalsProps) {
     }, 1000);
   };
 
-  const syncData = () => { /* TODO: Hook to useDataSync */ };
-  const handleChangePassword = () => { /* TODO */ };
-  const handleSaveApiUrl = () => { /* TODO */ };
-  const handleForceRetry = () => { /* TODO */ };
+  const syncData = props.syncData || (() => { /* TODO: Hook to useDataSync */ });
+  const handleChangePassword = props.handleChangePassword || ((oldP, newP) => { /* TODO */ });
+  const handleSaveApiUrl = props.handleSaveApiUrl || ((url) => { /* TODO */ });
+  const handleForceRetry = props.handleForceRetry || (() => { /* TODO */ });
   const handleProcessVoiceOrder = () => { /* TODO */ };
   const handleBatchSettleOrders = () => { /* TODO */ };
   const saveOrderToCloud = async () => false;
@@ -148,7 +155,7 @@ export function GlobalModals(props: GlobalModalsProps) {
         setLineChannelToken={(token) => localStorage.setItem('nm_line_channel_token', token)}
         lineUserId={localStorage.getItem('nm_line_user_id') || ''}
         setLineUserId={(id) => localStorage.setItem('nm_line_user_id', id)}
-        apiEndpoint={"" /* 預留自 store 注入 */}
+        apiEndpoint={props.apiEndpoint || ""}
       />
 
       <AnimatePresence>
@@ -157,10 +164,12 @@ export function GlobalModals(props: GlobalModalsProps) {
             onClose={ui.closeSettings} 
             onSync={syncData} 
             onSavePassword={handleChangePassword} 
-            currentUrl={"" /* 預留自 store 注入 */} 
+            currentUrl={props.apiEndpoint || ""} 
             onSaveUrl={handleSaveApiUrl} 
-            layoutMode={"compact" /* 預留自 store 注入 */} 
-            onLayoutModeChange={() => {}} 
+            layoutMode={props.layoutMode || "auto"} 
+            onLayoutModeChange={(mode) => {
+              if (props.setLayoutMode) props.setLayoutMode(mode);
+            }} 
           />
         )}
       </AnimatePresence>

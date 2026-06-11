@@ -247,7 +247,7 @@ function checkUpdates() {
     if (lastUpdatedColIdx !== -1 && sheet.getLastRow() > 1) {
       const values = sheet.getRange(2, lastUpdatedColIdx + 1, sheet.getLastRow() - 1, 1).getValues();
       for (let i = 0; i < values.length; i++) {
-        const ts = new Date(values[i][0]).getTime();
+        const ts = parseLastUpdated(values[i][0]);
         if (ts && ts > maxTs) maxTs = ts;
       }
     }
@@ -289,7 +289,7 @@ function getOrder(data) {
     note: firstRow.Note || firstRow.note || firstRow.備註,
     status: firstRow.Status || firstRow.status || firstRow.狀態,
     deliveryMethod: firstRow.DeliveryMethod || firstRow.deliveryMethod || firstRow.配送方式,
-    lastUpdated: firstRow.LastUpdated ? new Date(firstRow.LastUpdated).getTime() : 0,
+    lastUpdated: parseLastUpdated(firstRow.LastUpdated),
     trip: firstRow.Trip || firstRow.trip || firstRow.趟次 || '',
     items: orderRows.map(r => ({
       productId: r.ProductName || r.productName || r.品項,
@@ -360,6 +360,14 @@ function getSheetData(sheet) {
   return data;
 }
 
+function parseLastUpdated(val) {
+  if (!val) return 0;
+  var num = Number(val);
+  if (!isNaN(num) && num > 100000000) return num;
+  var d = new Date(val).getTime();
+  return isNaN(d) ? 0 : d;
+}
+
 function getData(startDateStr, since = 0) {
   const sheets = getSheets();
   const cache = CacheService.getScriptCache();
@@ -418,7 +426,7 @@ function getData(startDateStr, since = 0) {
           paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
           defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
           autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
-          lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
+          lastUpdated: parseLastUpdated(c.LastUpdated)
         }));
 
         products = parseBatch(res.valueRanges[1], p => ({
@@ -427,7 +435,7 @@ function getData(startDateStr, since = 0) {
           unit: p.Unit || p.unit || p.單位,
           price: p.Price || p.price || p.單價,
           category: p.Category || p.category || p.分類,
-          lastUpdated: p.LastUpdated ? new Date(p.LastUpdated).getTime() : 0
+          lastUpdated: parseLastUpdated(p.LastUpdated)
         }));
 
         const values = res.valueRanges[2].values || [];
@@ -454,7 +462,7 @@ function getData(startDateStr, since = 0) {
         paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
         defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
         autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
-        lastUpdated: c.LastUpdated ? new Date(c.LastUpdated).getTime() : 0
+        lastUpdated: parseLastUpdated(c.LastUpdated)
       }));
 
       products = getSheetData(sheets.PRODUCTS).map(p => ({
@@ -463,7 +471,7 @@ function getData(startDateStr, since = 0) {
         unit: p.Unit || p.unit || p.單位,
         price: p.Price || p.price || p.單價,
         category: p.Category || p.category || p.分類,
-        lastUpdated: p.LastUpdated ? new Date(p.LastUpdated).getTime() : 0
+        lastUpdated: parseLastUpdated(p.LastUpdated)
       }));
 
       const getTripsData = (sheet) => {
@@ -499,7 +507,7 @@ function getData(startDateStr, since = 0) {
     status: String(o.Status || o.status || o.狀態 || '').trim(),
     deliveryMethod: o.DeliveryMethod || o.deliveryMethod || o.配送方式,
     source: o.Source || o.source || o.資料來源 || '',
-    lastUpdated: o.LastUpdated ? new Date(o.LastUpdated).getTime() : 0,
+    lastUpdated: parseLastUpdated(o.LastUpdated),
     trip: o.Trip || o.trip || o.趟次 || ''
   }));
 

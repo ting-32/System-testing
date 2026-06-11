@@ -1,11 +1,16 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue } from 'firebase/database';
 
-const firebaseConfig = {
-  apiKey: (import.meta as any).env.VITE_FIREBASE_API_KEY,
-  databaseURL: (import.meta as any).env.VITE_FIREBASE_DATABASE_URL,
-  projectId: (import.meta as any).env.VITE_FIREBASE_PROJECT_ID,
+const configuredDbUrl = (import.meta as any).env.VITE_FIREBASE_DATABASE_URL || "https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app";
+const configuredApiKey = (import.meta as any).env.VITE_FIREBASE_API_KEY;
+const configuredProjectId = (import.meta as any).env.VITE_FIREBASE_PROJECT_ID;
+
+const firebaseConfig: any = {
+  databaseURL: configuredDbUrl,
 };
+
+if (configuredApiKey) firebaseConfig.apiKey = configuredApiKey;
+if (configuredProjectId) firebaseConfig.projectId = configuredProjectId;
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);

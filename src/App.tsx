@@ -1010,6 +1010,13 @@ const App: React.FC = () => {
          setUnlockError={auth.setUnlockError}
          unlockPassword={auth.unlockPassword}
          setUnlockPassword={auth.setUnlockPassword}
+         apiEndpoint={apiEndpoint}
+         layoutMode={layoutMode}
+         setLayoutMode={setLayoutMode}
+         syncData={syncData}
+         handleChangePassword={handleChangePassword}
+         handleSaveApiUrl={handleSaveApiUrl}
+         handleForceRetry={handleForceRetry}
       />
 
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />

@@ -120,6 +120,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
   const isSyncingRef = useRef(false);
+  const lastGlobalUpdateRef = useRef<number>(0);
   
   useEffect(() => {
     isSavingRef.current = isSaving;
@@ -183,6 +184,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       if (result) { 
         if (result.serverGlobalTs) {
            localStorage.setItem('nm_last_sync_ts', String(result.serverGlobalTs));
+           lastGlobalUpdateRef.current = result.serverGlobalTs;
         }
 
         const mappedCustomers: Customer[] = DataMapper.mapCustomers(result.customers || []);
@@ -551,8 +553,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
   }, [isAuthenticated, syncData]);
 
   // Silent Background Polling
-  const lastGlobalUpdateRef = useRef<number>(0);
-
   useEffect(() => {
     if (!isAuthenticated || !apiEndpoint) return;
 
