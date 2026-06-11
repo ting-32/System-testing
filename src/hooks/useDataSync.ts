@@ -273,24 +273,14 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            if (fetchedTrips.length > 0) {
               setTrips(fetchedTrips);
            }
-           if (true) {
+           if (newOrders.length > 0 || (result.allActiveOrderIds && result.allActiveOrderIds.length > 0)) {
               setOrders(currentOrders => {
                  const mergedMap = new Map();
                  currentOrders.forEach(o => mergedMap.set(o.id, o));
                  
-                 if (result.allOrderIds && Array.isArray(result.allOrderIds)) {
-                     const remoteIdSet = new Set(result.allOrderIds);
-                     currentOrders.forEach(localOrder => {
-                         if (localOrder.syncStatus !== 'pending' && localOrder.syncStatus !== 'error') {
-                            if (!remoteIdSet.has(localOrder.id) && !String(localOrder.id).startsWith('AUTO-')) {
-                                mergedMap.delete(localOrder.id);
-                            }
-                         }
-                     });
-                 }
-
+                 // 1. 處理這次有發生內容變動的新訂單 (處理邏輯維持不變)
                  newOrders.forEach(newOrder => {
-                    // ✅ 修改後：若是發現帶有 DELETED 狀態的資料，直接從 Map 中連根拔起
+                    // 若是發現帶有 DELETED 狀態的資料，直接從 Map 中連根拔起
                     if (String(newOrder.status) === 'DELETED') {
                         mergedMap.delete(newOrder.id);
                         return;
@@ -307,6 +297,24 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                     }
                     mergedMap.set(newOrder.id, newOrder);
                  });
+
+                 // 2. 啟動您的幽靈剔除機制 (Array/Set 比對)
+                 if (result.allActiveOrderIds && Array.isArray(result.allActiveOrderIds)) {
+                     const activeSet = new Set(result.allActiveOrderIds);
+                     
+                     for (const [orderId, orderData] of mergedMap.entries()) {
+                        // 安全保護：跳過 "本地尚未上傳/重試中" 的訂單 以及 "歷史未帶 ID" 自動被冠上 MIGRATED- 前綴的老訂單
+                        if (orderData.syncStatus === 'pending' || orderData.syncStatus === 'error') continue;
+                        if (orderId.startsWith('MIGRATED-')) continue;
+                        if (orderId.startsWith('AUTO-')) continue;
+                        
+                        // 若雲端有效名單內已經沒有這個 ID，即判定為已被其他裝置/後台刪除，進行本地除名
+                        if (!activeSet.has(orderId)) {
+                            mergedMap.delete(orderId);
+                        }
+                     }
+                 }
+
                  return Array.from(mergedMap.values());
               });
            }

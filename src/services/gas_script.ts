@@ -503,7 +503,6 @@ function getData(startDateStr, since = 0) {
     trip: o.Trip || o.trip || o.趟次 || ''
   }));
 
-  let allOrderIds = [];
   if (startDateStr) {
     const startStr = startDateStr.replace(/-/g, '');
     orders = orders.filter(o => {
@@ -518,10 +517,11 @@ function getData(startDateStr, since = 0) {
     });
   }
 
-  allOrderIds = orders.map(o => o.id);
+  // 把目前試算表有效存活的訂單 ID 給提取出來 (只有增量同步需帶這包資料，以節省頻寬)
+  const allActiveOrderIds = (since > 0) ? orders.map(o => String(o.id || "")).filter(id => id !== "") : [];
 
   if (since > 0) {
-    orders = orders.filter(o => o.lastUpdated > since || o.lastUpdated === 0);
+    orders = orders.filter(o => o.lastUpdated > since);
   }
   
   // Get settings
@@ -535,7 +535,7 @@ function getData(startDateStr, since = 0) {
   if (!settings) settings = {};
   settings.rules = getRemindRulesFromSheet();
 
-  return { customers, products, orders, allOrderIds, trips, settings, serverGlobalTs: new Date().getTime() };
+  return { customers, products, orders, trips, settings, allActiveOrderIds, serverGlobalTs: new Date().getTime() };
 }
 
 function getRemindRulesSheet() {
