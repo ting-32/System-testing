@@ -5,9 +5,11 @@ interface LogStoreState {
   notifyLogs: any[];
   lastSyncSystemTs: number;
   lastSyncNotifyTs: number;
+  hasUnreadLogs: boolean;
   
   setSystemLogs: (logs: any[], latestTs: number) => void;
   setNotifyLogs: (logs: any[], latestTs: number) => void;
+  setUnreadLogs: (status: boolean) => void;
 }
 
 export const useLogStore = create<LogStoreState>((set) => ({
@@ -15,7 +17,9 @@ export const useLogStore = create<LogStoreState>((set) => ({
   notifyLogs: [],
   lastSyncSystemTs: 0,
   lastSyncNotifyTs: 0,
+  hasUnreadLogs: false,
 
   setSystemLogs: (logs, latestTs) => set({ systemLogs: logs, lastSyncSystemTs: latestTs }),
   setNotifyLogs: (logs, latestTs) => set({ notifyLogs: logs, lastSyncNotifyTs: latestTs }),
+  setUnreadLogs: (status) => set({ hasUnreadLogs: status })
 }));

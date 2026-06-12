@@ -250,12 +250,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         if (result.latestSystemLogTs && result.latestSystemLogTs > logStore.lastSyncSystemTs) {
           container.logRepo.getSystemLogs(50).then(logs => {
             logStore.setSystemLogs(logs, result.latestSystemLogTs!);
+            const isModalOpen = document.getElementById('notification-center-modal') !== null;
+            if (!isModalOpen) logStore.setUnreadLogs(true);
           }).catch(err => console.error("Auto fetch system logs error:", err));
         }
 
         if (result.latestNotifyLogTs && result.latestNotifyLogTs > logStore.lastSyncNotifyTs) {
           container.logRepo.getNotificationLogs(50).then(logs => {
             logStore.setNotifyLogs(logs, result.latestNotifyLogTs!);
+            const isModalOpen = document.getElementById('notification-center-modal') !== null;
+            if (!isModalOpen) logStore.setUnreadLogs(true);
           }).catch(err => console.error("Auto fetch notify logs error:", err));
         }
         // ========================================================

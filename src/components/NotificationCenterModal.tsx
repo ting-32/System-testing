@@ -8,6 +8,7 @@ import { DiagnosticFunnelModal } from './DiagnosticFunnelModal';
 import { container } from '../core/di/AppContainer';
 import { fetchWithRetry } from '../utils/fetchUtils';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useLogStore } from '../store/useLogStore';
 
 // 1. 取得該規則下次執行的具體 Date 物件
 function getNextRunDate(schedule: string | string[], timeToNotify: string): Date | null {
@@ -133,6 +134,13 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const [activeTab, setActiveTab] = useState<'rules' | 'settings' | 'logs'>('rules');
   const [editingRule, setEditingRule] = useState<ReminderRule | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const { setUnreadLogs } = useLogStore();
+
+  useEffect(() => {
+    if (activeTab === 'logs') {
+      setUnreadLogs(false);
+    }
+  }, [activeTab, setUnreadLogs]);
   
   const [isFunnelOpen, setIsFunnelOpen] = useState(false);
   const [isDryRunning, setIsDryRunning] = useState(false);
@@ -142,8 +150,11 @@ export const NotificationCenterModal: React.FC<Props> = ({
   useEffect(() => {
     if (isOpen) {
       resetCloudUpdateFlag();
+      if (activeTab === 'logs') {
+        setUnreadLogs(false);
+      }
     }
-  }, [isOpen, resetCloudUpdateFlag]);
+  }, [isOpen, resetCloudUpdateFlag, activeTab, setUnreadLogs]);
 
   const saveToGas = async (currentRules: ReminderRule[], channelToken: string, userId: string) => {
     if (!apiEndpoint) return;
@@ -354,23 +365,6 @@ export const NotificationCenterModal: React.FC<Props> = ({
             </button>
           </div>
           
-          {hasCloudUpdate && (
-            <div className="bg-blue-50 border-b border-blue-100 px-4 py-2.5 flex items-center justify-between shrink-0">
-              <p className="text-xs font-bold text-blue-700 flex items-center gap-1.5">
-                <RefreshCw className="w-3.5 h-3.5" />
-                設定已在背景更新
-              </p>
-              <button 
-                onClick={() => {
-                  resetCloudUpdateFlag();
-                }}
-                className="text-xs font-bold text-blue-600 hover:text-blue-800 py-1 px-2.5 bg-blue-100 rounded-lg transition-colors shadow-sm"
-              >
-                我知道了
-              </button>
-            </div>
-          )}
-
           {/* Tabs */}
           <div className="flex border-b border-slate-100 p-2 gap-2 bg-slate-50/50">
             <button
@@ -397,45 +391,83 @@ export const NotificationCenterModal: React.FC<Props> = ({
             {activeTab === 'rules' && (
               <div className="space-y-4 pb-20">
                 {editingRule ? (
-                  <RuleBuilder 
-                    rule={editingRule} 
-                    setRule={setEditingRule} 
-                    customers={customers} 
-                    products={products} 
-                    onSave={() => {
-                      const updated = rules.filter(r => r.id !== editingRule.id);
-                      saveRules([...updated, editingRule]);
-                      setEditingRule(null);
-                    }}
-                    onCancel={() => setEditingRule(null)}
-                    previewText={calculatePreview(editingRule)}
-                  />
+                  <>
+                    {hasCloudUpdate && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }} 
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4 shadow-sm"
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span className="text-sm font-bold">注意：此規則在其他裝置或背景已有更新。</span>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const latestRule = rules.find(r => r.id === editingRule.id);
+                            if (latestRule) {
+                               setEditingRule({ ...latestRule }); 
+                            } else {
+                               setEditingRule(null); 
+                            }
+                            resetCloudUpdateFlag();
+                          }}
+                          className="text-sm font-bold text-amber-700 underline hover:text-amber-900 whitespace-nowrap"
+                        >
+                          放棄變更並載入最新
+                        </button>
+                      </motion.div>
+                    )}
+                    <RuleBuilder 
+                      rule={editingRule} 
+                      setRule={setEditingRule} 
+                      customers={customers} 
+                      products={products} 
+                      onSave={() => {
+                        const updated = rules.filter(r => r.id !== editingRule.id);
+                        saveRules([...updated, editingRule]);
+                        setEditingRule(null);
+                      }}
+                      onCancel={() => setEditingRule(null)}
+                      previewText={calculatePreview(editingRule)}
+                    />
+                  </>
                 ) : (
                   <>
-                    {rules.map(rule => (
-                      <div key={rule.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm relative overflow-hidden">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                              {rule.name}
-                              {!rule.isActive && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">已停用</span>}
-                            </h3>
-                            <NextRunIndicator rule={rule} />
+                    <AnimatePresence mode="popLayout">
+                      {rules.map(rule => (
+                        <motion.div 
+                          layout
+                          key={rule.id}
+                          initial={{ opacity: 0, scale: 0.95, y: -20 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
+                          transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                          className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm relative overflow-hidden mb-4"
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                                {rule.name}
+                                {!rule.isActive && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">已停用</span>}
+                              </h3>
+                              <NextRunIndicator rule={rule} />
+                            </div>
+                            <div className="flex gap-2 items-center">
+                              <button onClick={() => handleDryRunRule(rule.id)} className="text-indigo-600 text-[11px] px-2 py-1 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 rounded-md font-semibold transition-colors">
+                                <Sparkles className="w-3 h-3" />
+                                邏輯診斷
+                              </button>
+                              <button onClick={() => setEditingRule(rule)} className="text-amber-600 text-sm font-semibold hover:underline border-l border-slate-200 pl-2">編輯</button>
+                              <button onClick={() => saveRules(rules.filter(r => r.id !== rule.id))} className="text-rose-500 text-sm pl-1"><Trash2 className="w-4 h-4"/></button>
+                            </div>
                           </div>
-                          <div className="flex gap-2 items-center">
-                            <button onClick={() => handleDryRunRule(rule.id)} className="text-indigo-600 text-[11px] px-2 py-1 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 rounded-md font-semibold transition-colors">
-                              <Sparkles className="w-3 h-3" />
-                              邏輯診斷
-                            </button>
-                            <button onClick={() => setEditingRule(rule)} className="text-amber-600 text-sm font-semibold hover:underline border-l border-slate-200 pl-2">編輯</button>
-                            <button onClick={() => saveRules(rules.filter(r => r.id !== rule.id))} className="text-rose-500 text-sm pl-1"><Trash2 className="w-4 h-4"/></button>
-                          </div>
-                        </div>
-                        <p className="text-sm text-slate-600 mt-2 bg-slate-50 p-2 rounded-xl whitespace-pre-line leading-relaxed">
-                          {calculatePreview(rule)}
-                        </p>
-                      </div>
-                    ))}
+                          <p className="text-sm text-slate-600 mt-2 bg-slate-50 p-2 rounded-xl whitespace-pre-line leading-relaxed">
+                            {calculatePreview(rule)}
+                          </p>
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
                     
                     <button
                       onClick={handleCreateRule}
