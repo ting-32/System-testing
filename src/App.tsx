@@ -774,17 +774,26 @@ const App: React.FC = () => {
     printWindow.document.close(); 
   };
 
-  if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} onSaveApiUrl={handleSaveApiUrl} apiEndpoint={apiEndpoint} addToast={addToast} />;
-  
-  if (isInitialLoading) {
+  if (!isAuthenticated || isInitialLoading) {
     return (
-      <div className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal p-4 space-y-3">
-        <div className="h-16 bg-white rounded-2xl shadow-sm mb-6 animate-pulse"></div>
-        {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
-      </div>
+      <AnimatePresence mode="wait">
+        {!isAuthenticated ? (
+          <LoginScreen key="login-screen" onLogin={handleLogin} onSaveApiUrl={handleSaveApiUrl} apiEndpoint={apiEndpoint} addToast={addToast} />
+        ) : (
+          <motion.div 
+            key="initial-loading"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: 0.3 } }}
+            className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal p-4 space-y-3"
+          >
+            <div className="h-16 bg-white rounded-2xl shadow-sm mb-6 animate-pulse"></div>
+            {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
+          </motion.div>
+        )}
+      </AnimatePresence>
     );
   }
-
 
   const onSaveProductCloud = async (finalProduct: Product, isEditingProduct: string | null, originalLastUpdated: number | undefined, previousProducts: Product[]) => {
     if (!apiEndpoint || isSaving) return false;
