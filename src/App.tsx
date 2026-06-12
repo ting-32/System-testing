@@ -774,7 +774,7 @@ const App: React.FC = () => {
     printWindow.document.close(); 
   };
 
-  if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} />;
+  if (!isAuthenticated) return <LoginScreen onLogin={handleLogin} onSaveApiUrl={handleSaveApiUrl} apiEndpoint={apiEndpoint} addToast={addToast} />;
   
   if (isInitialLoading) {
     return (
