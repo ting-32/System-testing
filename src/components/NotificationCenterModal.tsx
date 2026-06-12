@@ -7,6 +7,7 @@ import { NotificationLogViewer } from './NotificationLogViewer';
 import { DiagnosticFunnelModal } from './DiagnosticFunnelModal';
 import { container } from '../core/di/AppContainer';
 import { fetchWithRetry } from '../utils/fetchUtils';
+import { broadcastDataChange } from '../services/firebaseSync';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useLogStore } from '../store/useLogStore';
 
@@ -166,6 +167,8 @@ export const NotificationCenterModal: React.FC<Props> = ({
         lineChannelToken: channelToken,
         lineUserId: userId
       });
+      // 廣播給其他裝置更新設定與規則
+      broadcastDataChange();
     } catch(e) {
       console.error(e);
     } finally {
