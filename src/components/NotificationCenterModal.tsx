@@ -157,11 +157,19 @@ export const NotificationCenterModal: React.FC<Props> = ({
   };
 
   useEffect(() => {
+    if (isOpen) {
+      loadRulesFromStorage();
+      setHasCloudUpdate(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
     loadRulesFromStorage();
 
     // 監聽來自背景同步的更新事件
     const handleCloudUpdate = (e: any) => {
-      if (e.detail?.isPollingUpdate) {
+      const isModalOpen = document.getElementById('notification-center-modal') !== null;
+      if (e.detail?.isPollingUpdate && isModalOpen) {
           setHasCloudUpdate(true);
       } else {
           loadRulesFromStorage();
@@ -607,13 +615,18 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
 
   const toggleItem = (cIdx: number, type: 'customers' | 'products', val: string) => {
     const newConds = [...rule.conditions];
-    let arr = [...(newConds[cIdx][type] || [])];
+    const targetCond = { ...newConds[cIdx] }; 
+
+    let arr = [...(targetCond[type] || [])];
     if (arr.includes(val)) {
       arr = arr.filter(item => item !== val);
     } else {
       arr.push(val);
     }
-    newConds[cIdx][type] = arr;
+    
+    targetCond[type] = arr;
+    newConds[cIdx] = targetCond;
+
     setRule({...rule, conditions: newConds});
   };
 
@@ -717,14 +730,23 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
                     return (
                       <span key={cId} className="bg-white border border-slate-200 text-slate-700 text-sm px-3 py-1 rounded-full flex items-center gap-1 shadow-sm font-medium">
                         {cName}
-                        <button onClick={() => toggleItem(cIdx, 'customers', cId)} className="text-slate-400 hover:text-rose-500 rounded-full ml-1"><X className="w-3 h-3" /></button>
+                        <button 
+                          type="button" 
+                          onClick={(e) => { e.preventDefault(); toggleItem(cIdx, 'customers', cId); }} 
+                          className="text-slate-400 hover:text-rose-500 rounded-full ml-1"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
                       </span>
                     )
                   })}
-                  <button onClick={() => {
-                    setActivePicker(activePicker?.index === cIdx && activePicker.type === 'customers' ? null : {index: cIdx, type: 'customers'})
-                    setSearchTerm('');
-                  }} className="text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full text-sm font-bold flex items-center shadow-sm transition-colors border border-emerald-200/50">
+                  <button 
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setActivePicker(activePicker?.index === cIdx && activePicker.type === 'customers' ? null : {index: cIdx, type: 'customers'})
+                      setSearchTerm('');
+                    }} className="text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full text-sm font-bold flex items-center shadow-sm transition-colors border border-emerald-200/50">
                     ＋ 新增店家
                   </button>
                 </div>
@@ -738,10 +760,15 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-shadow"
                     />
                     <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                      {customers.filter((c: any) => c.name.includes(searchTerm)).map((c: any) => {
+                      {customers.filter((c: any) => String(c?.name || '').toLowerCase().includes(searchTerm.toLowerCase())).map((c: any) => {
                         const selected = (cond.customers || []).includes(c.id);
                         return (
-                          <button key={c.id} onClick={() => toggleItem(cIdx, 'customers', c.id)} className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition-all border ${selected ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-slate-300'}`}>
+                          <button 
+                            key={c.id} 
+                            type="button" 
+                            onClick={(e) => { e.preventDefault(); toggleItem(cIdx, 'customers', c.id); }} 
+                            className={`text-left px-3 py-2 rounded-lg text-sm transition-all border ${selected ? 'border-amber-500 bg-amber-50 text-amber-700 font-bold ring-1 ring-amber-500' : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-slate-300 font-medium'}`}
+                          >
                             {c.name}
                           </button>
                         )
@@ -775,14 +802,23 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
                     return (
                       <span key={pId} className="bg-white border border-slate-200 text-slate-700 text-sm px-3 py-1 rounded-full flex items-center gap-1 shadow-sm font-medium">
                         {pId}
-                        <button onClick={() => toggleItem(cIdx, 'products', pId)} className="text-slate-400 hover:text-rose-500 rounded-full ml-1"><X className="w-3 h-3" /></button>
+                        <button 
+                          type="button" 
+                          onClick={(e) => { e.preventDefault(); toggleItem(cIdx, 'products', pId); }} 
+                          className="text-slate-400 hover:text-rose-500 rounded-full ml-1"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
                       </span>
                     )
                   })}
-                  <button onClick={() => {
-                    setActivePicker(activePicker?.index === cIdx && activePicker.type === 'products' ? null : {index: cIdx, type: 'products'});
-                    setSearchTerm('');
-                  }} className="text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full text-sm font-bold flex items-center shadow-sm transition-colors border border-blue-200/50">
+                  <button 
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setActivePicker(activePicker?.index === cIdx && activePicker.type === 'products' ? null : {index: cIdx, type: 'products'});
+                      setSearchTerm('');
+                    }} className="text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full text-sm font-bold flex items-center shadow-sm transition-colors border border-blue-200/50">
                     ＋ 新增品項
                   </button>
                 </div>
@@ -796,10 +832,15 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-shadow"
                     />
                     <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
-                      {products.filter((p: any) => p.name.includes(searchTerm)).map((p: any) => {
+                      {products.filter((p: any) => String(p?.name || '').toLowerCase().includes(searchTerm.toLowerCase())).map((p: any) => {
                         const selected = (cond.products || []).includes(p.name);
                         return (
-                          <button key={p.name} onClick={() => toggleItem(cIdx, 'products', p.name)} className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition-all border ${selected ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-slate-300'}`}>
+                          <button 
+                            key={p.name} 
+                            type="button" 
+                            onClick={(e) => { e.preventDefault(); toggleItem(cIdx, 'products', p.name); }} 
+                            className={`text-left px-3 py-2 rounded-lg text-sm transition-all border ${selected ? 'border-blue-500 bg-blue-50 text-blue-700 font-bold ring-1 ring-blue-500' : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-slate-300 font-medium'}`}
+                          >
                             {p.name}
                           </button>
                         )
@@ -827,14 +868,16 @@ const RuleBuilder = ({ rule, setRule, customers, products, onSave, onCancel, pre
 
         <div className="flex gap-2">
           <button 
-            onClick={() => addConditionGroup('OR')}
+            type="button"
+            onClick={(e) => { e.preventDefault(); addConditionGroup('OR'); }}
             className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm font-bold flex justify-center items-center gap-2 transition-colors border border-dashed border-slate-300"
           >
             <Plus className="w-4 h-4" />
             新增條件 (OR / 或)
           </button>
           <button 
-            onClick={() => addConditionGroup('AND')}
+            type="button"
+            onClick={(e) => { e.preventDefault(); addConditionGroup('AND'); }}
             className="flex-1 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-sm font-bold flex justify-center items-center gap-2 transition-colors border border-dashed border-indigo-200"
           >
             <Plus className="w-4 h-4" />

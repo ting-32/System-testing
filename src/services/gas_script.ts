@@ -237,8 +237,13 @@ function checkUpdates() {
   const sheets = getSheets();
   let maxTs = 0;
   
-  ['ORDERS', 'CUSTOMERS', 'PRODUCTS'].forEach(sheetName => {
-    const sheet = sheets[sheetName];
+  ['ORDERS', 'CUSTOMERS', 'PRODUCTS', 'RemindRules'].forEach(sheetName => {
+    let sheet;
+    if (sheetName === 'RemindRules') {
+      sheet = SS.getSheetByName("RemindRules"); // try to directly get RemindRules
+    } else {
+      sheet = sheets[sheetName];
+    }
     if (!sheet) return;
     const lastCol = sheet.getLastColumn();
     if (lastCol === 0) return;
@@ -550,9 +555,15 @@ function getRemindRulesSheet() {
   let sheet = SS.getSheetByName("RemindRules");
   if (!sheet) {
     sheet = SS.insertSheet("RemindRules");
-    sheet.appendRow(["規則ID", "規則名稱", "檢查週期", "檢查訂單日期", "提醒時間", "是否啟用", "自訂提醒內容", "判斷條件(包含AND/OR等詳細設定)"]);
-    sheet.getRange(1, 1, 1, 8).setFontWeight("bold");
+    sheet.appendRow(["規則ID", "規則名稱", "檢查週期", "檢查訂單日期", "提醒時間", "是否啟用", "自訂提醒內容", "判斷條件(包含AND/OR等詳細設定)", "LastUpdated"]);
+    sheet.getRange(1, 1, 1, 9).setFontWeight("bold");
     sheet.setFrozenRows(1);
+  } else {
+    // 確保有 LastUpdated 欄位
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (!headers.includes("LastUpdated")) {
+      sheet.getRange(1, headers.length + 1).setValue("LastUpdated").setFontWeight("bold");
+    }
   }
   return sheet;
 }
@@ -562,24 +573,37 @@ function saveRemindRulesToSheet(rules) {
   
   // Clear existing content except header
   const lastRow = Math.max(1, sheet.getLastRow()); // ensure we don't crash
+  const lastCol = Math.max(9, sheet.getLastColumn());
   if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, 8).clearContent();
+    sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
   }
   
   if (!rules || rules.length === 0) return;
   
-  const dataToRows = rules.map(rule => [
-    rule.id || "",
-    rule.name || "",
-    Array.isArray(rule.schedule) ? rule.schedule.join(',') : (rule.schedule || ""),
-    Array.isArray(rule.targetOrderDays) ? rule.targetOrderDays.join(',') : (rule.targetOrderDays || ""),
-    rule.timeToNotify ? `'${String(rule.timeToNotify)}` : "",
-    rule.isActive === false ? false : true,
-    rule.customMessage || "",
-    JSON.stringify(rule.conditions || [])
-  ]);
+  const currentTs = new Date().getTime();
   
-  sheet.getRange(2, 1, dataToRows.length, 8).setValues(dataToRows);
+  const dataToRows = rules.map(rule => {
+    let row = [
+      rule.id || "",
+      rule.name || "",
+      Array.isArray(rule.schedule) ? rule.schedule.join(',') : (rule.schedule || ""),
+      Array.isArray(rule.targetOrderDays) ? rule.targetOrderDays.join(',') : (rule.targetOrderDays || ""),
+      rule.timeToNotify ? `'${String(rule.timeToNotify)}` : "",
+      rule.isActive === false ? false : true,
+      rule.customMessage || "",
+      JSON.stringify(rule.conditions || [])
+    ];
+    // Fill until LastUpdated column
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const lastUpdatedColIdx = headers.indexOf("LastUpdated");
+    while (row.length < lastUpdatedColIdx) {
+      row.push("");
+    }
+    row[lastUpdatedColIdx] = currentTs;
+    return row;
+  });
+  
+  sheet.getRange(2, 1, dataToRows.length, dataToRows[0].length).setValues(dataToRows);
   sheet.getRange(2, 5, dataToRows.length, 1).setNumberFormat("@");
 }
 
@@ -643,6 +667,8 @@ function saveSettings(data) {
   if (cache) {
     cache.remove("APP_CACHE_CPT");
   }
+  
+  notifyFirebase();
   
   return true;
 }

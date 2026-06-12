@@ -1017,6 +1017,17 @@ const App: React.FC = () => {
          handleChangePassword={handleChangePassword}
          handleSaveApiUrl={handleSaveApiUrl}
          handleForceRetry={handleForceRetry}
+         customers={customers}
+         products={products}
+         orders={orders}
+         previewDate={previewDate}
+         setPreviewDate={setPreviewDate}
+         prediction={prediction}
+         onToggleAutoOrder={(customerId) => {
+           setCustomers(prev => prev.map(c => 
+             c.id === customerId ? { ...c, autoOrderEnabled: !c.autoOrderEnabled } : c
+           ));
+         }}
       />
 
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />

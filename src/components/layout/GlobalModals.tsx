@@ -34,13 +34,25 @@ interface GlobalModalsProps {
   handleChangePassword?: (a: string, b: string) => void;
   handleSaveApiUrl?: (url: string) => void;
   handleForceRetry?: () => void;
+  customers?: any[];
+  products?: any[];
+  orders?: any[];
+  previewDate?: any;
+  setPreviewDate?: (date: any) => void;
+  prediction?: { greenZone: any[]; grayZone: any[] };
+  onToggleAutoOrder?: (customerId: string) => void;
 }
 
 export function GlobalModals(props: GlobalModalsProps) {
   const ui = useUIStore();
   
   // 從業務 Store 拿取需要的全域資料
-  const { customers, orders, products, isSaving, setOrderForm } = useAppStore();
+  const { setOrderForm, isSaving } = useAppStore();
+  
+  // 優先使用 props 傳入的資料，若無則從 store 提取
+  const customers = props.customers || useAppStore(s => s.customers);
+  const products = props.products || useAppStore(s => s.products);
+  const orders = props.orders || useAppStore(s => s.orders);
 
   // 預留介面：由於包含部分尚未移入全域 Store 的業務邏輯（如同步機制、API），
   // 在完成全面重構前，可使用 window.dispatchEvent、EventBus，或暫時預留。
@@ -312,12 +324,12 @@ export function GlobalModals(props: GlobalModalsProps) {
           <AutoOrderDashboardModal
             isOpen={ui.isAutoOrderDashboardOpen}
             onClose={ui.closeAutoOrderDashboard}
-            previewDate={''}
-            setPreviewDate={() => {}}
-            greenZone={[]}
-            grayZone={[]}
+            previewDate={props.previewDate || new Date()}
+            setPreviewDate={props.setPreviewDate || (() => {})}
+            greenZone={props.prediction?.greenZone || []}
+            grayZone={props.prediction?.grayZone || []}
             products={products}
-            onToggleAutoOrder={() => {}}
+            onToggleAutoOrder={props.onToggleAutoOrder || (() => {})}
             onEditItems={(customer: any) => {
               ui.closeAutoOrderDashboard();
             }}
