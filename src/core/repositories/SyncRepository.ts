@@ -15,6 +15,8 @@ export interface SyncDataResult {
   serverGlobalTs?: number;
   settings?: any;
   allActiveOrderIds?: string[];
+  latestSystemLogTs?: number;
+  latestNotifyLogTs?: number;
 }
 
 export interface ISyncRepository {

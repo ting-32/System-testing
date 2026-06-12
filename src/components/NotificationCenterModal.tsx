@@ -7,6 +7,7 @@ import { NotificationLogViewer } from './NotificationLogViewer';
 import { DiagnosticFunnelModal } from './DiagnosticFunnelModal';
 import { container } from '../core/di/AppContainer';
 import { fetchWithRetry } from '../utils/fetchUtils';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 // 1. 取得該規則下次執行的具體 Date 物件
 function getNextRunDate(schedule: string | string[], timeToNotify: string): Date | null {
@@ -120,65 +121,29 @@ export const NotificationCenterModal: React.FC<Props> = ({
   setLineUserId,
   apiEndpoint
 }) => {
+  const { 
+    rules, 
+    lineChannelToken: storeLineChannelToken, 
+    lineUserId: storeLineUserId, 
+    hasCloudUpdate, 
+    setRules, 
+    resetCloudUpdateFlag 
+  } = useSettingsStore();
+
   const [activeTab, setActiveTab] = useState<'rules' | 'settings' | 'logs'>('rules');
-  const [rules, setRules] = useState<ReminderRule[]>([]);
   const [editingRule, setEditingRule] = useState<ReminderRule | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [hasCloudUpdate, setHasCloudUpdate] = useState(false);
   
   const [isFunnelOpen, setIsFunnelOpen] = useState(false);
   const [isDryRunning, setIsDryRunning] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<any>(null);
   const [currentDryRunRuleId, setCurrentDryRunRuleId] = useState<string | null>(null);
 
-  const loadRulesFromStorage = () => {
-    // 💡 【新增】冷卻護盾檢查：如果距離上次編輯不到 15 秒 (15000 毫秒)，就忽略來自雲端的覆蓋
-    const lastEditTime = localStorage.getItem('rules_last_edit_time');
-    if (lastEditTime && Date.now() - parseInt(lastEditTime) < 15000) {
-      console.log('處於編輯安全冷卻期，略過外部背景覆寫');
-      return;
-    }
-
-    const saved = localStorage.getItem('nm_reminder_rules');
-    if (saved) {
-      try {
-        const parsedRules = JSON.parse(saved).map((r: any) => {
-          if (typeof r.schedule === 'string') {
-            return {
-              ...r,
-              schedule: r.schedule === '每天' ? ['0', '1', '2', '3', '4', '5', '6'] : [r.schedule]
-            };
-          }
-          return r;
-        });
-        setRules(parsedRules);
-      } catch (e) {}
-    }
-  };
-
   useEffect(() => {
     if (isOpen) {
-      loadRulesFromStorage();
-      setHasCloudUpdate(false);
+      resetCloudUpdateFlag();
     }
-  }, [isOpen]);
-
-  useEffect(() => {
-    loadRulesFromStorage();
-
-    // 監聽來自背景同步的更新事件
-    const handleCloudUpdate = (e: any) => {
-      const isModalOpen = document.getElementById('notification-center-modal') !== null;
-      if (e.detail?.isPollingUpdate && isModalOpen) {
-          setHasCloudUpdate(true);
-      } else {
-          loadRulesFromStorage();
-      }
-    };
-    
-    window.addEventListener('rules_updated_from_cloud', handleCloudUpdate);
-    return () => window.removeEventListener('rules_updated_from_cloud', handleCloudUpdate);
-  }, []);
+  }, [isOpen, resetCloudUpdateFlag]);
 
   const saveToGas = async (currentRules: ReminderRule[], channelToken: string, userId: string) => {
     if (!apiEndpoint) return;
@@ -198,11 +163,10 @@ export const NotificationCenterModal: React.FC<Props> = ({
   };
 
   const saveRules = (newRules: ReminderRule[]) => {
-    setRules(newRules);
-    localStorage.setItem('nm_reminder_rules', JSON.stringify(newRules));
-    // 💡 【新增】：打上冷卻護盾，寫入現在的絕對時間
-    localStorage.setItem('rules_last_edit_time', Date.now().toString());
-    saveToGas(newRules, lineChannelToken, lineUserId);
+    setRules(newRules); // Store 狀態改變 -> 畫面瞬間更新
+    
+    // 呼叫原本的 API 同步給 GAS
+    saveToGas(newRules, storeLineChannelToken || lineChannelToken, storeLineUserId || lineUserId);
   };
   
   const handleDryRunRule = async (ruleId: string) => {
@@ -394,16 +358,15 @@ export const NotificationCenterModal: React.FC<Props> = ({
             <div className="bg-blue-50 border-b border-blue-100 px-4 py-2.5 flex items-center justify-between shrink-0">
               <p className="text-xs font-bold text-blue-700 flex items-center gap-1.5">
                 <RefreshCw className="w-3.5 h-3.5" />
-                有新的變更已在雲端儲存
+                設定已在背景更新
               </p>
               <button 
                 onClick={() => {
-                  setHasCloudUpdate(false);
-                  loadRulesFromStorage();
+                  resetCloudUpdateFlag();
                 }}
                 className="text-xs font-bold text-blue-600 hover:text-blue-800 py-1 px-2.5 bg-blue-100 rounded-lg transition-colors shadow-sm"
               >
-                載入並覆蓋
+                我知道了
               </button>
             </div>
           )}

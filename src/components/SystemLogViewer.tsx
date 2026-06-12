@@ -3,13 +3,14 @@ import { Search, RefreshCw, Activity, PlusCircle, Edit2, Trash2, Settings, Chevr
 import { SystemLog } from '../types';
 import { container } from '../core/di/AppContainer';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useLogStore } from '../store/useLogStore';
 
 interface Props {
   apiEndpoint: string;
 }
 
 export function SystemLogViewer({ apiEndpoint }: Props) {
-  const [logs, setLogs] = useState<SystemLog[]>([]);
+  const { systemLogs: logs, setSystemLogs } = useLogStore();
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   
   const [filterAction, setFilterAction] = useState<string>('ALL');
@@ -23,7 +24,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
     try {
       container.updateApiEndpoint(apiEndpoint);
       const fetchedLogs = await container.logRepo.getSystemLogs(200);
-      setLogs(fetchedLogs);
+      setSystemLogs(fetchedLogs, Date.now());
     } catch (e) {
       console.error("Failed to fetch logs", e);
     } finally {
@@ -32,10 +33,10 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
   };
 
   useEffect(() => {
-    if (apiEndpoint) {
+    if (apiEndpoint && logs.length === 0) {
       fetchLogs();
     }
-  }, [apiEndpoint]);
+  }, [apiEndpoint, logs.length]);
 
   const _uniqueActions = useMemo(() => {
     const actions = new Set<string>();
@@ -208,6 +209,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
           </div>
         ) : (
           <div className="relative pl-6 space-y-6 before:absolute before:inset-0 before:ml-[1.4rem] before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent mt-8">
+            <AnimatePresence>
             {filteredLogs.map(log => {
               const styles = getActionStyles(log.actionType);
               const isExpanded = expandedLogId === log.id;
@@ -277,6 +279,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
                 </div>
               </motion.div>
             )})}
+            </AnimatePresence>
             <div className="pb-8">{/* spacer */}</div>
           </div>
         )}

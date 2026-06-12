@@ -7,6 +7,8 @@ import { formatDateStr, normalizeDate, safeNumber } from '../utils';
 import { container } from '../core/di/AppContainer';
 import { DataMapper } from '../core/mappers/DataMapper';
 import { listenToDataChange, broadcastDataChange } from '../services/firebaseSync';
+import { useSettingsStore } from '../store/useSettingsStore';
+import { useLogStore } from '../store/useLogStore';
 
 localforage.config({
   name: 'NMR_App_DB',
@@ -232,35 +234,29 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         const newOrders = Object.values(orderMap);
         const fetchedTrips = result.trips || [];
         
-        // === 加入這段：每次輪詢時，將通知中心的設定存更新至本機快取 ===
+        // === 將通知中心的設定存更新至 Store ===
         if (result.settings) {
-           let rulesChanged = false;
-           if (result.settings.rules) {
-               const newRulesStr = JSON.stringify(result.settings.rules);
-               const oldRulesStr = localStorage.getItem('nm_reminder_rules');
-               if (newRulesStr !== oldRulesStr) {
-                   localStorage.setItem('nm_reminder_rules', newRulesStr);
-                   rulesChanged = true;
-               }
-           }
-           if (result.settings.lineChannelToken) {
-               localStorage.setItem('nm_line_token', result.settings.lineChannelToken);
-           }
-           if (result.settings.lineUserId) {
-               localStorage.setItem('nm_line_user_id', result.settings.lineUserId);
-           }
-           
-           if (rulesChanged) {
-               // 判斷當前是否開啟 NotificationCenterModal (用自訂屬性等方式，或者讓 NotificationCenterModal 攔截)
-               const evt = new CustomEvent('rules_updated_from_cloud', { detail: { isPollingUpdate: true } });
-               window.dispatchEvent(evt);
-               
-               // 這裡直接判斷 DOM 是不是有彈窗
-               const isModalOpen = document.getElementById('notification-center-modal') !== null;
-               if (!isModalOpen) {
-                 addToast("通知提醒規則已從雲端同步最新設定", "info");
-               }
-           }
+          const store = useSettingsStore.getState();
+          store.updateFromCloud(result.settings);
+          
+          const isModalOpen = document.getElementById('notification-center-modal') !== null;
+          if (!isModalOpen && store.hasCloudUpdate) {
+            addToast("通知提醒規則已從雲端同步最新設定", "info");
+            store.resetCloudUpdateFlag();
+          }
+        }
+        
+        const logStore = useLogStore.getState();
+        if (result.latestSystemLogTs && result.latestSystemLogTs > logStore.lastSyncSystemTs) {
+          container.logRepo.getSystemLogs(50).then(logs => {
+            logStore.setSystemLogs(logs, result.latestSystemLogTs!);
+          }).catch(err => console.error("Auto fetch system logs error:", err));
+        }
+
+        if (result.latestNotifyLogTs && result.latestNotifyLogTs > logStore.lastSyncNotifyTs) {
+          container.logRepo.getNotificationLogs(50).then(logs => {
+            logStore.setNotifyLogs(logs, result.latestNotifyLogTs!);
+          }).catch(err => console.error("Auto fetch notify logs error:", err));
         }
         // ========================================================
         

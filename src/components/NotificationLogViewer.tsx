@@ -2,6 +2,8 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { AlertCircle, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { NotificationLog } from '../types';
 import { container } from '../core/di/AppContainer';
+import { useLogStore } from '../store/useLogStore';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const statusTextMap: Record<string, string> = {
   'SUCCESS': '成功',
@@ -22,7 +24,7 @@ interface Props {
 }
 
 export function NotificationLogViewer({ apiEndpoint }: Props) {
-  const [logs, setLogs] = useState<NotificationLog[]>([]);
+  const { notifyLogs: logs, setNotifyLogs } = useLogStore();
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [filterRule, setFilterRule] = useState<string>('ALL');
@@ -37,7 +39,7 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
       container.updateApiEndpoint(apiEndpoint);
       // You can add pagination/limit logic here if LogRepository supports it
       const fetchedLogs = await container.logRepo.getNotificationLogs(100);
-      setLogs(fetchedLogs);
+      setNotifyLogs(fetchedLogs, Date.now());
     } catch (e) {
       console.error("Failed to fetch logs", e);
     } finally {
@@ -46,10 +48,10 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
   };
 
   useEffect(() => {
-    if (apiEndpoint) {
+    if (apiEndpoint && logs.length === 0) {
       fetchLogs();
     }
-  }, [apiEndpoint]);
+  }, [apiEndpoint, logs.length]);
 
   const uniqueRules = useMemo(() => {
     const rules = new Set<string>();
@@ -232,14 +234,17 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
              <p className="text-sm mt-1 text-slate-400">點擊「馬上測試」即可產生測試軌跡。</p>
           </div>
         ) : (
-          filteredLogs.map((log) => {
+          <AnimatePresence>
+          {filteredLogs.map((log) => {
             const isExpanded = expandedLogId === log.id;
             const config = getStatusConfig(log.status);
             
             return (
-              <div 
+              <motion.div 
                 key={log.id} 
-                className={`flex flex-col bg-white rounded-2xl border ${config.border} hover:shadow-md transition-all pt-1 pl-1`}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`flex flex-col bg-white rounded-2xl border ${config.border} hover:shadow-md transition-all pt-1 pl-1 mb-3`}
               >
                  <div 
                    className="flex items-start gap-3 p-3 cursor-pointer group"
@@ -281,9 +286,10 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
                      {renderDetails(log)}
                    </div>
                  )}
-              </div>
+              </motion.div>
             );
-          })
+          })}
+          </AnimatePresence>
         )}
       </div>
     </div>

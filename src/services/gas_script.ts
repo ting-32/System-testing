@@ -548,7 +548,17 @@ function getData(startDateStr, since = 0) {
   if (!settings) settings = {};
   settings.rules = getRemindRulesFromSheet();
 
-  return { customers, products, orders, trips, settings, allActiveOrderIds, serverGlobalTs: new Date().getTime() };
+  // 1. 取得通知日誌最新時間
+  const traceSheet = SS.getSheetByName("TraceLogs");
+  const traceLastRow = traceSheet ? traceSheet.getLastRow() : 0;
+  const latestNotifyLogTs = traceLastRow > 1 ? new Date(traceSheet.getRange(traceLastRow, 1).getValue()).getTime() : 0;
+
+  // 2. 取得系統系統日誌最新時間
+  const sysSheet = SS.getSheetByName("SystemLogs");
+  const sysLastRow = sysSheet ? sysSheet.getLastRow() : 0;
+  const latestSystemLogTs = sysLastRow > 1 ? new Date(sysSheet.getRange(sysLastRow, 1).getValue()).getTime() : 0;
+
+  return { customers, products, orders, trips, settings, allActiveOrderIds, serverGlobalTs: new Date().getTime(), latestNotifyLogTs, latestSystemLogTs };
 }
 
 function getRemindRulesSheet() {
