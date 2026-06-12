@@ -379,7 +379,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
   // Auth Functions
   const handleLogin = async (pwd: string) => { 
-    if (!apiEndpoint) { 
+    if (!apiEndpoint || apiEndpoint === 'https://mock-api.local') { 
       if (pwd === '8888') { 
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 

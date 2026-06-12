@@ -217,9 +217,12 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
               
               return (
               <motion.div 
+                layout
                 key={log.id} 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, scale: 0.95, y: -20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
+                transition={{ type: 'spring', stiffness: 300, damping: 25 }}
                 className={`relative flex items-start group`}
               >
                 {/* Timeline dot */}

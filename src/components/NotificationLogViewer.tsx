@@ -241,9 +241,12 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
             
             return (
               <motion.div 
+                layout
                 key={log.id} 
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, scale: 0.95, y: -20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
+                transition={{ type: 'spring', stiffness: 300, damping: 25 }}
                 className={`flex flex-col bg-white rounded-2xl border ${config.border} hover:shadow-md transition-all pt-1 pl-1 mb-3`}
               >
                  <div 
