@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 interface LogStoreState {
   systemLogs: any[];
@@ -12,14 +13,21 @@ interface LogStoreState {
   setUnreadLogs: (status: boolean) => void;
 }
 
-export const useLogStore = create<LogStoreState>((set) => ({
-  systemLogs: [],
-  notifyLogs: [],
-  lastSyncSystemTs: 0,
-  lastSyncNotifyTs: 0,
-  hasUnreadLogs: false,
+export const useLogStore = create<LogStoreState>()(
+  persist(
+    (set) => ({
+      systemLogs: [],
+      notifyLogs: [],
+      lastSyncSystemTs: 0,
+      lastSyncNotifyTs: 0,
+      hasUnreadLogs: false,
 
-  setSystemLogs: (logs, latestTs) => set({ systemLogs: logs, lastSyncSystemTs: latestTs }),
-  setNotifyLogs: (logs, latestTs) => set({ notifyLogs: logs, lastSyncNotifyTs: latestTs }),
-  setUnreadLogs: (status) => set({ hasUnreadLogs: status })
-}));
+      setSystemLogs: (logs, latestTs) => set({ systemLogs: logs, lastSyncSystemTs: latestTs }),
+      setNotifyLogs: (logs, latestTs) => set({ notifyLogs: logs, lastSyncNotifyTs: latestTs }),
+      setUnreadLogs: (status) => set({ hasUnreadLogs: status })
+    }),
+    {
+      name: 'nm_logs_storage'
+    }
+  )
+);
