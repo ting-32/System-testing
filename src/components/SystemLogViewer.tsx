@@ -105,6 +105,47 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
     }
   };
 
+  const renderHumanReadableDetails = (actionType: string, parsedJson: any) => {
+    if (actionType === 'UPDATE_ORDER_BATCH' && parsedJson?.updates) {
+      return (
+        <div className="space-y-2 mt-2">
+          {/* 客戶與日期資訊 */}
+          <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl text-xs flex flex-wrap gap-x-4 gap-y-1">
+             <p className="font-bold text-slate-700">店家名稱：<span className="text-indigo-700">{parsedJson.updates.customerName || '未提供'}</span></p>
+             <p className="font-bold text-slate-700">訂單日期：<span className="text-indigo-700">{parsedJson.updates.deliveryDate || '未提供'}</span></p>
+          </div>
+
+          {/* 狀態變更列表 */}
+          <div className="bg-slate-50 border border-slate-100 p-2.5 rounded-xl space-y-2">
+            {parsedJson.updates.updates?.map((update: any, idx: number) => (
+               <div key={idx} className="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-200">
+                 <div>
+                   <p className="text-[10px] text-slate-400">訂單 ID</p>
+                   <p className="text-xs font-mono font-bold text-slate-600">{update.id}</p>
+                 </div>
+                 
+                 <div className="flex flex-col items-end">
+                   <p className="text-[10px] text-slate-400 mb-0.5">狀態變更</p>
+                   <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${
+                     update.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                   }`}>
+                     {update.status === 'PAID' ? '已結帳' : update.status}
+                   </span>
+                 </div>
+               </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <pre className="bg-slate-800 text-emerald-400 p-3 rounded-xl font-mono text-[10px] sm:text-xs overflow-x-auto whitespace-pre-wrap leading-relaxed shadow-inner">
+        {JSON.stringify(parsedJson, null, 2)}
+      </pre>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">
       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4 pb-24">
@@ -267,9 +308,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
                             exit={{ height: 0, opacity: 0 }}
                             className="overflow-hidden mt-2"
                           >
-                            <pre className="bg-slate-800 text-emerald-400 p-3 rounded-xl font-mono text-[10px] sm:text-xs overflow-x-auto whitespace-pre-wrap leading-relaxed shadow-inner">
-                              {JSON.stringify(parsedJson, null, 2)}
-                            </pre>
+                            {renderHumanReadableDetails(log.actionType, parsedJson)}
                           </motion.div>
                         )}
                       </AnimatePresence>

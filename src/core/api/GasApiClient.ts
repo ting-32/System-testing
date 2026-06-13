@@ -28,43 +28,52 @@ export class GasApiClient implements ApiClient {
 
     const finalConfig = { ...this.baseConfig, ...config };
     const payload = { action, data };
+    const timeoutToUse = finalConfig.timeoutMs ?? 25000;
+    const maxLockRetries = 3;
 
-    let res;
-    let timeoutToUse = finalConfig.timeoutMs ?? 25000;
-    try {
-      res = await fetchWithRetry(finalConfig.endpoint, {
-        method: 'POST',
-        redirect: finalConfig.redirect,
-        headers: finalConfig.headers,
-        body: JSON.stringify(payload),
-        signal: finalConfig.signal
-      }, undefined, 2, 1500, finalConfig.silentFail, timeoutToUse);
-    } catch (err: any) {
-      if (err.message === 'ABORTED_BY_USER' || err.message === 'ABORTED') {
-         throw err;
+    for (let attempt = 0; attempt <= maxLockRetries; attempt++) {
+      let res;
+      try {
+        res = await fetchWithRetry(finalConfig.endpoint, {
+          method: 'POST',
+          redirect: finalConfig.redirect,
+          headers: finalConfig.headers,
+          body: JSON.stringify(payload),
+          signal: finalConfig.signal
+        }, undefined, 2, 1500, finalConfig.silentFail, timeoutToUse);
+      } catch (err: any) {
+        if (err.message === 'ABORTED_BY_USER' || err.message === 'ABORTED') {
+           throw err;
+        }
+        if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
+          throw new Error(`API Request Timeout: 超過 ${timeoutToUse/1000} 秒未回應`);
+        }
+        throw err;
       }
-      if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
-        throw new Error(`API Request Timeout: 超過 ${timeoutToUse/1000} 秒未回應`);
+
+      const json = await res.json() as GASResponse<any>;
+      
+      // Abstract the standard GAS response logic
+      if (!json.success) {
+        if (json.error && json.error.includes('Lock Timeout') && attempt < maxLockRetries) {
+          console.warn(`Lock Timeout encountered, retrying... (Attempt ${attempt + 1}/${maxLockRetries})`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1) + Math.random() * 1000));
+          continue;
+        }
+        // Create a specific error that contains the errorCode for upstream handling
+        const error = new Error(json.error || 'API Request Failed');
+        (error as any).errorCode = json.errorCode;
+        if ((json as any).serverData) {
+          (error as any).serverData = (json as any).serverData;
+        } else if (json.data) {
+          (error as any).serverData = json.data;
+        }
+        throw error;
       }
-      throw err;
+
+      return json.data as R;
     }
-
-    const json = await res.json() as GASResponse<any>;
-    
-    // Abstract the standard GAS response logic
-    if (!json.success) {
-      // Create a specific error that contains the errorCode for upstream handling
-      const error = new Error(json.error || 'API Request Failed');
-      (error as any).errorCode = json.errorCode;
-      if ((json as any).serverData) {
-        (error as any).serverData = (json as any).serverData;
-      } else if (json.data) {
-        (error as any).serverData = json.data;
-      }
-      throw error;
-    }
-
-    return json.data as R;
+    throw new Error('Unexpected end of post loop');
   }
 
   async get<R>(_: string, params?: Record<string, string>, config?: Partial<ApiClientConfig>): Promise<R> {

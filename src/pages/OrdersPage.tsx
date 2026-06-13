@@ -296,7 +296,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
                 custOrders.forEach((o: Order) => { 
                   o.items.forEach((item: OrderItem) => { 
                     const p = productMap[item.productId]; 
-                    const pName = item.productName || p?.name || (isBackgroundSyncing && products.length === 0 ? '載入中...' : item.productId); 
+                    const pName = item.productName || p?.name || (isBackgroundSyncing && products.length === 0 ? '載入中...' : '未知品項');
                     const unit = item.unit || p?.unit || '斤'; 
                     
                     const key = `${pName}::${unit}`;

@@ -50,7 +50,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
   
   const itemSummary = order.items.map(item => { 
     const p = productMap[item.productId] || productMap[item.name as string]; 
-    return `${item.productName || p?.name || item.productId} ${item.quantity}${item.unit || '斤'}`; 
+    return `${item.productName || p?.name || (isLoadingProducts ? '載入中...' : '未知品項')} ${item.quantity}${item.unit || '斤'}`; 
   }).join('、');
   
   const handleDragEnd = (_event: any, info: PanInfo) => { 
@@ -153,7 +153,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
                           {isLoadingProducts ? (
                             <div className="h-4 w-16 bg-slate-200/70 animate-pulse rounded"></div>
                           ) : (
-                            <span className="text-slate-600 font-medium">{item.productName || p?.name || item.productId}</span> 
+                            <span className="text-slate-600 font-medium">{item.productName || p?.name || (isLoadingProducts ? '載入中...' : '未知品項')}</span> 
                           )}
                           {isLoadingProducts ? (
                             <div className="h-4 w-10 bg-slate-200/70 animate-pulse rounded"></div>

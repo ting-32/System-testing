@@ -46,7 +46,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
-import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES } from './constants';
+import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES, APP_VERSION } from './constants';
+import localforage from 'localforage';
 import { ToastNotification } from './components/ToastNotification';
 import { NavItem } from './components/NavItem';
 import { SkeletonCard } from './components/SkeletonCard';
@@ -93,6 +94,41 @@ import { buttonTap, buttonHover, triggerHaptic, containerVariants, itemVariants 
 
 // --- 主要 App 組件 ---
 const App: React.FC = () => {
+  // Version Cache Busting
+  useEffect(() => {
+    const checkVersion = async () => {
+      const localVersion = localStorage.getItem('nm_app_version');
+      if (localVersion !== APP_VERSION) {
+        console.log(`Version changed from ${localVersion} to ${APP_VERSION}. Clearing cache...`);
+        
+        // 保留重要的連線設定，清空其餘狀態
+        const gasUrl = localStorage.getItem('nm_gas_url');
+        await localforage.clear();
+        localStorage.clear();
+        
+        // 把重要的存回去
+        if (gasUrl) localStorage.setItem('nm_gas_url', gasUrl);
+        localStorage.setItem('nm_app_version', APP_VERSION);
+        
+        // 強制重整畫面，確保載入全新狀態
+        window.location.reload();
+      }
+    };
+    checkVersion();
+  }, []);
+
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   // ... (State declarations remain unchanged) ...
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -865,6 +901,7 @@ const App: React.FC = () => {
 
   return (
     <div className="h-[100dvh] flex flex-col max-w-md mx-auto bg-morandi-oatmeal relative shadow-2xl overflow-hidden text-morandi-charcoal font-sans">
+      
       {/* 熱機 UI 橫幅 */}
       <AnimatePresence>
         {isWarmingUp && (
@@ -885,6 +922,7 @@ const App: React.FC = () => {
         isInitialLoading={isInitialLoading}
         isUnlocked={auth.isUnlocked}
         setIsUnlocked={auth.setIsUnlocked}
+        isOnline={isOnline}
       />
 
       {/* --- Toast Container --- */}

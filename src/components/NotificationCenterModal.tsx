@@ -157,6 +157,17 @@ export const NotificationCenterModal: React.FC<Props> = ({
     }
   }, [isOpen, resetCloudUpdateFlag, activeTab, setUnreadLogs]);
 
+  useEffect(() => {
+    if (hasCloudUpdate) {
+      if (editingRule) {
+        // 使用者正在編輯中：靜靜等待，不改變其正在編輯的內容
+      } else {
+        // 使用者沒有在編輯：利用 AnimatePresence 讓列表自行觸發動畫刷新
+      }
+      resetCloudUpdateFlag();
+    }
+  }, [hasCloudUpdate, editingRule, resetCloudUpdateFlag]);
+
   const saveToGas = async (currentRules: ReminderRule[], channelToken: string, userId: string) => {
     if (!apiEndpoint) return;
     setIsSaving(true);
@@ -395,32 +406,6 @@ export const NotificationCenterModal: React.FC<Props> = ({
               <div className="space-y-4 pb-20">
                 {editingRule ? (
                   <>
-                    {hasCloudUpdate && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: -10 }} 
-                        animate={{ opacity: 1, y: 0 }}
-                        className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4 shadow-sm"
-                      >
-                        <div className="flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span className="text-sm font-bold">注意：此規則在其他裝置或背景已有更新。</span>
-                        </div>
-                        <button 
-                          onClick={() => {
-                            const latestRule = rules.find(r => r.id === editingRule.id);
-                            if (latestRule) {
-                               setEditingRule({ ...latestRule }); 
-                            } else {
-                               setEditingRule(null); 
-                            }
-                            resetCloudUpdateFlag();
-                          }}
-                          className="text-sm font-bold text-amber-700 underline hover:text-amber-900 whitespace-nowrap"
-                        >
-                          放棄變更並載入最新
-                        </button>
-                      </motion.div>
-                    )}
                     <RuleBuilder 
                       rule={editingRule} 
                       setRule={setEditingRule} 

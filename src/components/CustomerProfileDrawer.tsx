@@ -118,7 +118,7 @@ export const CustomerProfileDrawer: React.FC<CustomerProfileDrawerProps> = ({
                              const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
                              return (
                                <div key={idx} className="flex justify-between items-center text-xs text-slate-600 font-bold">
-                                 <span>{item.productName || p?.name || item.productId}</span>
+                                 <span>{item.productName || p?.name || '未知品項'}</span>
                                  <span className="text-morandi-blue">{item.quantity} {item.unit || p?.unit || '斤'}</span>
                                </div>
                              );

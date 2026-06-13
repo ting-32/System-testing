@@ -231,14 +231,17 @@ export const useOrderActions = ({
 
     try {
         if (apiEndpoint) {
-            const updatesToProcess = [{ id: orderId, status: newStatus, version: orderToUpdate.version || 1, force: true }];
+            const orderToUpdate = orders.find(o => o.id === orderId);
+            const customerName = orderToUpdate?.customerName || '';
+            const deliveryDate = orderToUpdate?.deliveryDate || '';
+            const updatesToProcess = [{ id: orderId, status: newStatus, version: orderToUpdate?.version || 1, force: true }];
             const res = await fetchWithRetry(
                 apiEndpoint, 
                 {
                     method: 'POST',
                     body: JSON.stringify({ 
                         action: 'batchUpdateOrders', 
-                        data: { updates: updatesToProcess } 
+                        data: { updates: updatesToProcess, customerName, deliveryDate } 
                     })
                 },
                 undefined,
@@ -335,6 +338,11 @@ export const useOrderActions = ({
             return;
           }
 
+          const firstOrderId = updatesToProcess[0]?.id;
+          const firstOrder = orders.find(o => o.id === firstOrderId);
+          const customerName = firstOrder?.customerName || '';
+          const deliveryDate = firstOrder?.deliveryDate || '';
+
           try {
               if (apiEndpoint) {
                   const res = await fetchWithRetry(
@@ -343,7 +351,7 @@ export const useOrderActions = ({
                           method: 'POST',
                           body: JSON.stringify({ 
                               action: 'batchUpdateOrders', 
-                              data: { updates: updatesToProcess } 
+                              data: { updates: updatesToProcess, customerName, deliveryDate } 
                           })
                       },
                       undefined,

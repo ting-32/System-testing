@@ -416,7 +416,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                                   const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
                                   return (
                                     <div key={idx} className="flex justify-between items-center text-xs mb-1">
-                                      <span className="font-bold text-slate-700">{item.productName || p?.name || item.productId}</span>
+                                      <span className="font-bold text-slate-700">{item.productName || p?.name || '未知品項'}</span>
                                       <div className="flex gap-4">
                                         <span className="text-morandi-blue w-16 text-right font-medium">x {item.quantity} {item.unit || p?.unit || '斤'}</span>
                                         {item.unit !== '元' && (

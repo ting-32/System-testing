@@ -227,7 +227,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
                   {isLoadingProducts ? (
                     <div className="h-[18px] w-20 bg-slate-200/70 animate-pulse rounded"></div>
                   ) : (
-                    <span className="text-sm font-bold text-slate-600 tracking-wide">{item.productName || p?.name || item.productId}</span> 
+                    <span className="text-sm font-bold text-slate-600 tracking-wide">{item.productName || p?.name || (isLoadingProducts ? '載入中...' : '未知品項')}</span> 
                   )}
                   <div className="flex items-baseline gap-1">
                     <span className="font-black text-lg text-slate-800">{item.quantity}</span>

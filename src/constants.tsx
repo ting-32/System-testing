@@ -1,4 +1,7 @@
 
+// App Version Configuration
+export const APP_VERSION = '1.1.0';
+
 export const COLORS = {
   bg: '#F2F0E9',       // Oatmeal (bg-main)
   primary: '#5D7586',  // Smog Blue (Primary Action)
