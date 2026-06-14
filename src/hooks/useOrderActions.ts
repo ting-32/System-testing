@@ -234,7 +234,17 @@ export const useOrderActions = ({
             const orderToUpdate = orders.find(o => o.id === orderId);
             const customerName = orderToUpdate?.customerName || '';
             const deliveryDate = orderToUpdate?.deliveryDate || '';
-            const updatesToProcess = [{ id: orderId, status: newStatus, version: orderToUpdate?.version || 1, force: true }];
+            const updatesToProcess = [{ 
+                id: orderId, 
+                status: newStatus, 
+                originalStatus: orderToUpdate?.status, // 新增：轉換前狀態
+                items: orderToUpdate?.items?.map((item: any) => ({
+                    ...item,
+                    productName: item.productName || products.find((p: any) => p.id === item.productId)?.name || item.productId
+                })), // 新增：訂單明細並帶入商品名稱
+                version: orderToUpdate?.version || 1, 
+                force: true 
+            }];
             const res = await fetchWithRetry(
                 apiEndpoint, 
                 {
@@ -282,6 +292,7 @@ export const useOrderActions = ({
         }
     } catch (e: any) {
         if (e.message === 'VERSION_CONFLICT' || e.message === 'ERR_VERSION_CONFLICT') return;
+        if (e.message === "UNAUTHORIZED_OR_EXPIRED") return;
         console.error("Sync Failed:", e);
         let errMsg = e instanceof Error ? e.message : String(e);
 
@@ -316,6 +327,11 @@ export const useOrderActions = ({
         pendingUpdatesRef.current.set(orderId, {
           id: orderId,
           status: OrderStatus.PAID,
+          originalStatus: orderToUpdate?.status, // 新增：轉換前狀態
+          items: orderToUpdate?.items?.map((item: any) => ({
+              ...item,
+              productName: item.productName || products.find((p: any) => p.id === item.productId)?.name || item.productId
+          })), // 新增：訂單明細並帶入商品名稱
           originalVersion: orderToUpdate.version || 1,
           force: true
         });
@@ -329,7 +345,7 @@ export const useOrderActions = ({
     // Trigger batch update immediately and return a promise
     return new Promise<void>((resolve) => {
       batchTimeoutRef.current = setTimeout(async () => {
-          const updatesToProcess: { id: string, status: OrderStatus, originalLastUpdated: number, force: boolean }[] = Array.from(pendingUpdatesRef.current.values());
+          const updatesToProcess: any[] = Array.from(pendingUpdatesRef.current.values());
           pendingUpdatesRef.current.clear();
           batchTimeoutRef.current = null;
 
@@ -393,6 +409,9 @@ export const useOrderActions = ({
                   }
               }
           } catch (e: any) {
+              if (e.message === "UNAUTHORIZED_OR_EXPIRED") {
+                  return;
+              }
               console.error("Batch Sync Failed:", e);
               let errMsg = e instanceof Error ? e.message : String(e);
 
@@ -846,7 +865,54 @@ export const useOrderActions = ({
     addToast(`已將 ${ids.length} 筆訂單設為 ${tripName}`, 'success');
   };
 
-  const handleDeleteOrder = (orderId: string) => { setConfirmConfig({ isOpen: true, title: '刪除訂單', message: '確定要刪除此訂單嗎？\n此動作將會同步刪除雲端資料。', onConfirm: () => executeDeleteOrder(orderId) }); };
+  const handleDeleteOrder = (orderId: string, skipConfirm: boolean = false) => {
+    if (skipConfirm) {
+      executeDeleteOrder(orderId);
+      return;
+    }
+    setConfirmConfig({ isOpen: true, title: '刪除訂單', message: '確定要刪除此訂單嗎？\n此動作將會同步刪除雲端資料。', onConfirm: () => executeDeleteOrder(orderId) }); 
+  };
+
+  const handleRetrySync = useCallback(async (orderId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order || !order.pendingAction) return;
+
+    // Reset status to pending
+    setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'pending', errorMessage: undefined } : o));
+
+    const action = order.pendingAction;
+    try {
+      if (action === 'statusUpdate') {
+         await saveOrderToCloud(
+          order,
+          'updateOrderStatus',
+          order.version,
+          () => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o)),
+          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o))
+        );
+      } else if (action === 'delete') {
+         executeDeleteOrder(orderId);
+      } else if (action === 'create') {
+         await saveOrderToCloud(
+          order,
+          'createOrder',
+          undefined,
+          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...updatedOrder, syncStatus: 'synced', pendingAction: undefined } : o)),
+          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o))
+        );
+      } else if (action === 'update') {
+         await saveOrderToCloud(
+          order,
+          'updateOrderContent',
+          order.version,
+          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined, version: updatedOrder.version } : o)),
+          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o))
+        );
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [orders, setOrders, saveOrderToCloud]);
 
   return {
     handleQuickAddSubmit,
@@ -865,6 +931,7 @@ export const useOrderActions = ({
     handleSelectExistingCustomer,
     openGoogleMaps,
     handleDeleteOrder,
-    handleBatchUpdateTrip
+    handleBatchUpdateTrip,
+    handleRetrySync
   };
 };

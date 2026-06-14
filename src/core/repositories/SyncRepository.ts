@@ -21,7 +21,7 @@ export interface SyncDataResult {
 
 export interface ISyncRepository {
   sync(params: SyncDataParams, silentFail?: boolean, signal?: AbortSignal): Promise<SyncDataResult>;
-  checkUpdates(signal?: AbortSignal): Promise<{ globalLastUpdated: number }>;
+  checkUpdates(auditObj?: any, signal?: AbortSignal): Promise<{ globalLastUpdated: number }>;
 }
 
 export class SyncRepository implements ISyncRepository {
@@ -31,7 +31,7 @@ export class SyncRepository implements ISyncRepository {
     return this.apiClient.get<SyncDataResult>('', params as any, { silentFail, signal });
   }
 
-  async checkUpdates(signal?: AbortSignal): Promise<{ globalLastUpdated: number }> {
-    return this.apiClient.post<any, { globalLastUpdated: number }>('checkUpdates', {}, { silentFail: true, signal });
+  async checkUpdates(auditObj?: any, signal?: AbortSignal): Promise<{ globalLastUpdated: number }> {
+    return this.apiClient.post<any, { globalLastUpdated: number }>('checkUpdates', { auditObj }, { silentFail: true, signal });
   }
 }

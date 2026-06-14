@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Search, RefreshCw, Activity, PlusCircle, Edit2, Trash2, Settings, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, RefreshCw, Activity, PlusCircle, Edit2, Trash2, Settings, ChevronDown, ChevronUp, ArrowRight, AlertCircle } from 'lucide-react';
 import { SystemLog } from '../types';
 import { container } from '../core/di/AppContainer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLogStore } from '../store/useLogStore';
+import { useAppStore } from '../store/useAppStore';
 
 interface Props {
   apiEndpoint: string;
@@ -11,6 +12,7 @@ interface Props {
 
 export function SystemLogViewer({ apiEndpoint }: Props) {
   const { systemLogs: logs, setSystemLogs } = useLogStore();
+  const { products } = useAppStore();
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   
   const [filterAction, setFilterAction] = useState<string>('ALL');
@@ -57,6 +59,16 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
   }, [logs, filterAction, filterTime, searchWord]);
   
   const getActionStyles = (actionType: string) => {
+    if (actionType === 'UPDATE_ORDER_BATCH') {
+      return {
+        icon: <Edit2 className="w-5 h-5 text-indigo-500" />,
+        bg: 'bg-indigo-50',
+        text: 'text-indigo-700',
+        border: 'border-indigo-200',
+        ring: 'ring-indigo-100',
+        label: '批次修改'
+      };
+    }
     if (actionType.startsWith('CREATE')) {
       return {
         icon: <PlusCircle className="w-5 h-5 text-emerald-500" />,
@@ -106,43 +118,275 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
   };
 
   const renderHumanReadableDetails = (actionType: string, parsedJson: any) => {
-    if (actionType === 'UPDATE_ORDER_BATCH' && parsedJson?.updates) {
+    const renderStatusBadge = (status: string) => {
+      const statusMap: Record<string, { label: string, classes: string }> = {
+        'PAID': { label: '已結帳', classes: 'bg-emerald-100 text-emerald-700 border border-emerald-200' },
+        'PENDING': { label: '待處理', classes: 'bg-rose-100 text-rose-700 border border-rose-200' }, 
+        'SHIPPED': { label: '已配送', classes: 'bg-blue-100 text-blue-700 border border-blue-200' },
+      };
+      const config = statusMap[status] || { label: status, classes: 'bg-slate-100 text-slate-600 border border-slate-200' };
+      
       return (
-        <div className="space-y-2 mt-2">
-          {/* 客戶與日期資訊 */}
-          <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl text-xs flex flex-wrap gap-x-4 gap-y-1">
-             <p className="font-bold text-slate-700">店家名稱：<span className="text-indigo-700">{parsedJson.updates.customerName || '未提供'}</span></p>
-             <p className="font-bold text-slate-700">訂單日期：<span className="text-indigo-700">{parsedJson.updates.deliveryDate || '未提供'}</span></p>
-          </div>
+        <span className={`px-3 py-1 rounded-md text-sm font-bold ${config.classes}`}>
+          {config.label}
+        </span>
+      );
+    };
 
-          {/* 狀態變更列表 */}
-          <div className="bg-slate-50 border border-slate-100 p-2.5 rounded-xl space-y-2">
-            {parsedJson.updates.updates?.map((update: any, idx: number) => (
-               <div key={idx} className="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-200">
-                 <div>
-                   <p className="text-[10px] text-slate-400">訂單 ID</p>
-                   <p className="text-xs font-mono font-bold text-slate-600">{update.id}</p>
-                 </div>
-                 
-                 <div className="flex flex-col items-end">
-                   <p className="text-[10px] text-slate-400 mb-0.5">狀態變更</p>
-                   <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${
-                     update.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                   }`}>
-                     {update.status === 'PAID' ? '已結帳' : update.status}
-                   </span>
-                 </div>
-               </div>
-            ))}
+    // === 1. 新增訂單 ===
+    if (actionType === 'CREATE_ORDER') {
+      const payload = parsedJson.payload || {};
+      const customerName = payload.customerName || '未知店家';
+      // 日誌中存的 payload.deliveryDate 可能為 yyyy-MM-dd
+      const deliveryDate = payload.deliveryDate || '未指定日期';
+      const items = parsedJson.items || payload.items || [];
+      
+      return (
+        <div className="space-y-3 mt-2 bg-emerald-50/80 p-3.5 rounded-xl border border-emerald-100">
+          <p className="text-sm sm:text-base font-bold text-slate-800 flex items-center gap-1.5">
+            ✅ <span>向【<span className="text-emerald-700 text-lg">{customerName}</span>】建立了一筆 <span className="text-indigo-600 underline decoration-indigo-200 underline-offset-4">{deliveryDate}</span> 的訂單</span>
+          </p>
+          <div className="bg-white p-3 rounded-lg border border-emerald-100 shadow-sm">
+            <p className="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1">
+              📦 訂單內容：
+            </p>
+            <ul className="space-y-1.5 pl-1">
+              {items.map((item: any, idx: number) => {
+                // 如果存下來的 productName 剛好就是 ID（代表建立時沒抓到名字），就當作無效
+                const validSavedName = item.productName && item.productName !== item.productId ? item.productName : null;
+                // 嘗試即時從現有商品清單找
+                const pNameFromStore = products.find(p => p.id === item.productId)?.name;
+                
+                const pName = pNameFromStore || validSavedName || item.productId || '未知商品';
+
+                return (
+                  <li key={idx} className="text-sm font-bold text-slate-700">
+                    • {pName} <span className="text-indigo-600 ml-1.5">{item.quantity} {item.unit || '斤'}</span>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         </div>
       );
     }
 
+    // === 2. 訂單修改/狀態變更 (拔除 UUID、字體放大、導入狀態字典) ===
+    if (actionType === 'UPDATE_ORDER_BATCH' || actionType === 'UPDATE_ORDER' || actionType === 'UPDATE_ORDER_STATUS') {
+      // 嘗試從不同結構中抽出資料 (相容新舊日誌結構)
+      const isLegacyArray = Array.isArray(parsedJson.updates);
+      const updatesData = isLegacyArray ? parsedJson.updates : (parsedJson?.updates?.updates || parsedJson?.diff?.updates || []);
+      const customerName = isLegacyArray ? '多筆訂單 (批次)' : (parsedJson?.updates?.customerName || parsedJson?.diff?.customerName || '未知店家');
+      const deliveryDate = isLegacyArray ? '' : (parsedJson?.updates?.deliveryDate || '');
+
+      return (
+        <div className="space-y-3 mt-2 bg-amber-50/50 p-4 rounded-xl border border-amber-100">
+          <p className="text-sm sm:text-base font-bold text-slate-800 flex items-center gap-1.5">
+            🔄 <span>修改了【<span className="text-amber-700 text-lg">{customerName}</span>】{deliveryDate && `在 ${deliveryDate} `}的狀態</span>
+          </p>
+          
+          {updatesData.length > 0 && (
+            <div className="space-y-2 mt-2">
+              {updatesData.map((update: any, idx: number) => (
+                 <div key={idx} className="bg-white px-4 py-3 rounded-lg border border-amber-100 shadow-sm flex items-center gap-3">
+                   {/* 原本的狀態 (帶有刪除線與透明度) */}
+                   {update.originalStatus && (
+                     <div className="opacity-60 relative group">
+                       {renderStatusBadge(update.originalStatus)}
+                       {/* 掛上一條刪除線 */}
+                       <div className="absolute inset-0 top-1/2 h-[2px] bg-slate-400 -translate-y-1/2 w-full"></div>
+                     </div>
+                   )}
+                   
+                   {/* 轉換箭頭 */}
+                   {update.originalStatus && (
+                     <ArrowRight className="w-5 h-5 text-amber-300" />
+                   )}
+                   
+                   {/* 變更後的狀態 (清晰搶眼) */}
+                   <div className="scale-105 origin-left">
+                     {renderStatusBadge(update.status || update.originalStatus)}
+                   </div>
+                 </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // === 3. 刪除類日誌 (涵蓋 Order, Customer, Product) ===
+    if (actionType.startsWith('DELETE_')) {
+      const targetType = actionType.replace('DELETE_', '');
+      
+      // 將艱澀的模組對應成白話文來源
+      const sourceName = targetType === 'ORDER' ? '每日訂單' : targetType === 'CUSTOMER' ? '店家名單' : targetType === 'PRODUCT' ? '商品庫存' : '系統資料';
+      
+      // 優先取用後端傳來的新版明確名稱，若無則降級顯示 ID
+      const deletedName = parsedJson.deletedName || parsedJson.deletedId || '未知資料';
+      // 如果是訂單，嘗試把日期也串上去
+      const deleteDate = parsedJson.deletedDate ? ` (日期: ${parsedJson.deletedDate})` : '';
+
+      return (
+        <div className="mt-2 bg-rose-50/80 p-4 rounded-xl border border-rose-200 flex items-start gap-3 shadow-sm">
+          {/* 左側放大的警示圖示 */}
+          <div className="bg-white p-2 rounded-lg shadow-sm border border-rose-100 flex-shrink-0">
+            <span className="text-xl sm:text-2xl">🗑️</span>
+          </div>
+          
+          <div className="flex-1 pt-0.5">
+            <p className="text-sm sm:text-base font-bold text-rose-900 leading-relaxed">
+              您從【{sourceName}】中<span className="text-rose-600 underline underline-offset-4 decoration-rose-300 mx-1">永久移除</span>了以下資料：
+            </p>
+            {/* 巨大化的刪除目標，視覺焦點在此 */}
+            <p className="text-base sm:text-lg font-bold text-rose-700 mt-1.5 bg-rose-100/50 inline-block px-3 py-1 rounded-lg border border-rose-100">
+              「{deletedName}{deleteDate}」
+            </p>
+            {/* 工程師或查修專用的幽靈 ID */}
+            <p className="text-[11px] sm:text-xs text-rose-400 mt-2 font-mono">
+              系統代碼：{parsedJson.deletedId || '無'}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // === 4. 系統設定 ===
+    if (actionType === 'UPDATE_SETTINGS' || actionType.startsWith('SYSTEM_')) {
+      const data = parsedJson.data || parsedJson || {};
+      const fieldDictionary: Record<string, string> = {
+        autoOrderEnabled: '自動建單開關',
+        defaultHoliday: '預設公休日',
+        rules: '提醒與通知規則',
+        lineChannelToken: 'LINE 機器人 Token',
+        lineUserId: 'LINE 管理員 ID',
+        action: '系統操作'
+      };
+
+      const changedKeys = Object.keys(data).filter(k => k !== 'ruleId' && k !== 'actionType');
+      
+      return (
+        <div className="mt-2 bg-slate-100/80 p-4 rounded-xl border border-slate-200 flex items-start gap-3 shadow-sm">
+          <div className="bg-white p-2 rounded-lg shadow-sm border border-slate-200 flex-shrink-0">
+            <span className="text-xl sm:text-2xl">⚙️</span>
+          </div>
+          <div className="flex-1 pt-0.5">
+            <p className="text-sm sm:text-base font-bold text-slate-800">系統設定變更</p>
+            {changedKeys.length > 0 ? (
+              <div className="mt-2 space-y-1.5 bg-white p-3 rounded-lg border border-slate-100 shadow-sm">
+                {changedKeys.map(key => {
+                  const val = data[key];
+                  let displayVal = String(val);
+                  if (typeof val === 'boolean') displayVal = val ? '開啟' : '關閉';
+                  else if (Array.isArray(val)) displayVal = `共 ${val.length} 筆設定`;
+                  else if (typeof val === 'object') displayVal = '內部資料結構';
+                  
+                  return (
+                    <p key={key} className="text-sm text-slate-700 font-medium">
+                      ➤ 【<span className="font-bold">{fieldDictionary[key] || key}</span>】被修改為：<span className="text-indigo-600">{displayVal}</span>
+                    </p>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs sm:text-sm text-slate-500 mt-1">此操作通常為管理員調整底層配置。若不確定細節請聯絡技術人員。</p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // === 6. 安全性警告 (核心密碼修改) ===
+    if (actionType === 'UPDATE_SECURITY_PASSWORD') {
+      const dId = parsedJson.deviceId || '未知設備';
+      const uAgent = parsedJson.userAgent || '缺少瀏覽器特徵碼';
+
+      return (
+        <div className="mt-2 bg-rose-50/90 p-4 rounded-xl border-2 border-rose-200 shadow-sm relative overflow-hidden">
+          {/* 讓背景帶有一點斜線圖騰可以增加警示感，不過單純純色也很有效 */}
+          <p className="text-sm sm:text-base font-bold text-rose-800 flex items-center gap-1.5 border-b border-rose-200/60 pb-2">
+            <AlertCircle className="w-5 h-5 text-rose-600" />
+            <span>系統登入密碼已被重設！</span>
+          </p>
+          
+          <div className="mt-3 space-y-3">
+            <div>
+              <p className="text-[11px] font-bold text-rose-600/70 mb-0.5">操作裝置永久識別碼 (Device ID)</p>
+              <p className="text-xs sm:text-sm font-mono text-rose-900 bg-white px-2 py-1 rounded inline-block border border-rose-100 font-bold select-all">
+                {dId}
+              </p>
+            </div>
+            
+            <div>
+              <p className="text-[11px] font-bold text-rose-600/70 mb-0.5">用戶端環境特徵 (User Agent)</p>
+              <p className="text-[10px] text-slate-500 font-mono break-words leading-relaxed bg-white/60 p-2 rounded border border-rose-50">
+                {uAgent}
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs font-bold text-rose-600 mt-3 pt-2 border-t border-rose-200/60">
+            ⚠️ 若非授權操作，請立刻通報開發人員並盡速重新更改密碼。
+          </p>
+        </div>
+      );
+    }
+
+    // -- [登入異常] 視覺強烈，具有防弊功能 --
+    if (actionType === 'SYSTEM_LOGIN_FAILED') {
+      return (
+        <div className="mt-2 bg-orange-50 p-3 rounded-lg border border-orange-200">
+          <p className="text-sm font-bold text-orange-800">⚠️ 發生錯誤的登入嘗試</p>
+          <p className="text-xs font-mono text-orange-600 mt-1">裝置 ID: {parsedJson.deviceId}</p>
+          <p className="text-xs text-slate-500 mt-1">此設備嘗試使用錯誤的密碼 ({parsedJson.attemptPwd}) 登入系統。</p>
+        </div>
+      );
+    }
+
+    // -- [登入成功] 正常通知 --
+    if (actionType === 'SYSTEM_LOGIN_SUCCESS') {
+      return (
+        <div className="mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100 flex items-center gap-2 text-slate-600">
+          <span>🔓</span> 
+          <div className="text-xs">
+            <p><span className="font-bold text-slate-700">新裝置已登入系統</span></p>
+            <p className="text-[10px] text-slate-400 font-mono mt-0.5">{parsedJson.deviceId}</p>
+          </div>
+        </div>
+      );
+    }
+
+    // -- [調閱與重整] 視覺弱化，不干擾主線業務日誌 --
+    if (actionType === 'SYSTEM_DATA_ACCESS') {
+      return (
+        <div className="mt-1 opacity-60 hover:opacity-100 transition-opacity">
+          <p className="text-[11px] text-slate-400 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" />
+            <span>裝置 {parsedJson.deviceId?.substring(0, 6)}... 進行了 {parsedJson.method}</span>
+          </p>
+        </div>
+      );
+    }
+
+    // -- [未授權存取] 視覺強烈，具有防弊功能 --
+    if (actionType === 'SYSTEM_UNAUTHORIZED_ACCESS') {
+      return (
+        <div className="mt-2 bg-red-50 p-3 rounded-lg border border-red-200">
+          <p className="text-sm font-bold text-red-800">🚨 偵測到未授權的 API 調用</p>
+          <p className="text-xs text-slate-500 mt-1">某設備未攜帶合法憑證，試圖呼叫：<span className="font-mono text-red-600">{parsedJson.action}</span></p>
+          <p className="text-[10px] text-slate-400 mt-1">Token Presence: {String(parsedJson.tokenProvided)}</p>
+        </div>
+      );
+    }
+
+    // === 7. 沒被捕捉到的日誌 (Fallback，留給工程師看) ===
     return (
-      <pre className="bg-slate-800 text-emerald-400 p-3 rounded-xl font-mono text-[10px] sm:text-xs overflow-x-auto whitespace-pre-wrap leading-relaxed shadow-inner">
-        {JSON.stringify(parsedJson, null, 2)}
-      </pre>
+      <div className="mt-2">
+        <p className="text-xs text-slate-400 font-bold mb-1 ml-1 cursor-help" title="長輩不會看這塊，這是發生未定義操作時的工程師除錯區">🕵️ 未知操作原始碼：</p>
+        <pre className="bg-slate-800 text-emerald-400 p-3 rounded-xl font-mono text-[10px] sm:text-xs overflow-x-auto whitespace-pre-wrap leading-relaxed shadow-inner">
+          {JSON.stringify(parsedJson, null, 2)}
+        </pre>
+      </div>
     );
   };
 
@@ -275,7 +519,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex items-center gap-2">
                       <div className={`px-2.5 py-1 rounded-lg text-[10px] font-black tracking-widest ${styles.bg} ${styles.text}`}>
-                        {log.actionType}
+                        {styles.label || log.actionType}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-0.5">

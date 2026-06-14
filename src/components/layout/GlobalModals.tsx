@@ -19,12 +19,26 @@ import { NotificationCenterModal } from '../NotificationCenterModal';
 import { AutoOrderDashboardModal } from '../modals/AutoOrderDashboardModal';
 import { buttonTap } from '../animations';
 
+import { CustomerFormModal } from '../modals/CustomerFormModal';
+
 interface GlobalModalsProps {
   isUnlockModalOpen?: boolean;
   onCloseUnlockModal?: () => void;
   handleAppUnlock?: (e: React.FormEvent) => void;
   isUnlocking?: boolean;
   unlockError?: boolean;
+  onToggleAutoOrder?: (customerId: string) => void;
+  onEditCustomerItems?: (customer: any) => void;
+  onEditCustomerHoliday?: (customerId: string) => void;
+  isEditingCustomer?: string | null;
+  setIsEditingCustomer?: (id: string | null) => void;
+  customerForm?: any;
+  setCustomerForm?: (form: any) => void;
+  editCustomerMode?: 'full' | 'itemsOnly' | 'holidayOnly';
+  setEditCustomerMode?: (mode: 'full' | 'itemsOnly' | 'holidayOnly') => void;
+  onSaveCustomerCloud?: (finalCustomer: any, isEditingCustomer: string | null, originalLastUpdated: string | undefined, previousCustomers: any[]) => Promise<boolean>;
+  availableTrips?: string[];
+  // ... other props
   setUnlockError?: (err: boolean) => void;
   unlockPassword?: string;
   setUnlockPassword?: (pwd: string) => void;
@@ -41,22 +55,52 @@ interface GlobalModalsProps {
   previewDate?: any;
   setPreviewDate?: (date: any) => void;
   prediction?: { greenZone: any[]; grayZone: any[] };
-  onToggleAutoOrder?: (customerId: string) => void;
 }
 
 export function GlobalModals(props: GlobalModalsProps) {
   const ui = useUIStore();
   
   // 從業務 Store 拿取需要的全域資料
-  const { setOrderForm, isSaving } = useAppStore();
+  const { setOrderForm, isSaving, setCustomers } = useAppStore();
   
   // ✨ 把通知設定從真正的 store 取出來
   const notificationSettings = useSettingsStore();
+
+  const availableTrips = props.availableTrips || [];
   
   // 優先使用 props 傳入的資料，若無則從 store 提取
   const customers = props.customers || useAppStore(s => s.customers);
   const products = props.products || useAppStore(s => s.products);
   const orders = props.orders || useAppStore(s => s.orders);
+
+  const handleCustomerFormSubmit = async (formData: any) => {
+    if (!props.isEditingCustomer) return;
+    
+    // Add simple validation
+    if (!formData.name) return;
+    const isDuplicateName = customers.some(c => String(c.name || '').trim() === String(formData.name || '').trim() && c.id !== (props.isEditingCustomer === 'new' ? null : props.isEditingCustomer)); 
+    if (isDuplicateName) { alert('客戶名稱不可重複！'); return; }
+
+    const finalCustomer = { 
+      id: props.isEditingCustomer === 'new' ? Date.now().toString() : props.isEditingCustomer, 
+      ...formData 
+    };
+
+    const previousCustomers = [...customers];
+    
+    // Optimistic Update
+    if (props.isEditingCustomer === 'new') setCustomers([...customers, finalCustomer]); 
+    else setCustomers(customers.map(c => c.id === props.isEditingCustomer ? finalCustomer : c)); 
+    
+    // Close modal UI immediately
+    const tempIsEditingCustomer = props.isEditingCustomer;
+    if (props.setIsEditingCustomer) props.setIsEditingCustomer(null);
+
+    // Call Cloud Save
+    if (props.onSaveCustomerCloud) {
+       await props.onSaveCustomerCloud(finalCustomer, tempIsEditingCustomer, formData.lastUpdated, previousCustomers);
+    }
+  };
 
   // 預留介面：由於包含部分尚未移入全域 Store 的業務邏輯（如同步機制、API），
   // 在完成全面重構前，可使用 window.dispatchEvent、EventBus，或暫時預留。
@@ -317,9 +361,14 @@ export function GlobalModals(props: GlobalModalsProps) {
                       key={option}
                       whileTap={{ scale: 0.98 }}
                       onClick={() => handleDrawerSelect(option)}
-                      className="w-full p-4 rounded-2xl text-left font-bold transition-all flex justify-between items-center bg-white text-slate-700 border border-slate-200 hover:border-morandi-blue"
+                      className={`w-full p-4 rounded-2xl text-left font-bold transition-all flex justify-between items-center ${
+                        ui.drawerConfig.currentValue === option 
+                          ? 'bg-morandi-blue text-white shadow-md' 
+                          : 'bg-white text-slate-700 border border-slate-200 hover:border-morandi-blue'
+                      }`}
                     >
                       <span>{option}</span>
+                      {ui.drawerConfig.currentValue === option && <Check className="w-5 h-5" />}
                     </motion.button>
                   );
                 })}
@@ -341,11 +390,26 @@ export function GlobalModals(props: GlobalModalsProps) {
             products={products}
             onToggleAutoOrder={props.onToggleAutoOrder || (() => {})}
             onEditItems={(customer: any) => {
-              ui.closeAutoOrderDashboard();
+              if (props.onEditCustomerItems) props.onEditCustomerItems(customer);
             }}
             onSetHoliday={(customerId: string) => {
-              ui.closeAutoOrderDashboard();
+              if (props.onEditCustomerHoliday) props.onEditCustomerHoliday(customerId);
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {props.isEditingCustomer && (
+          <CustomerFormModal
+            isOpen={!!props.isEditingCustomer}
+            onClose={() => props.setIsEditingCustomer && props.setIsEditingCustomer(null)}
+            onSubmit={handleCustomerFormSubmit}
+            initialData={props.customerForm}
+            products={products}
+            isSaving={isSaving}
+            editMode={props.editCustomerMode || 'full'}
+            availableTrips={availableTrips}
           />
         )}
       </AnimatePresence>

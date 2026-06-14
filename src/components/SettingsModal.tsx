@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X, Maximize, Activity, ChevronLeft, Trash2, ChevronRight } from 'lucide-react';
+import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X, Maximize, Activity, ChevronLeft, Trash2, ChevronRight, LogOut } from 'lucide-react';
 import localforage from 'localforage';
 import { modalVariants, buttonTap } from './animations';
 import { SystemLogViewer } from './SystemLogViewer';
+import { useUIStore } from '../store/useUIStore';
 
 type SettingView = 'main' | 'layout' | 'connection' | 'security' | 'logs';
 
@@ -28,6 +29,7 @@ export const SettingsModal: React.FC<{
   layoutMode?: 'auto' | 'standard' | 'compact';
   onLayoutModeChange?: (mode: 'auto' | 'standard' | 'compact') => void;
 }> = ({ onClose, onSync, onSavePassword, currentUrl, onSaveUrl, layoutMode = 'auto', onLayoutModeChange }) => {
+  const ui = useUIStore();
   const [currentView, setCurrentView] = useState<SettingView>('main');
   
   const [oldPassword, setOldPassword] = useState('');
@@ -35,6 +37,20 @@ export const SettingsModal: React.FC<{
   const [inputUrl, setInputUrl] = useState(currentUrl);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [urlSaveStatus, setUrlSaveStatus] = useState<'idle' | 'success'>('idle');
+
+  const handleLogout = () => {
+    ui.openConfirm({
+      title: '登出系統',
+      message: '確定要登出嗎？',
+      onConfirm: () => {
+        localStorage.removeItem('nm_auth_status');
+        localStorage.removeItem('APP_SESSION_TOKEN');
+        localStorage.removeItem('APP_USER_ROLE');
+        localStorage.removeItem('APP_USER_NAME');
+        window.location.reload();
+      }
+    });
+  };
 
   const handlePasswordSubmit = async () => {
     if (!oldPassword) { alert('請輸入原密碼'); return; }
@@ -136,18 +152,29 @@ export const SettingsModal: React.FC<{
                   </motion.button>
                   
                   <button
-                    onClick={async () => {
-                      if (window.confirm('確定要清除所有本地快取嗎？這會讓系統重新從雲端下載最新資料。')) {
-                        const gasUrl = localStorage.getItem('nm_gas_url');
-                        await localforage.clear();
-                        localStorage.clear();
-                        if (gasUrl) localStorage.setItem('nm_gas_url', gasUrl);
-                        window.location.reload();
-                      }
+                    onClick={() => {
+                      ui.openConfirm({
+                        title: '清除本地快取',
+                        message: '確定要清除所有本地快取嗎？\n這會讓系統重新從雲端下載最新資料。',
+                        onConfirm: async () => {
+                          const gasUrl = localStorage.getItem('nm_gas_url');
+                          await localforage.clear();
+                          localStorage.clear();
+                          if (gasUrl) localStorage.setItem('nm_gas_url', gasUrl);
+                          window.location.reload();
+                        }
+                      });
                     }}
                     className="w-full py-3 mt-4 flex items-center justify-center gap-2 rounded-sm border border-rose-200 text-rose-500 hover:bg-rose-50 hover:border-rose-300 transition-colors text-sm font-medium tracking-wider"
                   >
                     <Trash2 className="w-4 h-4" />重置系統與清除快取
+                  </button>
+                  
+                  <button
+                    onClick={handleLogout}
+                    className="w-full py-3 mt-4 flex items-center justify-center gap-2 rounded-[12px] bg-rose-50 border border-rose-100 text-rose-500 hover:bg-rose-100 transition-colors text-sm font-bold tracking-wider"
+                  >
+                    <LogOut className="w-4 h-4" />登出系統
                   </button>
                 </div>
                 

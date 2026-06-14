@@ -27,7 +27,8 @@ export class GasApiClient implements ApiClient {
     }
 
     const finalConfig = { ...this.baseConfig, ...config };
-    const payload = { action, data };
+    const token = localStorage.getItem('APP_SESSION_TOKEN');
+    const payload = { action, token: token || "", data };
     const timeoutToUse = finalConfig.timeoutMs ?? 25000;
     const maxLockRetries = 3;
 
@@ -55,6 +56,15 @@ export class GasApiClient implements ApiClient {
       
       // Abstract the standard GAS response logic
       if (!json.success) {
+        if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
+          localStorage.removeItem('nm_auth_status');
+          localStorage.removeItem('APP_SESSION_TOKEN');
+          localStorage.removeItem('APP_USER_ROLE');
+          localStorage.removeItem('APP_USER_NAME');
+          // Emit a custom event so the UI can log out gracefully without unhandled alerts in iframes
+          window.dispatchEvent(new Event('app-unauthorized'));
+          throw new Error("UNAUTHORIZED_OR_EXPIRED");
+        }
         if (json.error && json.error.includes('Lock Timeout') && attempt < maxLockRetries) {
           console.warn(`Lock Timeout encountered, retrying... (Attempt ${attempt + 1}/${maxLockRetries})`);
           await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1) + Math.random() * 1000));

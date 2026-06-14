@@ -168,6 +168,21 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     else setIsBackgroundSyncing(true);
 
     try { 
+      // 控制 checkUpdates 的寫入頻率 (只在初次或手動時紀錄)
+      if (!isSilent) {
+        try {
+          const auditPayload = {
+            deviceId: getOrCreateDeviceId(),
+            userAgent: navigator.userAgent,
+            isManual: true
+          };
+          // 這裡主要目的是為了紀錄登入或手動重整，不阻擋真正的資料拉取
+          await container.syncRepo.checkUpdates(auditPayload, globalSyncController.signal);
+        } catch (err) {
+          console.warn("Audit log ping failed", err);
+        }
+      }
+
       const startDate = new Date(); 
       startDate.setDate(startDate.getDate() - 60); 
       const startDateStr = formatDateStr(startDate); 
@@ -396,8 +411,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       return false; 
     } 
     try { 
-      const isOk = await container.authRepo.login(pwd); 
-      if (isOk) { 
+      const deviceId = getOrCreateDeviceId();
+      const userAgent = navigator.userAgent;
+      
+      const isOk = await container.authRepo.login(pwd, deviceId, userAgent); 
+      if (isOk && isOk.success !== false) { // 兼容舊版與新版的 true 及物件
+        if (isOk.token) {
+          localStorage.setItem('APP_SESSION_TOKEN', isOk.token);
+          localStorage.setItem('APP_USER_ROLE', isOk.role || 'admin');
+          localStorage.setItem('APP_USER_NAME', isOk.name || '系統管理員');
+        }
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
         return true; 
@@ -429,10 +452,26 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     setTimeout(() => window.location.reload(), 500);
   };
 
+  // 在送出 payload 之前，準備指紋特徵
+  const getOrCreateDeviceId = () => {
+    let deviceId = localStorage.getItem('APP_DEVICE_ID');
+    if (!deviceId) {
+      // 優先使用 crypto.randomUUID，若不支援則使用降級方案
+      deviceId = typeof crypto.randomUUID === 'function' 
+        ? crypto.randomUUID() 
+        : Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('APP_DEVICE_ID', deviceId);
+    }
+    return deviceId;
+  };
+
   const handleChangePassword = async (oldPwd: string, newPwd: string) => { 
     if (!apiEndpoint) return false; 
     try { 
-      const isOk = await container.authRepo.changePassword(oldPwd, newPwd);
+      const deviceId = getOrCreateDeviceId();
+      const userAgent = navigator.userAgent;
+      
+      const isOk = await container.authRepo.changePassword(oldPwd, newPwd, deviceId, userAgent);
       return isOk;
     } catch (e) { 
       console.error("Change Password Error:", e); 
@@ -532,6 +571,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
          return; // 這裡攔截衝突不丟出錯誤，等待使用者解決
       }
       
+      if (e instanceof Error && e.message === "UNAUTHORIZED_OR_EXPIRED") {
+         return; // 此情況已被全域捕捉並將自動重新整理，不再拋出及顯示跳窗
+      }
+
       console.error("Sync Failed:", e);
       let errMsg = e instanceof Error ? e.message : String(e);
       

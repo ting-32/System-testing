@@ -92,6 +92,35 @@ function doPost(e) {
     }
     
     const action = params.action;
+    
+    // 取得最新密碼以供驗證
+    const sheet = getConfigSheet();
+    const currentDbPassword = String(sheet.getRange("B1").getDisplayValue()).trim() || "8888";
+
+    // 【核心防護】除了 login 以外的所有操作，全部要驗證 Token
+    if (action !== "login") {
+      const tokenPayload = verifyTokenAndGetPayload(params.token, currentDbPassword);
+      if (!tokenPayload) {
+        writeSystemLog("SYSTEM_UNAUTHORIZED_ACCESS", "未授權的 API 調用", JSON.stringify({ action: action, tokenProvided: !!params.token }));
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: false, 
+          error: "UNAUTHORIZED_OR_EXPIRED" 
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      const userRole = tokenPayload.role;
+      const adminOnlyActions = ["saveSettings", "deleteOrder", "deleteCustomer", "getSystemLogs"];
+
+      // 【核心防護】如果是員工，且企圖執行老闆專屬功能
+      if (userRole === "staff" && adminOnlyActions.includes(action)) {
+        writeSystemLog("SYSTEM_FORBIDDEN", "越權操作阻擋", JSON.stringify({ action: action, employee: tokenPayload.name }));
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: false, 
+          error: "FORBIDDEN_ACTION" 
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+    
     let result = null;
 
     switch (action) {
@@ -123,7 +152,11 @@ function doPost(e) {
         break;
       case "deleteOrder":
         result = deleteOrder(params.data);
-        writeSystemLog("DELETE_ORDER", `Order ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
+        writeSystemLog("DELETE_ORDER", `Order ID: ${params.data.id || "未知"}`, JSON.stringify({
+          deletedId: params.data.id,
+          deletedName: params.data.customerName || "未知店家",
+          deletedDate: params.data.deliveryDate || ""
+        }));
         break;
       case "reorderProducts":
         result = reorderProducts(params.data);
@@ -133,38 +166,45 @@ function doPost(e) {
         result = updateCustomer(params.data);
         writeSystemLog("UPDATE_CUSTOMER", params.data.name || "未知", JSON.stringify({ data: params.data }));
         break;
-            case "deleteCustomer":
-        var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Customers");
-        if (!sheet) {
+            case "deleteCustomer": {
+        let custSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("CUSTOMERS") || SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Customers");
+        if (!custSheet) {
           return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到工作表" })).setMimeType(ContentService.MimeType.JSON);
         }
         var targetId = params.data.id;
-        var sheetData = sheet.getDataRange().getValues();
+        var sheetData = custSheet.getDataRange().getValues();
         var deleted = false;
         for (var i = 1; i < sheetData.length; i++) {
           if (String(sheetData[i][0]) === String(targetId)) {
-            sheet.deleteRow(i + 1);
+            custSheet.deleteRow(i + 1);
             deleted = true;
             break;
           }
         }
         if (deleted) {
           try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
-          writeSystemLog("DELETE_CUSTOMER", "Customer ID: " + (targetId || "未知"), JSON.stringify({ deletedId: targetId }));
+          writeSystemLog("DELETE_CUSTOMER", "Customer ID: " + (targetId || "未知"), JSON.stringify({
+            deletedId: targetId,
+            deletedName: params.data.name || "未知店家"
+          }));
           return ContentService.createTextOutput(JSON.stringify({ success: true, status: "success" })).setMimeType(ContentService.MimeType.JSON);
         } else {
-          return ContentService.createTextOutput(JSON.stringify({ success: false, status: "error", message: "找不到該店家" })).setMimeType(ContentService.MimeType.JSON);
+          return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到指定的客戶" })).setMimeType(ContentService.MimeType.JSON);
         }
+      }
       case "updateProduct":
         result = updateProduct(params.data);
         writeSystemLog("UPDATE_PRODUCT", params.data.name || "未知", JSON.stringify({ data: params.data }));
         break;
       case "deleteProduct":
         result = deleteProduct(params.data);
-        writeSystemLog("DELETE_PRODUCT", `Product ID: ${params.data.id || "未知"}`, JSON.stringify({ deletedId: params.data.id }));
+        writeSystemLog("DELETE_PRODUCT", `Product ID: ${params.data.id || "未知"}`, JSON.stringify({
+          deletedId: params.data.id,
+          deletedName: params.data.name || "未知商品"
+        }));
         break;
       case "checkUpdates":
-        result = checkUpdates();
+        result = checkUpdates(params.data);
         break;
       case "getOrder":
         result = getOrder(params.data);
@@ -233,7 +273,7 @@ function doPost(e) {
 
 // --- Logic Functions ---
 
-function checkUpdates() {
+function checkUpdates(data) {
   const sheets = getSheets();
   let maxTs = 0;
   
@@ -257,6 +297,15 @@ function checkUpdates() {
       }
     }
   });
+  
+  // 新增審計日誌攔截 (只有前端帶 auditObj 時才寫入)
+  if (data && data.auditObj) {
+    writeSystemLog("SYSTEM_DATA_ACCESS", "資料手動同步與檢視", JSON.stringify({
+      deviceId: data.auditObj.deviceId || "未知",
+      method: data.auditObj.isManual ? "手動重整" : "初次載入",
+      userAgent: data.auditObj.userAgent
+    }));
+  }
   
   return { globalLastUpdated: maxTs };
 }
@@ -318,7 +367,33 @@ function login(data) {
   }
   
   const inputPassword = String(data.password).trim();
-  return inputPassword === dbPassword;
+  
+  const dId = data.deviceId || "未知裝置";
+  const uAgent = data.userAgent || "未知環境";
+
+  // Try parsing ACCOUNTS sheet first
+  const accountsSheet = SS.getSheetByName("ACCOUNTS");
+  if (accountsSheet) {
+    const accounts = getSheetData(accountsSheet);
+    const user = accounts.find(a => String(a.PIN) === inputPassword && String(a.IsActive).toUpperCase() === "TRUE");
+    if (user) {
+      const role = user.Role || "staff";
+      const name = user.Name || "員工";
+      const token = generateToken(dId, dbPassword, role, name);
+      writeSystemLog("SYSTEM_LOGIN_SUCCESS", "員工登入", JSON.stringify({ name: name, role: role, deviceId: dId, userAgent: uAgent }));
+      return { success: true, token: token, role: role, name: name };
+    }
+  }
+
+  // Fallback / Super Admin
+  if (inputPassword === dbPassword) {
+    const token = generateToken(dId, dbPassword, "admin", "系統管理員");
+    writeSystemLog("SYSTEM_LOGIN_SUCCESS", "系統管理員登入", JSON.stringify({ deviceId: dId, userAgent: uAgent }));
+    return { success: true, token: token, role: "admin", name: "系統管理員" };
+  } else {
+    writeSystemLog("SYSTEM_LOGIN_FAILED", "系統登入異常", JSON.stringify({ deviceId: dId, userAgent: uAgent, attemptPwd: inputPassword }));
+    return { success: false, error: "無效的密碼或 PIN 碼" };
+  }
 }
 
 function changePassword(data) {
@@ -342,6 +417,16 @@ function changePassword(data) {
   // Write new password as explicit text
   const newPwd = String(data.newPassword).trim();
   sheet.getRange("B1").setNumberFormat("@").setValue(newPwd);
+  
+  // 👉 核心修改：寫入高層級安全日誌
+  writeSystemLog(
+    "UPDATE_SECURITY_PASSWORD", 
+    "核心安全設定", 
+    JSON.stringify({ 
+      deviceId: data.deviceId || "未知裝置", 
+      userAgent: data.userAgent || "未知瀏覽器" 
+    })
+  );
   
   return true;
 }
@@ -1997,3 +2082,41 @@ function cleanupOldLogs() {
     lock.releaseLock();
   }
 }
+
+// ==========================================
+// 資安模組：無狀態 Token 簽發與驗證
+// ==========================================
+function generateToken(deviceId, dbPassword, role, name) {
+  const header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: "HS256" }));
+  const payload = Utilities.base64EncodeWebSafe(JSON.stringify({
+    dId: deviceId,
+    role: role,
+    name: name,
+    exp: new Date().getTime() + (30 * 24 * 60 * 60 * 1000) // 30天後過期
+  }));
+  // 使用「當前系統密碼」作為 HMAC 簽章金鑰
+  const signature = Utilities.computeHmacSha256Signature(header + "." + payload, dbPassword);
+  return header + "." + payload + "." + Utilities.base64EncodeWebSafe(signature);
+}
+
+function verifyTokenAndGetPayload(token, dbPassword) {
+  try {
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    
+    // 確實驗證簽章 (如果密碼被改了，這裡算出來的 signature 會不一樣，直接擋掉)
+    const signature = Utilities.computeHmacSha256Signature(parts[0] + "." + parts[1], dbPassword);
+    if (parts[2] !== Utilities.base64EncodeWebSafe(signature)) return null;
+    
+    // 驗證是否過期
+    const payloadBytes = Utilities.base64DecodeWebSafe(parts[1]);
+    const payloadObj = JSON.parse(Utilities.newBlob(payloadBytes).getDataAsString());
+    if (new Date().getTime() > payloadObj.exp) return null;
+    
+    return payloadObj;
+  } catch(e) {
+    return null;
+  }
+}
+

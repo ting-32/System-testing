@@ -77,6 +77,7 @@ interface UIStore {
     isOpen: boolean;
     type: string;
     target: 'order' | 'customer';
+    currentValue?: string;
     options?: string[];
     onSelect?: (value: string) => void;
   };

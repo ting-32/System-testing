@@ -15,6 +15,8 @@ interface CustomerFormModalProps {
   initialData?: any;
   products: Product[];
   isSaving: boolean;
+  editMode?: 'full' | 'itemsOnly' | 'holidayOnly';
+  availableTrips?: string[];
 }
 
 export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
@@ -23,7 +25,9 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   onSubmit,
   initialData,
   products,
-  isSaving
+  isSaving,
+  editMode = 'full',
+  availableTrips = []
 }) => {
   const [customerForm, setCustomerForm] = useState<Partial<Customer>>(initialData || {});
   const [holidayEditorId, setHolidayEditorId] = useState<string | null>(null);
@@ -54,16 +58,17 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-morandi-oatmeal z-[60] flex flex-col">
-      <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="flex flex-col h-full">
+    <div className={`fixed inset-0 z-[110] flex ${editMode === 'itemsOnly' || editMode === 'holidayOnly' ? 'bg-morandi-charcoal/40 backdrop-blur-sm items-center justify-center p-4' : 'bg-morandi-oatmeal flex-col'}`}>
+      <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className={`flex flex-col ${editMode === 'itemsOnly' || editMode === 'holidayOnly' ? 'bg-white w-full max-w-2xl rounded-[32px] overflow-hidden shadow-xl max-h-[90vh]' : 'h-full'}`}>
       <div className="bg-white p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
         <motion.button whileTap={buttonTap} onClick={onClose} className="p-2 rounded-2xl bg-gray-50"><X className="w-6 h-6 text-morandi-pebble" /></motion.button>
-        <h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">店家詳細資料</h2>
+        <h2 className="text-lg font-extrabold text-morandi-charcoal tracking-tight">{editMode === 'itemsOnly' ? '修改預設品項' : editMode === 'holidayOnly' ? '設定公休' : '店家詳細資料'}</h2>
         <motion.button whileTap={buttonTap} onClick={handleSubmit} disabled={isSaving} className="font-bold px-4 py-2 transition-colors text-morandi-blue disabled:text-gray-300">{isSaving ? '儲存中...' : '儲存'}</motion.button>
       </div>
       <div className="p-6 overflow-y-auto pb-10">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className={`grid grid-cols-1 ${editMode === 'full' ? 'lg:grid-cols-2' : 'max-w-2xl mx-auto'} gap-6`}>
           {/* 左欄：基本資訊 */}
+          {editMode === 'full' && (
           <div className="space-y-6">
              <div className="space-y-2">
                <label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">基本資訊</label>
@@ -97,11 +102,29 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                     <label className="text-[10px] font-bold text-gray-400 pl-1">配送時間</label>
                     <input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all" value={customerForm.deliveryTime || '08:00'} onChange={(e) => setCustomerForm({...customerForm, deliveryTime: e.target.value})} />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 pl-1">預設趟數</label>
+                    <div className="relative">
+                      <select
+                        value={customerForm.defaultTrip || ''}
+                        onChange={(e) => setCustomerForm(prev => ({ ...prev, defaultTrip: e.target.value }))}
+                        className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all appearance-none text-slate-800"
+                      >
+                        <option value="" className="text-gray-400">選擇預設趟數...</option>
+                        {availableTrips.filter(t => t !== '未分配').map(trip => (
+                          <option key={trip} value={trip}>{trip}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </div>
                </div>
              </div>
           </div>
+          )}
 
           {/* 右欄：品項與價格 */}
+          {(editMode === 'full' || editMode === 'itemsOnly') && (
           <div className="space-y-6">
              <div className="space-y-2">
                 <label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">預設品項</label>
@@ -167,7 +190,8 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                 </div>
              </div>
           </div>
-          
+          )}
+
           {/* 放在左欄底部或雙欄下方 */}
           <div className="col-span-1 lg:col-span-2 pt-4 border-t border-gray-200">
             <button

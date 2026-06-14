@@ -195,15 +195,24 @@ const App: React.FC = () => {
     const handleDeadlock = () => setShowDeadlockModal(true);
     const handleRetryStart = () => setIsRetrying(true);
     const handleRetryEnd = () => setIsRetrying(false);
+    const handleUnauthorized = () => {
+      localStorage.removeItem('nm_auth_status');
+      localStorage.removeItem('APP_SESSION_TOKEN');
+      localStorage.removeItem('APP_USER_ROLE');
+      localStorage.removeItem('APP_USER_NAME');
+      window.location.reload();
+    };
 
     window.addEventListener('networkDeadlock', handleDeadlock);
     window.addEventListener('networkRetryStart', handleRetryStart);
     window.addEventListener('networkRetryEnd', handleRetryEnd);
+    window.addEventListener('app-unauthorized', handleUnauthorized);
 
     return () => {
       window.removeEventListener('networkDeadlock', handleDeadlock);
       window.removeEventListener('networkRetryStart', handleRetryStart);
       window.removeEventListener('networkRetryEnd', handleRetryEnd);
+      window.removeEventListener('app-unauthorized', handleUnauthorized);
     };
   }, []);
 
@@ -546,7 +555,8 @@ const App: React.FC = () => {
     handleSelectExistingCustomer,
     openGoogleMaps,
     handleDeleteOrder,
-    // handleRetryOrder removed
+    handleBatchUpdateTrip,
+    handleRetrySync
   } = useOrderActions({
     orders,
     setOrders, customers,
@@ -954,6 +964,7 @@ const App: React.FC = () => {
           // OrdersPage Props
           orders={orders} setOrders={setOrders} 
           customers={customers} products={products}
+          trips={trips}
           setDrawerConfig={setDrawerConfig}
           apiEndpoint={apiEndpoint}
           isSaving={isSaving} setIsSaving={setIsSaving}
@@ -979,6 +990,7 @@ const App: React.FC = () => {
           handleSelectExistingCustomer={handleSelectExistingCustomer}
           openGoogleMaps={openGoogleMaps}
           handleDeleteOrder={handleDeleteOrder}
+          handleRetrySync={handleRetrySync}
           externalEditOrderId={externalEditOrderId || (externalAction?.type === 'edit' ? externalAction.id : null)}
           onClearExternalEdit={() => { setExternalEditOrderId(null); setExternalAction(null); }}
           externalAddOrderData={externalAddOrderData}
@@ -1054,6 +1066,20 @@ const App: React.FC = () => {
          handleAppUnlock={auth.handleAppUnlock}
          isUnlocking={auth.isUnlocking}
          unlockError={auth.unlockError}
+         onEditCustomerItems={(customer) => {
+           setCustomerForm({ ...customer }); // 2. 塞入店家原始資料準備編輯
+           setIsEditingCustomer(customer.id); // 3. 觸發編輯狀態
+           setEditCustomerMode('itemsOnly'); // 4. 指定為修改品項模式 (避開完整資料模式)
+         }}
+         onEditCustomerHoliday={(customerId) => {
+           // 這裡只傳了 customerId，所以要先找一遍店家物件
+           const customer = customers.find(c => c.id === customerId);
+           if (customer) {
+             setCustomerForm({ ...customer });
+             setIsEditingCustomer(customerId);
+             setEditCustomerMode('holidayOnly'); // 指定為設定公休模式
+           }
+         }}
          setUnlockError={auth.setUnlockError}
          unlockPassword={auth.unlockPassword}
          setUnlockPassword={auth.setUnlockPassword}
@@ -1070,6 +1096,14 @@ const App: React.FC = () => {
          previewDate={previewDate}
          setPreviewDate={setPreviewDate}
          prediction={prediction}
+         isEditingCustomer={isEditingCustomer}
+         setIsEditingCustomer={setIsEditingCustomer}
+         customerForm={customerForm}
+         setCustomerForm={setCustomerForm}
+         editCustomerMode={editCustomerMode}
+         setEditCustomerMode={setEditCustomerMode}
+         onSaveCustomerCloud={onSaveCustomerCloud}
+         availableTrips={availableTrips}
          onToggleAutoOrder={(customerId) => {
            setCustomers(prev => prev.map(c => 
              c.id === customerId ? { ...c, autoOrderEnabled: !c.autoOrderEnabled } : c

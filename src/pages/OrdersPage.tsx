@@ -21,11 +21,12 @@ import { getSmartDefaultDate } from '../utils';
 import { useOrderCalculations } from '../hooks/useOrderCalculations';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 
-export interface OrdersPageProps {
-  orders: Order[];
-  setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
-  customers: Customer[];
-  products: Product[];
+  export interface OrdersPageProps {
+    orders: Order[];
+    setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
+    customers: Customer[];
+    products: Product[];
+    trips?: string[];
   
   setDrawerConfig: React.Dispatch<React.SetStateAction<{
     isOpen: boolean;
@@ -73,6 +74,7 @@ export interface OrdersPageProps {
   handleSelectExistingCustomer: (id: string) => void;
   openGoogleMaps: (name: string) => void;
   handleDeleteOrder: (id: string) => void;
+  handleRetrySync: (id: string) => void;
   
   externalEditOrderId?: string | null;
   onClearExternalEdit?: () => void;
@@ -81,7 +83,7 @@ export interface OrdersPageProps {
 }
 
 export const OrdersPage: React.FC<OrdersPageProps> = ({
-  orders, setOrders, customers, products,
+  orders, setOrders, customers, products, trips = [],
   setDrawerConfig,
   apiEndpoint, isSaving, setIsSaving, isWarmingUp, isRetrying, isBackgroundSyncing, layoutMode,
   addToast, setToasts, saveOrderToCloud, setConflictData, handleForceRetry, requireAuth,
@@ -91,7 +93,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
   orderForm, setOrderForm,
   handleQuickAddSubmit, handleSwipeStatusChange, handleCopyOrder, handleShareOrder,
   handleEditOrder, handleSaveOrder, applyLastOrder, handleSelectExistingCustomer,
-  openGoogleMaps, handleDeleteOrder,
+  openGoogleMaps, handleDeleteOrder, handleRetrySync,
   externalEditOrderId, onClearExternalEdit,
   externalAddOrderData, clearExternalAddOrder
 }) => {
@@ -353,7 +355,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
                                 onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
                                 onStatusChange={handleSwipeStatusChange} onDelete={() => requireAuth(() => handleDeleteOrder(order.id))}
                                 onShare={handleShareOrder} onMap={openGoogleMaps} onEdit={(orderId) => requireAuth(() => handleEditOrder(orderId))}
-                                onRetry={handleForceRetry} onViewCustomer={setViewingCustomerProfile}
+                                onRetry={handleRetrySync} onViewCustomer={setViewingCustomerProfile}
                              />
                           ))}
                           <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>
@@ -489,8 +491,8 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
               <label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">配送設定</label>
               <div className="flex gap-2">
                 <div className="flex-1"><input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all" value={orderForm.deliveryTime} onChange={(e) => handleOrderFormChange('deliveryTime', e.target.value)} /></div>
-                <div className="flex-1"><button type="button" onClick={() => setDrawerConfig({ isOpen: true, type: 'deliveryMethod', target: 'order' })} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all flex justify-between items-center"><span className={orderForm.deliveryMethod ? 'text-morandi-charcoal' : 'text-gray-400'}>{orderForm.deliveryMethod || '配送方式...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></button></div>
-                <div className="flex-1"><button type="button" onClick={() => setDrawerConfig({ isOpen: true, type: 'trip', target: 'order' })} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all flex justify-between items-center"><span className={orderForm.trip ? 'text-morandi-charcoal' : 'text-gray-400'}>{orderForm.trip || '選擇趟數...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></button></div>
+                <div className="flex-1"><button type="button" onClick={() => setDrawerConfig({ isOpen: true, type: 'deliveryMethod', target: 'order', currentValue: orderForm.deliveryMethod, options: DELIVERY_METHODS, onSelect: (val: string) => handleOrderFormChange('deliveryMethod', val) })} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all flex justify-between items-center"><span className={orderForm.deliveryMethod ? 'text-morandi-charcoal' : 'text-gray-400'}>{orderForm.deliveryMethod || '配送方式...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></button></div>
+                <div className="flex-1"><button type="button" onClick={() => setDrawerConfig({ isOpen: true, type: 'trip', target: 'order', currentValue: orderForm.trip, options: trips, onSelect: (val: string) => handleOrderFormChange('trip', val) })} className="w-full h-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 text-morandi-charcoal font-bold outline-none focus:ring-2 focus:ring-morandi-blue transition-all flex justify-between items-center"><span className={orderForm.trip ? 'text-morandi-charcoal' : 'text-gray-400'}>{orderForm.trip || '選擇趟數...'}</span><ChevronDown className="w-4 h-4 text-gray-400" /></button></div>
               </div>
             </div>
             
