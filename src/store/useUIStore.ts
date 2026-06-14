@@ -95,6 +95,7 @@ interface UIStore {
     title: string;
     message: string;
     onConfirm?: () => void;
+    onCancel?: () => void;
   };
   openConfirm: (config: Omit<UIStore['confirmConfig'], 'isOpen'>) => void;
   closeConfirm: () => void;

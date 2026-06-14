@@ -38,6 +38,7 @@ interface GlobalModalsProps {
   setEditCustomerMode?: (mode: 'full' | 'itemsOnly' | 'holidayOnly') => void;
   onSaveCustomerCloud?: (finalCustomer: any, isEditingCustomer: string | null, originalLastUpdated: string | undefined, previousCustomers: any[]) => Promise<boolean>;
   availableTrips?: string[];
+  setAvailableTrips?: (trips: string[]) => void;
   // ... other props
   setUnlockError?: (err: boolean) => void;
   unlockPassword?: string;
@@ -52,6 +53,9 @@ interface GlobalModalsProps {
   customers?: any[];
   products?: any[];
   orders?: any[];
+  setOrders?: any;
+  saveOrderToCloud?: any;
+  saveTripsToCloud?: any;
   previewDate?: any;
   setPreviewDate?: (date: any) => void;
   prediction?: { greenZone: any[]; grayZone: any[] };
@@ -188,7 +192,10 @@ export function GlobalModals(props: GlobalModalsProps) {
           if (ui.confirmConfig.onConfirm) ui.confirmConfig.onConfirm();
           ui.closeConfirm();
         }} 
-        onCancel={ui.closeConfirm} 
+        onCancel={() => {
+          if (ui.confirmConfig.onCancel) ui.confirmConfig.onCancel();
+          ui.closeConfirm();
+        }} 
       />
 
       <AnimatePresence>
@@ -243,13 +250,13 @@ export function GlobalModals(props: GlobalModalsProps) {
       {ui.isTripManagerOpen && (
         <motion.div key="trip-manager-modal" className="fixed inset-0 z-[60]">
           <TripManagerModal 
-            availableTrips={[]} // 預留介面從 Store 中獲取
-            setAvailableTrips={() => {}}
+            availableTrips={availableTrips}
+            setAvailableTrips={props.setAvailableTrips || (() => {})}
             orders={orders}
-            setOrders={(orders) => {}}
+            setOrders={props.setOrders || (() => {})}
             onClose={ui.closeTripManager}
-            saveOrderToCloud={saveOrderToCloud}
-            saveTripsToCloud={saveTripsToCloud}
+            saveOrderToCloud={props.saveOrderToCloud}
+            saveTripsToCloud={props.saveTripsToCloud}
           />
         </motion.div>
       )}

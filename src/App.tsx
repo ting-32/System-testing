@@ -262,7 +262,7 @@ const App: React.FC = () => {
   };
   const setIsAutoOrderDashboardOpen = (open: boolean) => open ? ui.openAutoOrderDashboard() : ui.closeAutoOrderDashboard();
   const setConfirmConfig = (val: any) => {
-    const next = typeof val === 'function' ? val({ isOpen: ui.confirmConfig.isOpen, title: ui.confirmConfig.title, message: ui.confirmConfig.message, onConfirm: ui.confirmConfig.onConfirm }) : val;
+    const next = typeof val === 'function' ? val({ isOpen: ui.confirmConfig.isOpen, title: ui.confirmConfig.title, message: ui.confirmConfig.message, onConfirm: ui.confirmConfig.onConfirm, onCancel: ui.confirmConfig.onCancel }) : val;
     if (next.isOpen) ui.openConfirm(next); else ui.closeConfirm();
   };
   const setIsTripManagerOpen = (open: boolean) => open ? ui.openTripManager() : ui.closeTripManager();
@@ -587,6 +587,24 @@ const App: React.FC = () => {
     setLastOrderCandidate,
     setToasts
   });
+
+  // NEW: Trigger confirm dialog for settlement
+  useEffect(() => {
+    if (settlementTarget && settlementPreview) {
+      setConfirmConfig({
+        isOpen: true,
+        title: `確認結帳`,
+        message: `即將為 ${settlementTarget.name} 將 ${settlementPreview.orders.length} 筆單據設為結清狀態。\n總結清金額預估為 $${settlementPreview.totalAmount.toLocaleString()}`,
+        onConfirm: () => {
+          handleBatchSettleOrders(settlementPreview.orders.map((o: any) => o.id));
+          setSettlementTarget(null);
+        },
+        onCancel: () => {
+          setSettlementTarget(null);
+        }
+      });
+    }
+  }, [settlementTarget, settlementPreview]);
   
   // REFACTORED: syncData logic moved to useDataSync hook
 
@@ -1104,6 +1122,10 @@ const App: React.FC = () => {
          setEditCustomerMode={setEditCustomerMode}
          onSaveCustomerCloud={onSaveCustomerCloud}
          availableTrips={availableTrips}
+         setAvailableTrips={setTrips}
+         setOrders={setOrders}
+         saveOrderToCloud={saveOrderToCloud}
+         saveTripsToCloud={saveTripsToCloud}
          onToggleAutoOrder={(customerId) => {
            setCustomers(prev => prev.map(c => 
              c.id === customerId ? { ...c, autoOrderEnabled: !c.autoOrderEnabled } : c

@@ -1,12 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Calendar, FileText, Building2 } from 'lucide-react';
-import { Customer, Order, Product } from '../types';
+import { X, Printer, Calendar, FileText, Building2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Customer, Order, Product, OrderStatus } from '../types';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, BarChart, Bar 
 } from 'recharts';
 import { formatTimeDisplay } from '../utils';
+import { ReportHeroSection } from './reports/ReportHeroSection';
+import { ReportAggregatedTable } from './reports/ReportAggregatedTable';
 
 const COLORS = ['#5b7a8c', '#a8b8c2', '#d9e0e5', '#899da9', '#cbd5db', '#718c9e'];
 
@@ -31,6 +33,9 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
     return new Date().getFullYear().toString();
   });
 
+  const [isDailyRulesOpen, setIsDailyRulesOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'invoice' | 'analytics'>('invoice');
+
   const customer = customers.find(c => c.name === customerName);
 
   const reportOrders = useMemo(() => {
@@ -42,6 +47,41 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
       o.status !== 'cancelled'
     ).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
   }, [orders, customerName, reportMonth, reportYear, reportType]);
+
+  const aggregatedItems = useMemo(() => {
+    const itemMap = new Map<string, any>();
+
+    reportOrders.forEach(order => {
+      order.items.forEach(item => {
+        const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+        const productName = item.productName || p?.name || item.productId || '未知商品';
+        
+        const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
+        const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+        
+        const itemTotal = item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice);
+
+        const key = p?.id || item.productId;
+
+        if (itemMap.has(key)) {
+          const existing = itemMap.get(key)!;
+          existing.totalQuantity += item.quantity;
+          existing.totalAmount += itemTotal;
+        } else {
+          itemMap.set(key, {
+            productId: key,
+            productName,
+            totalQuantity: item.quantity,
+            unit: item.unit || p?.unit || '斤',
+            unitPrice: unitPrice,
+            totalAmount: itemTotal
+          });
+        }
+      });
+    });
+
+    return Array.from(itemMap.values());
+  }, [reportOrders, products, customer]);
 
   const kpis = useMemo(() => {
     let totalSpend = 0;
@@ -267,25 +307,14 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
              </div>
            </div>
 
-           {/* 2. Executive KPIs */}
-           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-             <div className="bg-slate-50 p-4 rounded-xl border border-gray-100">
-               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">本期總花費</p>
-               <p className="text-2xl font-black text-slate-800">${kpis.totalSpend.toLocaleString()}</p>
-             </div>
-             <div className="bg-slate-50 p-4 rounded-xl border border-gray-100">
-               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">總出貨量</p>
-               <p className="text-2xl font-black text-morandi-blue">{kpis.totalVolume.toLocaleString()}<span className="text-xs text-slate-400 ml-1">斤</span></p>
-             </div>
-             <div className="bg-slate-50 p-4 rounded-xl border border-gray-100">
-               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">總出貨次數</p>
-               <p className="text-2xl font-black text-slate-800">{kpis.totalOrders} <span className="text-xs text-slate-400 ml-1">次</span></p>
-             </div>
-             <div className="bg-slate-50 p-4 rounded-xl border border-gray-100">
-               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">平均客單價</p>
-               <p className="text-2xl font-black text-slate-800">${kpis.avgOrderValue.toLocaleString()}</p>
-             </div>
-           </div>
+           {/* 2. Executive KPIs (Replaced by Hero Section) */}
+           <ReportHeroSection 
+             totalAmount={kpis.totalSpend} 
+             totalTrips={kpis.totalOrders}
+             totalQuantity={kpis.totalVolume}
+             billingMonth={reportType === 'month' ? reportMonth.replace('-', '年') + '月' : `${reportYear}年度`}
+             isSettled={reportOrders.length > 0 && reportOrders.every(o => o.status === OrderStatus.PAID)}
+           />
 
            {/* Empty State Guard */}
            {reportOrders.length === 0 ? (
@@ -298,8 +327,34 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
              </div>
            ) : (
              <>
-               {/* 3. Data Visualizations */}
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 print:break-inside-avoid">
+               {/* Segmented Tabs */}
+               <div className="flex p-1 mb-6 bg-slate-100/80 rounded-xl max-w-sm mx-auto print:hidden">
+                 <button
+                   onClick={() => setActiveTab('invoice')}
+                   className={`flex-1 py-2 px-4 text-sm font-bold rounded-lg transition-all duration-300 ${
+                     activeTab === 'invoice' 
+                       ? 'bg-white text-slate-800 shadow-sm' 
+                       : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                   }`}
+                 >
+                   📝 明細對帳
+                 </button>
+                 <button
+                   onClick={() => setActiveTab('analytics')}
+                   className={`flex-1 py-2 px-4 text-sm font-bold rounded-lg transition-all duration-300 ${
+                     activeTab === 'analytics' 
+                       ? 'bg-white text-slate-800 shadow-sm' 
+                       : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                   }`}
+                 >
+                   📊 分析儀表板
+                 </button>
+               </div>
+
+               {activeTab === 'analytics' && (
+                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                   {/* 3. Data Visualizations */}
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 print:break-inside-avoid">
                  <div className="md:col-span-2 bg-white border border-gray-100 p-6 rounded-2xl shadow-sm">
                     <h3 className="text-sm font-extrabold text-slate-800 tracking-wide mb-6">採購金額趨勢 ({reportType === 'month' ? '日' : '月'})</h3>
                     <div className="w-full" style={{ height: 250 }}>
@@ -373,76 +428,101 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
-                 </div>
+                  </div>
+                </div>
                </div>
+               )}
 
-               {/* 4. Detailed Data Table */}
-               <div className="print:break-before-page">
-                 {/* Print-only header for second page */}
-                 <div className="hidden print:block text-lg font-black text-slate-800 mb-6 border-b-2 border-slate-200 pb-2">
-                   {customerName} - {reportType === 'month' ? reportMonth.replace('-', '年') + '月' : `${reportYear}年度`} 訂單明細
-                 </div>
+               {activeTab === 'invoice' && (
+                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                   {/* 4. Detailed Data Table */}
+                   <div className="print:break-before-page">
+                     {/* Print-only header for second page */}
+                     <div className="hidden print:block text-lg font-black text-slate-800 mb-6 border-b-2 border-slate-200 pb-2">
+                       {customerName} - {reportType === 'month' ? reportMonth.replace('-', '年') + '月' : `${reportYear}年度`} 訂單明細
+                     </div>
 
-                 <h3 className="text-sm font-extrabold text-slate-800 tracking-wide mb-4 print:hidden">訂單明細表</h3>
-                 <div className="overflow-x-auto rounded-xl border border-gray-100">
-                    <table className="w-full text-left text-sm">
-                      <thead className="bg-gray-50 text-gray-500 font-bold text-[11px] uppercase tracking-wider">
-                        <tr>
-                          <th className="px-4 py-3">日期 / 時間</th>
-                          <th className="px-4 py-3">品項明細</th>
-                          <th className="px-4 py-3">配送</th>
-                          <th className="px-4 py-3 text-right">訂單總價</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {reportOrders.map(order => {
-                          const orderTotal = order.items.reduce((sum, item) => {
-                            const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
-                            const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
-                            const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
-                            return sum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
-                          }, 0);
+                     {/* 1. 插入匯總表 */}
+                     <ReportAggregatedTable items={aggregatedItems} />
 
-                          return (
-                            <tr key={order.id} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="px-4 py-3 align-top">
-                                <div className="font-bold text-slate-700">{order.deliveryDate.substring(5).replace('-', '/')}</div>
-                                <div className="text-[10px] text-gray-400 mt-0.5">{formatTimeDisplay(order.deliveryTime)}</div>
-                              </td>
-                              <td className="px-4 py-3 align-top min-w-[200px]">
-                                {order.items.map((item, idx) => {
+                 {/* 2. 每日出貨流水帳 (折疊設計) */}
+                 <div className="mt-4 border border-slate-100 rounded-2xl overflow-hidden bg-white shadow-sm print:border-none print:shadow-none print:mt-8">
+                    <button 
+                      onClick={() => setIsDailyRulesOpen(!isDailyRulesOpen)}
+                      className="w-full flex justify-between items-center bg-slate-50 p-4 hover:bg-slate-100 transition-colors print:hidden"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full"></span>
+                        <span className="font-bold text-slate-700">查閱每日出貨流水帳</span>
+                      </div>
+                      {isDailyRulesOpen ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+                    </button>
+                    
+                    <div className={`print:block ${isDailyRulesOpen ? 'block' : 'hidden print:block'}`}>
+                      <div className="overflow-x-auto print:overflow-visible">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-gray-50 text-gray-500 font-bold text-[11px] uppercase tracking-wider print:bg-transparent print:border-b-2 print:border-gray-800 print:text-gray-800">
+                              <tr>
+                                <th className="px-4 py-3">日期 / 時間</th>
+                                <th className="px-4 py-3">品項明細</th>
+                                <th className="px-4 py-3">配送</th>
+                                <th className="px-4 py-3 text-right">訂單總價</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50 print:divide-gray-200">
+                              {reportOrders.map(order => {
+                                const orderTotal = order.items.reduce((sum, item) => {
                                   const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
                                   const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
                                   const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
-                                  return (
-                                    <div key={idx} className="flex justify-between items-center text-xs mb-1">
-                                      <span className="font-bold text-slate-700">{item.productName || p?.name || '未知品項'}</span>
-                                      <div className="flex gap-4">
-                                        <span className="text-morandi-blue w-16 text-right font-medium">x {item.quantity} {item.unit || p?.unit || '斤'}</span>
-                                        {item.unit !== '元' && (
-                                          <span className="text-gray-400 w-12 text-right">@${unitPrice}</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                                {order.note && <div className="text-[10px] text-gray-400 mt-1 italic break-words line-clamp-2">{order.note}</div>}
-                              </td>
-                              <td className="px-4 py-3 align-top">
-                                 <span className="inline-block px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold">
-                                   {order.trip || customer?.defaultTrip || '未分配'}
-                                 </span>
-                              </td>
-                              <td className="px-4 py-3 align-top text-right font-black text-slate-800">
-                                ${orderTotal.toLocaleString()}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                  return sum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
+                                }, 0);
+
+                                return (
+                                  <tr key={order.id} className="hover:bg-slate-50/50 transition-colors print:hover:bg-transparent">
+                                    <td className="px-4 py-3 align-top">
+                                      <div className="font-bold text-slate-700">{order.deliveryDate.substring(5).replace('-', '/')}</div>
+                                      <div className="text-[10px] text-gray-400 mt-0.5 print:hidden">{formatTimeDisplay(order.deliveryTime)}</div>
+                                    </td>
+                                    <td className="px-4 py-3 align-top min-w-[200px]">
+                                      {order.items.map((item, idx) => {
+                                        const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+                                        const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
+                                        const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+                                        const itemTotal = Math.round(item.quantity * unitPrice);
+                                        return (
+                                          <div key={idx} className="flex justify-between items-center text-xs mb-1">
+                                            <span className="font-bold text-slate-700">{item.productName || p?.name || '未知品項'}</span>
+                                            <div className="flex gap-4">
+                                              <span className="text-morandi-blue w-16 text-right font-medium print:text-slate-800">{item.quantity} {item.unit || p?.unit || '斤'}</span>
+                                              {item.unit !== '元' && (
+                                                <span className="text-gray-400 w-12 text-right">${itemTotal.toLocaleString()}</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                      {order.note && <div className="text-[10px] text-gray-400 mt-1 italic break-words line-clamp-2">{order.note}</div>}
+                                    </td>
+                                    <td className="px-4 py-3 align-top">
+                                      <span className="inline-block px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold">
+                                        {order.trip || customer?.defaultTrip || '未分配'}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 align-top text-right font-black text-slate-800">
+                                      ${orderTotal.toLocaleString()}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                      </div>
+                    </div>
                  </div>
                </div>
+               </div>
+               )}
              </>
            )}
            
