@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Wallet, DollarSign, CheckCircle2, ListChecks, 
-  MoreVertical, X, Copy, MapPin 
+  MoreVertical, X, Copy, MapPin, Search, SearchX, XCircle, ChevronDown,
+  TrendingUp, BarChart3
 } from 'lucide-react';
 import { getLastMonthEndDate } from '../utils';
 
@@ -37,17 +38,68 @@ export interface FinancePageProps {
   customers: Customer[];
   handleCopyStatement: (name: string, total: number, orders: any[]) => void;
   handleShareStatementToLine: (name: string, total: number, orders: any[]) => void;
+  addToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export const FinancePage: React.FC<FinancePageProps> = ({
   financeData, calculateOrderTotalAmount, setSettlementDate,
   setSettlementTarget, products, customers, handleCopyStatement,
-  handleShareStatementToLine
+  handleShareStatementToLine, addToast
 }) => {
   const [financeFilter, setFinanceFilter] = useState<'all' | 'thisMonth' | 'over30' | 'over60'>('all');
+  const [searchTerm, setSearchTerm] = useState('');
   const [partialSettlementTarget, setPartialSettlementTarget] = useState<{name: string, orders: Order[]} | null>(null);
   const [selectedPartialOrderIds, setSelectedPartialOrderIds] = useState<Set<string>>(new Set());
   const [actionMenuTarget, setActionMenuTarget] = useState<any | null>(null);
+  const [isCopyMenuExpanded, setIsCopyMenuExpanded] = useState(false);
+  const [activeSummaryTab, setActiveSummaryTab] = useState<'cashflow' | 'operation'>('cashflow');
+
+  useEffect(() => {
+    if (!actionMenuTarget) setIsCopyMenuExpanded(false);
+  }, [actionMenuTarget]);
+
+  const handleSmartCopy = (type: 'all' | 'lastMonthBefore' | 'thisMonth') => {
+    if (!actionMenuTarget) return;
+    
+    // 取得本月第一天的字串，例如 "2026-06-01"
+    const d = new Date();
+    const thisMonthFirstDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    
+    let targetOrders = actionMenuTarget.orders;
+    
+    if (type === 'lastMonthBefore') {
+      targetOrders = actionMenuTarget.orders.filter((o: Order) => o.deliveryDate < thisMonthFirstDay);
+    } else if (type === 'thisMonth') {
+      targetOrders = actionMenuTarget.orders.filter((o: Order) => o.deliveryDate >= thisMonthFirstDay);
+    }
+
+    if (targetOrders.length === 0) {
+      addToast("該區間沒有未結帳款可複製", 'error');
+      return;
+    }
+
+    const targetTotal = targetOrders.reduce((sum: number, o: Order) => sum + calculateOrderTotalAmount(o), 0);
+    
+    handleCopyStatement(actionMenuTarget.name, targetTotal, targetOrders);
+    setActionMenuTarget(null);
+  };
+
+  const filteredData = useMemo(() => {
+    let data = financeData.outstanding.filter(item => {
+      if (financeFilter === 'all') return true;
+      if (financeFilter === 'thisMonth') return item.agingDays <= 30;
+      if (financeFilter === 'over30') return item.agingDays > 30;
+      if (financeFilter === 'over60') return item.agingDays > 60;
+      return true;
+    });
+    
+    if (!searchTerm.trim()) return data;
+    const lowerKeyword = searchTerm.toLowerCase();
+    
+    return data.filter(item => 
+      item.name.toLowerCase().includes(lowerKeyword)
+    );
+  }, [financeData.outstanding, financeFilter, searchTerm]);
 
   const containerVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } };
   const itemVariants = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -75,22 +127,105 @@ export const FinancePage: React.FC<FinancePageProps> = ({
                  */}
                </div>
                
-               {/* Revenue Overview Cards */}
-               <div className="grid grid-cols-2 gap-3 mb-6">
-                 <div className="bg-morandi-charcoal rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
-                   <div className="absolute right-[-10px] top-[-10px] opacity-10"><DollarSign className="w-24 h-24" /></div>
-                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">未結總金額</p>
-                   <h3 className="text-2xl font-black text-white tracking-tight">${financeData.grandTotalDebt.toLocaleString()}</h3>
+               {/* Revenue Overview Section */}
+               <div className="mb-6">
+                 {/* 👇 頁籤切換器 */}
+                 <div className="flex items-center gap-2 mb-3 px-2">
+                   <button 
+                     onClick={() => setActiveSummaryTab('cashflow')}
+                     className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors ${activeSummaryTab === 'cashflow' ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                   >
+                     現金流追蹤
+                   </button>
+                   <button 
+                     onClick={() => setActiveSummaryTab('operation')}
+                     className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors ${activeSummaryTab === 'operation' ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                   >
+                     本月營運概況
+                   </button>
                  </div>
-                 <div className="bg-emerald-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
-                   <div className="absolute right-[-10px] top-[-10px] opacity-10"><CheckCircle2 className="w-24 h-24" /></div>
-                   <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-widest mb-1">本月已收帳款</p>
-                   <h3 className="text-2xl font-black text-white tracking-tight">${financeData.thisMonthCollected.toLocaleString()}</h3>
-                   <p className="text-[9px] text-emerald-100 mt-1 font-medium tracking-wide">佔本月營收 {financeData.thisMonthRevenue > 0 ? Math.round((financeData.thisMonthCollected / financeData.thisMonthRevenue) * 100) : 0}%</p>
-                 </div>
+
+                 {/* 👇 視角內容渲染區 */}
+                 <AnimatePresence mode="wait">
+                   {activeSummaryTab === 'cashflow' ? (
+                     <motion.div 
+                       key="cashflow"
+                       initial={{ opacity: 0, x: -10 }}
+                       animate={{ opacity: 1, x: 0 }}
+                       exit={{ opacity: 0, x: 10 }}
+                       transition={{ duration: 0.2 }}
+                       className="grid grid-cols-2 gap-3"
+                     >
+                       {/* 現金流卡片 1：未結總額 */}
+                       <div className="bg-morandi-charcoal rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                         <div className="absolute right-[-10px] top-[-10px] opacity-10"><DollarSign className="w-24 h-24" /></div>
+                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">未結總金額</p>
+                         <h3 className="text-2xl font-black text-white tracking-tight">${financeData.grandTotalDebt.toLocaleString()}</h3>
+                       </div>
+                       
+                       {/* 現金流卡片 2：本月已收帳款 */}
+                       <div className="bg-emerald-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                         <div className="absolute right-[-10px] top-[-10px] opacity-10"><CheckCircle2 className="w-24 h-24" /></div>
+                         <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-widest mb-1">本月已收帳款</p>
+                         <h3 className="text-2xl font-black text-white tracking-tight">${financeData.thisMonthCollected.toLocaleString()}</h3>
+                         <p className="text-[9px] text-emerald-100 mt-1 font-medium tracking-wide">佔本月營收 {financeData.thisMonthRevenue > 0 ? Math.round((financeData.thisMonthCollected / financeData.thisMonthRevenue) * 100) : 0}%</p>
+                       </div>
+                     </motion.div>
+                   ) : (
+                     <motion.div 
+                       key="operation"
+                       initial={{ opacity: 0, x: 10 }}
+                       animate={{ opacity: 1, x: 0 }}
+                       exit={{ opacity: 0, x: -10 }}
+                       transition={{ duration: 0.2 }}
+                       className="grid grid-cols-2 gap-3"
+                     >
+                       {/* 營運卡片 1：本月總營收 */}
+                       <div className="bg-blue-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                         <div className="absolute right-[-10px] top-[-10px] opacity-10"><TrendingUp className="w-24 h-24" /></div>
+                         <p className="text-[10px] font-bold text-blue-100 uppercase tracking-widest mb-1">本月總營收</p>
+                         <h3 className="text-2xl font-black text-white tracking-tight">${financeData.thisMonthRevenue.toLocaleString()}</h3>
+                         <p className="text-[9px] text-blue-100 mt-1 font-medium tracking-wide">包含已收與未結</p>
+                       </div>
+                       
+                       {/* 營運卡片 2：日後可擴充指標保留位 */}
+                       <div className="bg-gray-100 rounded-[24px] p-5 shadow-inner text-gray-500 relative overflow-hidden flex flex-col justify-center items-center h-full min-h-[110px] border border-gray-200 border-dashed">
+                           <BarChart3 className="w-6 h-6 text-gray-300 mb-1" />
+                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">更多指標規劃中</p>
+                       </div>
+                     </motion.div>
+                   )}
+                 </AnimatePresence>
                </div>
 
                <div className="space-y-4">
+                 {/* 👇 Sticky 搜尋框區塊 */}
+                 <div className="sticky top-0 z-20 bg-gray-50/80 backdrop-blur-md pb-3 pt-1 -mx-4 px-4 mb-2">
+                   <div className="relative">
+                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-400 pointer-events-none" />
+                     <input 
+                       type="text"
+                       placeholder="搜尋客戶名稱..."
+                       value={searchTerm}
+                       onChange={(e) => setSearchTerm(e.target.value)}
+                       className="w-full pl-10 pr-10 py-2.5 bg-gray-50/80 hover:bg-gray-100 transition-colors rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-morandi-blue/50 text-sm font-bold text-slate-700"
+                     />
+                     <AnimatePresence>
+                       {searchTerm && (
+                         <motion.button 
+                           initial={{ opacity: 0, scale: 0.8 }}
+                           animate={{ opacity: 1, scale: 1 }}
+                           exit={{ opacity: 0, scale: 0.8 }}
+                           onClick={() => setSearchTerm('')}
+                           className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 active:scale-95"
+                         >
+                           <XCircle className="w-4.5 h-4.5" />
+                         </motion.button>
+                       )}
+                     </AnimatePresence>
+                   </div>
+                 </div>
+
                  <div className="flex justify-between items-center px-2">
                    <h3 className="text-xs font-bold text-morandi-pebble uppercase tracking-widest flex items-center gap-2"><ListChecks className="w-4 h-4" /> 欠款客戶列表</h3>
                  </div>
@@ -104,17 +239,9 @@ export const FinancePage: React.FC<FinancePageProps> = ({
                  </div>
 
                  <motion.div variants={containerVariants} initial="hidden" animate="show">
-                   {financeData.outstanding.length > 0 ? (
-                     financeData.outstanding
-                       .filter(item => {
-                         if (financeFilter === 'all') return true;
-                         if (financeFilter === 'thisMonth') return item.agingDays <= 30;
-                         if (financeFilter === 'over30') return item.agingDays > 30;
-                         if (financeFilter === 'over60') return item.agingDays > 60;
-                         return true;
-                       })
-                       .map((item, idx) => (
-                       <motion.div variants={itemVariants} key={idx} className="bg-white rounded-[24px] p-5 shadow-sm border border-slate-200 mb-3 relative overflow-hidden">
+                   {filteredData.length > 0 ? (
+                     filteredData.map((item, idx) => (
+                       <motion.div variants={itemVariants} key={item.name} className="bg-white rounded-[24px] p-5 shadow-sm border border-slate-200 mb-3 relative overflow-hidden">
                          <div className="flex justify-between items-start mb-4 relative z-10">
                            <div className="flex items-center gap-3">
                              <div className="w-12 h-12 rounded-[16px] bg-rose-50 flex items-center justify-center text-rose-400 font-extrabold text-xl">{String(item.name || '').charAt(0)}</div>
@@ -153,9 +280,19 @@ export const FinancePage: React.FC<FinancePageProps> = ({
                      ))
                    ) : (
                      <div className="text-center py-10">
-                       <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-8 h-8 text-emerald-400" /></div>
-                       <h3 className="text-xl font-bold text-slate-700 mb-1">目前沒有欠款</h3>
-                       <p className="text-sm text-gray-500">所有的帳款都已結清！</p>
+                       {searchTerm ? (
+                         <>
+                           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4"><SearchX className="w-8 h-8 text-gray-400" /></div>
+                           <h3 className="text-lg font-bold text-slate-700 mb-1">找不到相關客戶</h3>
+                           <p className="text-sm text-gray-500">請嘗試使用其他關鍵字</p>
+                         </>
+                       ) : (
+                         <>
+                           <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-8 h-8 text-emerald-400" /></div>
+                           <h3 className="text-xl font-bold text-slate-700 mb-1">目前沒有欠款</h3>
+                           <p className="text-sm text-gray-500">所有的帳款都已結清！</p>
+                         </>
+                       )}
                      </div>
                    )}
                  </motion.div>
@@ -294,18 +431,51 @@ export const FinancePage: React.FC<FinancePageProps> = ({
                   </div>
 
                   <div className="p-4 flex flex-col gap-2 overflow-y-auto">
-                    <button 
-                      onClick={() => {
-                        handleCopyStatement(actionMenuTarget.name, actionMenuTarget.totalDebt, actionMenuTarget.orders);
-                        setActionMenuTarget(null);
-                      }} 
-                      className="w-full min-h-[56px] px-4 rounded-2xl bg-white text-slate-700 font-bold text-base flex items-center gap-3 hover:bg-slate-50 active:bg-slate-100 transition-colors border border-transparent hover:border-slate-100"
-                    >
-                      <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-gray-500">
-                        <Copy className="w-5 h-5" />
-                      </div>
-                      複製對帳單
-                    </button>
+                    <div className="bg-gray-50/50 rounded-2xl overflow-hidden border border-transparent transition-colors hover:border-gray-100">
+                      <button 
+                        onClick={() => setIsCopyMenuExpanded(!isCopyMenuExpanded)}
+                        className="w-full min-h-[56px] px-4 bg-white text-slate-700 font-bold text-base flex items-center justify-between hover:bg-slate-50 active:bg-slate-100 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-gray-500">
+                            <Copy className="w-5 h-5" />
+                          </div>
+                          {isCopyMenuExpanded ? '選擇複製區間' : '複製對帳單'}
+                        </div>
+                        <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform duration-300 ${isCopyMenuExpanded ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      <AnimatePresence>
+                        {isCopyMenuExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="px-4 pb-3 flex flex-col gap-2"
+                          >
+                            <button 
+                              onClick={() => handleSmartCopy('lastMonthBefore')} 
+                              className="w-full py-2.5 px-3 bg-white border border-blue-100 rounded-xl text-sm font-bold text-blue-600 hover:bg-blue-50 text-left flex justify-between items-center transition-colors shadow-sm"
+                            >
+                              上個月及以前的帳款
+                              <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">最常用</span>
+                            </button>
+                            <button 
+                              onClick={() => handleSmartCopy('thisMonth')} 
+                              className="w-full py-2.5 px-3 hover:bg-gray-100 rounded-xl text-sm font-bold text-slate-600 text-left transition-colors"
+                            >
+                              僅本月新增帳款
+                            </button>
+                            <button 
+                              onClick={() => handleSmartCopy('all')} 
+                              className="w-full py-2.5 px-3 hover:bg-gray-100 rounded-xl text-sm font-bold text-slate-600 text-left transition-colors"
+                            >
+                              全部未結帳款
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
 
                     <button 
                       onClick={() => {

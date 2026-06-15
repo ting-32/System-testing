@@ -74,17 +74,7 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  const lock = LockService.getScriptLock();
   try {
-    try {
-      lock.waitLock(28000);
-    } catch (err) {
-      return ContentService.createTextOutput(JSON.stringify({ 
-        success: false, 
-        error: "伺服器忙碌中，請稍後再試 (Lock Timeout)" 
-      })).setMimeType(ContentService.MimeType.JSON);
-    }
-
     const params = JSON.parse(e.postData.contents);
     
     if (params.events && Array.isArray(params.events)) {
@@ -844,15 +834,49 @@ function saveTrips(data) {
   return true;
 }
 
-// Helper to check for header and add if missing
-function ensureHeader(sheet, headerName) {
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  let index = headers.indexOf(headerName);
-  if (index === -1) {
-    index = headers.length;
-    sheet.getRange(1, index + 1).setValue(headerName);
+// ✅ 核心輔助函數：一次搜集所有欄位 Index
+function ensureHeadersBatch(sheet, requiredHeaders) {
+  const lastCol = sheet.getLastColumn();
+  
+  // 邊界情況：如果是一張全空的新表
+  if (lastCol === 0) {
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+    return requiredHeaders.reduce((acc, current, i) => {
+      acc[current] = i;
+      return acc;
+    }, {});
   }
-  return index;
+
+  // 1. One-time Read I/O：一次把第一行全部拉進記憶體
+  const existingHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const missingHeaders = [];
+  const headerMap = {};
+
+  // 2. Memory Build：建立現有標題的 Hash Map，查詢複雜度 O(1)
+  existingHeaders.forEach((header, index) => {
+    headerMap[header] = index;
+  });
+
+  // 3. Memory Check：過濾出需要補上的標題
+  requiredHeaders.forEach(req => {
+    if (headerMap[req] === undefined) {
+      missingHeaders.push(req);
+    }
+  });
+
+  // 4. One-time Write I/O (非必要不觸發)：只有當真的缺欄位時，才發送一次 API 寫回
+  if (missingHeaders.length > 0) {
+    const startCol = existingHeaders.length + 1;
+    sheet.getRange(1, startCol, 1, missingHeaders.length).setValues([missingHeaders]);
+    
+    // 把剛建好的欄位 Index 補進 Hash Map 裡
+    missingHeaders.forEach((h, i) => {
+      headerMap[h] = (startCol - 1) + i; // 確保回傳 0-based index
+    });
+  }
+
+  // 回傳這張表所有的 { "欄位名稱": Index }
+  return headerMap;
 }
 
 // Helper to check version conflict for Orders (樂觀鎖)
@@ -873,55 +897,64 @@ function checkVersionConflict(currentLastUpdated, originalLastUpdated) {
 }
 
 function createOrder(orderData) {
-  const sheet = getSheets().ORDERS;
-  
-  // Ensure we have enough columns and headers
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
-  const tripColIdx = ensureHeader(sheet, "Trip");
-  const sourceColIdx = ensureHeader(sheet, "資料來源");
-  const versionColIdx = ensureHeader(sheet, "Version");
-  
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
-  if (sheet.getMaxColumns() < maxCol) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
-  }
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const sheet = getSheets().ORDERS;
+    
+    // Ensure we have enough columns and headers
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Trip", "資料來源", "Version"]);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const tripColIdx = headerMap["Trip"];
+    const sourceColIdx = headerMap["資料來源"];
+    const versionColIdx = headerMap["Version"];
+    
+    const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
+    if (sheet.getMaxColumns() < maxCol) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
+    }
 
-  const timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
-  const lastUpdatedTs = String(new Date().getTime()); // Unix timestamp for robust syncing
-  
-  const rows = orderData.items.map(item => {
-    const row = new Array(maxCol).fill("");
-    row[0] = timestamp;
-    row[1] = orderData.id;
-    row[2] = orderData.customerName;
-    row[3] = orderData.deliveryDate;
-    row[4] = orderData.deliveryTime;
-    row[5] = item.productName || item.productId;
-    row[6] = item.quantity;
-    row[7] = orderData.note || "";
-    row[8] = orderData.status || "PENDING";
-    row[9] = orderData.deliveryMethod || "";
-    row[10] = item.unit || "斤";
-    row[lastUpdatedColIdx] = lastUpdatedTs;
-    row[tripColIdx] = orderData.trip || "";
-    row[sourceColIdx] = orderData.source || "";
-    row[versionColIdx] = 1; // 首次建立 version 為 1
-    return row;
-  });
-  
-  if (rows.length > 0) {
-    const lastRow = sheet.getLastRow();
-    sheet.getRange(lastRow + 1, 1, rows.length, maxCol).setValues(rows);
+    const timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+    const lastUpdatedTs = String(new Date().getTime()); // Unix timestamp for robust syncing
+    
+    const rows = orderData.items.map(item => {
+      const row = new Array(maxCol).fill("");
+      row[0] = timestamp;
+      row[1] = orderData.id;
+      row[2] = orderData.customerName;
+      row[3] = orderData.deliveryDate;
+      row[4] = orderData.deliveryTime;
+      row[5] = item.productName || item.productId;
+      row[6] = item.quantity;
+      row[7] = orderData.note || "";
+      row[8] = orderData.status || "PENDING";
+      row[9] = orderData.deliveryMethod || "";
+      row[10] = item.unit || "斤";
+      row[lastUpdatedColIdx] = lastUpdatedTs;
+      row[tripColIdx] = orderData.trip || "";
+      row[sourceColIdx] = orderData.source || "";
+      row[versionColIdx] = 1; // 首次建立 version 為 1
+      return row;
+    });
+    
+    if (rows.length > 0) {
+      const lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow + 1, 1, rows.length, maxCol).setValues(rows);
+      SpreadsheetApp.flush();
+    }
+    return { lastUpdated: lastUpdatedTs, version: 1 };
+  } finally {
+    lock.releaseLock();
   }
-  return { lastUpdated: lastUpdatedTs, version: 1 };
 }
 
 function updateOrderContent(orderData) {
   const sheet = getSheets().ORDERS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated"); // 0-based index
-  const tripColIdx = ensureHeader(sheet, "Trip");
-  const sourceColIdx = ensureHeader(sheet, "資料來源");
-  const versionColIdx = ensureHeader(sheet, "Version");
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Trip", "資料來源", "Version"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
+  const tripColIdx = headerMap["Trip"];
+  const sourceColIdx = headerMap["資料來源"];
+  const versionColIdx = headerMap["Version"];
   
   const maxColReq = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
     if (sheet.getMaxColumns() < maxColReq) {
@@ -1007,79 +1040,105 @@ function updateOrderContent(orderData) {
 }
 
 function updateOrderStatus(data) {
-  const sheet = getSheets().ORDERS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
-  const versionColIdx = ensureHeader(sheet, "Version");
-  const values = sheet.getDataRange().getValues();
-  let updated = false;
-  let newVersion = 0;
-  const targetId = String(data.id).trim();
-  const newLastUpdatedTs = String(new Date().getTime());
-  
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][1]).trim() === targetId) {
-      // Conflict check if provided and not forced
-      const currentVersion = values[i][versionColIdx];
-      if (data.version !== undefined && !data.force) {
-         checkOrderVersionStrict(currentVersion, data.version);
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const sheet = getSheets().ORDERS;
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version"]);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const versionColIdx = headerMap["Version"];
+    const values = sheet.getDataRange().getValues();
+    let updated = false;
+    let newVersion = 0;
+    const targetId = String(data.id).trim();
+    const newLastUpdatedTs = String(new Date().getTime());
+    
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][1]).trim() === targetId) {
+        // Conflict check if provided and not forced
+        const currentVersion = values[i][versionColIdx];
+        if (data.version !== undefined && !data.force) {
+           checkOrderVersionStrict(currentVersion, data.version);
+        }
+        
+        newVersion = Number(currentVersion || 0) + 1;
+        values[i][8] = data.status; // Status column (0-indexed, col 9)
+        values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+        values[i][versionColIdx] = newVersion;
+        updated = true;
       }
-      
-      newVersion = Number(currentVersion || 0) + 1;
-      
-      sheet.getRange(i + 1, 9).setValue(data.status); // Status column
-      sheet.getRange(i + 1, lastUpdatedColIdx + 1).setValue(newLastUpdatedTs); // Update timestamp
-      sheet.getRange(i + 1, versionColIdx + 1).setValue(newVersion); // bump version
-      updated = true;
     }
+    
+    if (updated) {
+      sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
+      SpreadsheetApp.flush();
+    } else {
+      throw new Error("Order not found: " + targetId);
+    }
+    
+    return { lastUpdated: newLastUpdatedTs, version: newVersion };
+  } catch (err) {
+    if (err.message && err.message.includes("Timeout")) {
+      throw new Error("更新過於頻繁，請稍後重試");
+    }
+    throw err;
+  } finally {
+    lock.releaseLock();
   }
-  
-  if (!updated) throw new Error("Order not found: " + targetId);
-  return { lastUpdated: newLastUpdatedTs, version: newVersion };
 }
 
 function batchUpdateOrders(data) {
-  const sheet = getSheets().ORDERS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
-  const versionColIdx = ensureHeader(sheet, "Version");
-  const values = sheet.getDataRange().getValues();
-  const updates = data.updates; // Array of { id: string, status: string, version: number }
-  const newLastUpdatedTs = String(new Date().getTime());
-  let updatedCount = 0;
-  
-  // Create a map for fast lookup
-  const updateMap = new Map();
-  updates.forEach(u => updateMap.set(String(u.id).trim(), u));
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const sheet = getSheets().ORDERS;
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version"]);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const versionColIdx = headerMap["Version"];
+    const values = sheet.getDataRange().getValues();
+    const updates = data.updates; // Array of { id: string, status: string, version: number }
+    const newLastUpdatedTs = String(new Date().getTime());
+    let updatedCount = 0;
+    
+    // Create a map for fast lookup
+    const updateMap = new Map();
+    updates.forEach(u => updateMap.set(String(u.id).trim(), u));
 
-  let modified = false;
-  for (let i = 1; i < values.length; i++) {
-    const rowId = String(values[i][1]).trim();
-    if (updateMap.has(rowId)) {
-      const updateData = updateMap.get(rowId);
-      const currentVersion = values[i][versionColIdx];
-      
-      // Conflict check if provided and not forced
-      if (!updateData.force && updateData.version !== undefined) {
-         checkOrderVersionStrict(currentVersion, updateData.version);
+    let modified = false;
+    for (let i = 1; i < values.length; i++) {
+      const rowId = String(values[i][1]).trim();
+      if (updateMap.has(rowId)) {
+        const updateData = updateMap.get(rowId);
+        const currentVersion = values[i][versionColIdx];
+        
+        // Conflict check if provided and not forced
+        if (!updateData.force && updateData.version !== undefined) {
+           checkOrderVersionStrict(currentVersion, updateData.version);
+        }
+        
+        values[i][8] = updateData.status; // Status column (index 8 is col 9)
+        values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+        values[i][versionColIdx] = Number(currentVersion || 0) + 1; // bump version
+        updatedCount++;
+        modified = true;
       }
-      
-      values[i][8] = updateData.status; // Status column (index 8 is col 9)
-      values[i][lastUpdatedColIdx] = newLastUpdatedTs;
-      values[i][versionColIdx] = Number(currentVersion || 0) + 1; // bump version
-      updatedCount++;
-      modified = true;
     }
+    
+    if (modified && values.length > 1) {
+      sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
+      SpreadsheetApp.flush();
+    }
+    
+    return { updatedCount, newLastUpdatedTs };
+  } finally {
+    lock.releaseLock();
   }
-  
-  if (modified && values.length > 1) {
-    sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
-  }
-  
-  return { updatedCount, newLastUpdatedTs };
 }
 
 function batchUpdatePaymentStatus(data) {
   const sheet = getSheets().ORDERS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
   const values = sheet.getDataRange().getValues();
   const orderIds = new Set(data.orderIds.map(id => String(id).trim()));
   const newLastUpdatedTs = String(new Date().getTime());
@@ -1106,9 +1165,10 @@ function deleteOrder(data) {
   
   if (lastRow <= 1) return false;
 
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
-  const versionColIdx = ensureHeader(sheet, "Version");
-  const statusColIdx = ensureHeader(sheet, "Status");
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version", "Status"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
+  const versionColIdx = headerMap["Version"];
+  const statusColIdx = headerMap["Status"];
   const totalCols = sheet.getMaxColumns();
   const values = sheet.getDataRange().getValues();
   const targetId = String(data.id).trim();
@@ -1151,7 +1211,8 @@ function deleteOrder(data) {
 
 function reorderProducts(orderedIds) {
   const sheet = getSheets().PRODUCTS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
   const values = sheet.getDataRange().getValues();
   if (values.length <= 1) return true;
 
@@ -1275,7 +1336,8 @@ function updateCustomer(data) {
 
 function deleteCustomer(data) {
   const sheet = getSheets().CUSTOMERS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
   const values = sheet.getDataRange().getValues();
   const targetId = String(data.id).trim();
   
@@ -1293,7 +1355,8 @@ function deleteCustomer(data) {
 
 function updateProduct(data) {
   const sheet = getSheets().PRODUCTS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
   const values = sheet.getDataRange().getValues();
   let rowIndex = -1;
   const targetId = String(data.id).trim();
@@ -1329,7 +1392,8 @@ function updateProduct(data) {
 
 function deleteProduct(data) {
   const sheet = getSheets().PRODUCTS;
-  const lastUpdatedColIdx = ensureHeader(sheet, "LastUpdated");
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
   const values = sheet.getDataRange().getValues();
   const targetId = String(data.id).trim();
   
@@ -1366,9 +1430,10 @@ function generateTomorrowDefaultOrders() {
     const sheets = getSheets();
     const orderSheet = sheets.ORDERS;
   
-  const sourceColIdx = ensureHeader(orderSheet, "資料來源");
-  const lastUpdatedColIdx = ensureHeader(orderSheet, "LastUpdated");
-  const tripColIdx = ensureHeader(orderSheet, "Trip");
+  const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip"]);
+  const sourceColIdx = headerMap["資料來源"];
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
+  const tripColIdx = headerMap["Trip"];
   
   const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
   const today = new Date();
@@ -2139,3 +2204,74 @@ function verifyTokenAndGetPayload(token, dbPassword) {
   }
 }
 
+// ==========================================
+// 系統維護模組：資料庫瘦身與效能優化
+// ==========================================
+// 定期封存舊訂單的專用腳本
+function archiveOldOrders() {
+  const lock = LockService.getScriptLock();
+  try {
+    // 允許等比較久，因為這是半夜執行的背景報表
+    lock.waitLock(30000); 
+    
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const orderSheet = ss.getSheetByName("ORDERS") || ss.getSheetByName("Orders");
+    const archiveSheet = ss.getSheetByName("ARCHIVE_ORDERS");
+    
+    if (!orderSheet || !archiveSheet) return;
+    
+    const values = orderSheet.getDataRange().getValues();
+    if (values.length <= 1) return; // 只有標題列
+    
+    const headers = values[0];
+    const statusColIdx = headers.indexOf("Status");
+    const dateColIdx = headers.indexOf("DeliveryDate");
+    
+    if (statusColIdx === -1 || dateColIdx === -1) return;
+
+    // 計算 90 天前的時間截點
+    const today = new Date();
+    const cutoffDate = new Date(today.getTime() - (90 * 24 * 60 * 60 * 1000));
+    const cutoffString = Utilities.formatDate(cutoffDate, ss.getSpreadsheetTimeZone() || "Asia/Taipei", "yyyy-MM-dd");
+
+    const activeOrders = [headers]; // 準備存回大表的資料
+    const ordersToArchive = [];     // 準備搬去封存表的資料
+    
+    // 從第 2 行開始掃描
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const status = row[statusColIdx];
+      const deliveryDate = row[dateColIdx]; 
+      // 確保日期格式為 YYYY-MM-DD 以便字串比對
+      const dateStr = String(deliveryDate).substring(0, 10); 
+      
+      // 條件：超過 90 天前，且狀態為 PAID (已結清) 或 DELETED (已刪除)
+      if (dateStr < cutoffString && (status === 'PAID' || status === 'DELETED')) {
+        ordersToArchive.push(row);
+      } else {
+        activeOrders.push(row);
+      }
+    }
+    
+    // 如果沒有資料需要封存，提早結束
+    if (ordersToArchive.length === 0) return;
+    
+    // 1. 將資料寫入封存表 (Append)
+    const archiveLastRow = archiveSheet.getLastRow();
+    archiveSheet.getRange(archiveLastRow + 1, 1, ordersToArchive.length, headers.length).setValues(ordersToArchive);
+    
+    // 2. 將主表清空並覆寫為「活躍中的訂單」
+    orderSheet.clearContents();
+    orderSheet.getRange(1, 1, activeOrders.length, headers.length).setValues(activeOrders);
+    
+    // (可選) 寫入系統日誌
+    try {
+      writeSystemLog("SYSTEM_ARCHIVE", "自動封存", `成功封存了 ${ordersToArchive.length} 筆歷史訂單。`);
+    } catch(e) {}
+
+  } catch (err) {
+    console.error("封存腳本執行失敗: " + err.toString());
+  } finally {
+    lock.releaseLock();
+  }
+}

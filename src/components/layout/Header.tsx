@@ -11,6 +11,8 @@ interface HeaderProps {
   isUnlocked: boolean;
   setIsUnlocked: (val: boolean) => void;
   isOnline: boolean;
+  syncQueue?: any[];
+  isSyncingQueue?: boolean;
 }
 
 export function Header({
@@ -18,7 +20,9 @@ export function Header({
   isInitialLoading,
   isUnlocked,
   setIsUnlocked,
-  isOnline
+  isOnline,
+  syncQueue = [],
+  isSyncingQueue = false
 }: HeaderProps) {
   const ui = useUIStore();
   const { hasUnreadLogs } = useLogStore();
@@ -30,6 +34,19 @@ export function Header({
         <p className="text-[10px] text-morandi-pebble font-bold uppercase tracking-widest mt-0.5">專業訂單管理系統</p>
       </div>
       <div className="flex gap-2 items-center">
+        <AnimatePresence>
+          {syncQueue.length > 0 && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="flex items-center text-[10px] text-gray-400 font-medium"
+            >
+              <Loader2 className="w-3 h-3 animate-spin mr-1" />
+              <span>同步中 ({syncQueue.length})</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         {/* 狀態指示燈 */}
         <AnimatePresence>
           {!isInitialLoading && (

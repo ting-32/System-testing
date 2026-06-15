@@ -35,6 +35,7 @@ interface UseOrderActionsProps {
   lastOrderCandidate: any;
   setLastOrderCandidate: React.Dispatch<React.SetStateAction<any>>;
   setToasts: React.Dispatch<React.SetStateAction<any[]>>;
+  addSyncTask?: (task: any) => void;
 }
 
 export const useOrderActions = ({
@@ -65,7 +66,8 @@ export const useOrderActions = ({
   handleForceRetry,
   lastOrderCandidate,
   setLastOrderCandidate,
-  setToasts
+  setToasts,
+  addSyncTask
 }: UseOrderActionsProps) => {
 
   const pendingUpdatesRef = useRef<Map<string, any>>(new Map());
@@ -235,236 +237,87 @@ export const useOrderActions = ({
     const orderToUpdate = orders.find(o => o.id === orderId);
     if (!orderToUpdate) return;
 
-    // Optimistic update
-    setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, status: newStatus, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o));
+    // 1. 純前端瞬間切換狀態 (Optimistic UI 飛速體驗) 🚀
+    setOrders((prev: Order[]) => prev.map(o => 
+      o.id === orderId ? { ...o, status: newStatus, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o
+    ));
 
-    try {
-        if (apiEndpoint) {
-            const orderToUpdate = orders.find(o => o.id === orderId);
-            const customerName = orderToUpdate?.customerName || '';
-            const deliveryDate = orderToUpdate?.deliveryDate || '';
-            const updatesToProcess = [{ 
-                id: orderId, 
-                status: newStatus, 
-                originalStatus: orderToUpdate?.status, // 新增：轉換前狀態
-                items: orderToUpdate?.items?.map((item: any) => ({
-                    ...item,
-                    productName: item.productName || products.find((p: any) => p.id === item.productId)?.name || item.productId
-                })), // 新增：訂單明細並帶入商品名稱
-                version: orderToUpdate?.version || 1, 
-                force: true 
-            }];
-            const token = localStorage.getItem('APP_SESSION_TOKEN');
-            const res = await fetchWithRetry(
-                apiEndpoint, 
-                {
-                    method: 'POST',
-                    body: JSON.stringify({ 
-                        action: 'batchUpdateOrders', 
-                        token: token || "",
-                        data: { updates: updatesToProcess, customerName, deliveryDate } 
-                    })
-                },
-                undefined,
-                2,
-                1500,
-                false,
-                45000 // 傳入自訂 timeout 延長至 45 秒
-            );
-            
-            const json = await res.json();
+    // 2. 將實際的連線動作包裝成任務，交給背景 Queue 處理
+    if (addSyncTask) {
+      const customerName = orderToUpdate?.customerName || '';
+      const deliveryDate = orderToUpdate?.deliveryDate || '';
+      const updatesToProcess = [{ 
+          id: orderId, 
+          status: newStatus, 
+          originalStatus: orderToUpdate?.status, // 轉換前狀態
+          items: orderToUpdate?.items?.map((item: any) => ({
+              ...item,
+              productName: item.productName || products.find((p: any) => p.id === item.productId)?.name || item.productId
+          })), // 訂單明細並帶入商品名稱
+          version: orderToUpdate?.version || 1, 
+          force: true 
+      }];
 
-            if (!json.success) {
-                if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
-                    localStorage.removeItem('nm_auth_status');
-                    localStorage.removeItem('APP_SESSION_TOKEN');
-                    localStorage.removeItem('APP_USER_ROLE');
-                    localStorage.removeItem('APP_USER_NAME');
-                    window.dispatchEvent(new Event('app-unauthorized'));
-                    return;
-                }
-                if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
-                     setConflictData({
-                       action: 'batchUpdateOrders',
-                       data: { updates: updatesToProcess },
-                       description: `狀態更新發生版本衝突`,
-                       type: 'batch_order',
-                       clientData: updatesToProcess,
-                       serverData: json.serverData || json.data
-                     });
-                     return;
-                } else {
-                     throw new Error(json.error || 'Unknown error');
-                }
-            } else {
-                // Success!
-                const newVersion = json.data.newLastUpdatedTs; 
-                
-                setOrders((prev: Order[]) => prev.map(o => {
-                    if (o.id === orderId) {
-                        return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newVersion };
-                    }
-                    return o;
-                }));
-                broadcastDataChange();
-            }
-        }
-    } catch (e: any) {
-        if (e.message === 'VERSION_CONFLICT' || e.message === 'ERR_VERSION_CONFLICT') return;
-        if (String(e).includes("UNAUTHORIZED_OR_EXPIRED") || (e.message && e.message.includes("UNAUTHORIZED_OR_EXPIRED"))) return;
-        console.error("Sync Failed:", e);
-        let errMsg = e instanceof Error ? e.message : String(e);
-
-        if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
-            errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
-        } else if (e.message === 'Failed to fetch' || String(e).includes('Failed to fetch')) {
-            errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
-        }
-
-        setOrders((prev: Order[]) => prev.map(o => {
-            if (o.id === orderId) {
-                return { ...o, syncStatus: 'error', errorMessage: errMsg };
-            }
-            return o;
-        }));
-        if (showDefaultToast) addToast("狀態更新失敗，已標記為錯誤", 'error');
+      addSyncTask({
+        taskId: crypto.randomUUID(),
+        type: 'UPDATE_STATUS',
+        payload: { updates: updatesToProcess, customerName, deliveryDate },
+        retryCount: 0,
+        timestamp: Date.now()
+      });
     }
-  }, [orders, apiEndpoint, addToast, setOrders, setConflictData]);
+
+    // 3. 收工退出！沒有 try-catch、也沒有 timeout 檢查！
+  }, [orders, products, setOrders, addSyncTask]);
 
   const handleBatchSettleOrders = useCallback(async (orderIds: string[]) => {
     if (!orderIds.length) return;
 
-    // Optimistic update
+    // 1. 純前端瞬間切換狀態 (Optimistic UI)
     setOrders((prev: Order[]) => prev.map(o => 
       orderIds.includes(o.id) ? { ...o, status: OrderStatus.PAID, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o
     ));
 
-    // Add to pending updates map
-    orderIds.forEach(orderId => {
-      const orderToUpdate = orders.find(o => o.id === orderId);
-      if (orderToUpdate) {
-        pendingUpdatesRef.current.set(orderId, {
-          id: orderId,
-          status: OrderStatus.PAID,
-          originalStatus: orderToUpdate?.status, // 新增：轉換前狀態
-          items: orderToUpdate?.items?.map((item: any) => ({
-              ...item,
-              productName: item.productName || products.find((p: any) => p.id === item.productId)?.name || item.productId
-          })), // 新增：訂單明細並帶入商品名稱
-          originalVersion: orderToUpdate.version || 1,
-          force: true
+    // 2. 將實際的連線動作包裝成任務，交給背景 Queue 處理
+    if (addSyncTask) {
+        const updatesToProcess = orderIds.map(orderId => {
+            const orderToUpdate = orders.find(o => o.id === orderId);
+            return {
+              id: orderId,
+              status: OrderStatus.PAID,
+              originalStatus: orderToUpdate?.status,
+              items: orderToUpdate?.items?.map((item: any) => ({
+                  ...item,
+                  productName: item.productName || products.find((p: any) => p.id === item.productId)?.name || item.productId
+              })),
+              originalVersion: orderToUpdate?.version || 1,
+              force: true
+            };
+        }).filter(Boolean);
+
+        if (updatesToProcess.length === 0) return;
+
+        const firstOrderId = updatesToProcess[0]?.id;
+        const firstOrder = orders.find(o => o.id === firstOrderId);
+        const customerName = firstOrder?.customerName || '';
+        const deliveryDate = firstOrder?.deliveryDate || '';
+
+        addSyncTask({
+          taskId: crypto.randomUUID(),
+          type: 'BATCH_UPDATE',
+          payload: { updates: updatesToProcess, customerName, deliveryDate },
+          retryCount: 0,
+          timestamp: Date.now()
         });
-      }
-    });
+
+        addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
+    }
 
     if (batchTimeoutRef.current) {
         clearTimeout(batchTimeoutRef.current);
+        batchTimeoutRef.current = null;
     }
-
-    // Trigger batch update immediately and return a promise
-    return new Promise<void>((resolve) => {
-      batchTimeoutRef.current = setTimeout(async () => {
-          const updatesToProcess: any[] = Array.from(pendingUpdatesRef.current.values());
-          pendingUpdatesRef.current.clear();
-          batchTimeoutRef.current = null;
-
-          if (updatesToProcess.length === 0) {
-            resolve();
-            return;
-          }
-
-          const firstOrderId = updatesToProcess[0]?.id;
-          const firstOrder = orders.find(o => o.id === firstOrderId);
-          const customerName = firstOrder?.customerName || '';
-          const deliveryDate = firstOrder?.deliveryDate || '';
-
-          try {
-              if (apiEndpoint) {
-                  const token = localStorage.getItem('APP_SESSION_TOKEN');
-                  const res = await fetchWithRetry(
-                      apiEndpoint,
-                      {
-                          method: 'POST',
-                          body: JSON.stringify({ 
-                              action: 'batchUpdateOrders', 
-                              token: token || "",
-                              data: { updates: updatesToProcess, customerName, deliveryDate } 
-                          })
-                      },
-                      undefined,
-                      2,
-                      1500,
-                      false,
-                      45000 // 傳入自訂 timeout 延長至 45 秒
-                  );
-                  
-                  const json = await res.json();
-
-                  if (!json.success) {
-                      if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
-                          localStorage.removeItem('nm_auth_status');
-                          localStorage.removeItem('APP_SESSION_TOKEN');
-                          localStorage.removeItem('APP_USER_ROLE');
-                          localStorage.removeItem('APP_USER_NAME');
-                          window.dispatchEvent(new Event('app-unauthorized'));
-                          return;
-                      }
-                      if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
-                           setConflictData({
-                             action: 'batchUpdateOrders',
-                             data: { updates: updatesToProcess },
-                             description: `批量結帳更新發生版本衝突`,
-                             type: 'batch_order',
-                             clientData: updatesToProcess,
-                             serverData: json.serverData || json.data
-                           });
-                           return;
-                      } else {
-                           throw new Error(json.error || 'Unknown error');
-                      }
-                  } else {
-                      // Success!
-                      const newVersion = json.data.newLastUpdatedTs;
-                      const updatedIds = updatesToProcess.map(u => u.id);
-                      
-                      setOrders((prev: Order[]) => prev.map(o => {
-                          if (updatedIds.includes(o.id)) {
-                              return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newVersion };
-                          }
-                          return o;
-                      }));
-                      addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
-                      broadcastDataChange();
-                  }
-              }
-          } catch (e: any) {
-              if (String(e).includes("UNAUTHORIZED_OR_EXPIRED") || (e.message && e.message.includes("UNAUTHORIZED_OR_EXPIRED"))) {
-                  return;
-              }
-              console.error("Batch Sync Failed:", e);
-              let errMsg = e instanceof Error ? e.message : String(e);
-
-              if (e.name === 'AbortError' || (e.message && e.message.includes('aborted')) || String(e).includes('aborted') || String(e).includes('Timeout')) {
-                  errMsg = '請求連線逾時 (超過45秒)，這可能是網路不穩定或雲端處理較慢引起，請重試。';
-              } else if (e.message === 'Failed to fetch' || String(e).includes('Failed to fetch')) {
-                  errMsg = '網路連線失敗或伺服器無回應 (Failed to fetch)。請檢查 Apps Script 是否發生錯誤。';
-              }
-
-              const updatedIds = updatesToProcess.map(u => u.id);
-              setOrders((prev: Order[]) => prev.map(o => {
-                  if (updatedIds.includes(o.id)) {
-                      return { ...o, syncStatus: 'error', errorMessage: errMsg };
-                  }
-                  return o;
-              }));
-              addToast("結帳更新失敗，已標記為錯誤", 'error');
-          } finally {
-              resolve();
-          }
-      }, 100);
-    });
-
-  }, [orders, apiEndpoint, addToast, setOrders, setConflictData]);
+  }, [orders, products, addToast, setOrders, addSyncTask]);
 
   const handleSwipeStatusChange = useCallback((orderId: string, newStatus: OrderStatus) => {
     const order = orders.find(o => o.id === orderId);

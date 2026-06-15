@@ -61,6 +61,7 @@ import { useVoiceAssistant } from './hooks/useVoiceAssistant';
 import { useOrderActions } from './hooks/useOrderActions';
 import { useAutoOrderPrediction } from './hooks/useAutoOrderPrediction';
 import { useCompactMode } from './hooks/useCompactMode';
+import { useSyncQueue } from './hooks/useSyncQueue';
 import { useUIStore } from './store/useUIStore';
 import { fetchWithRetry } from './utils/fetchUtils';
 import { broadcastDataChange } from './services/firebaseSync';
@@ -166,6 +167,21 @@ const App: React.FC = () => {
   } = useDataSync(addToast);
 
   const auth = useAppAuth({ handleLogin, addToast });
+
+  const onSyncSuccess = useCallback((task: any, newLastUpdatedTs: number) => {
+    setOrders((prev: Order[]) => prev.map(o => {
+      if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
+        const ids = task.payload.updates.map((u: any) => u.id);
+        if (ids.includes(o.id)) {
+           return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newLastUpdatedTs || o.version };
+        }
+      }
+      return o;
+    }));
+    broadcastDataChange();
+  }, [setOrders]);
+
+  const { syncQueue, addSyncTask, isSyncingQueue } = useSyncQueue(apiEndpoint, addToast, onSyncSuccess);
 
   const customerMap = useMemo(() => {
     const map: Record<string, Customer> = {};
@@ -586,7 +602,8 @@ const App: React.FC = () => {
     handleForceRetry,
     lastOrderCandidate,
     setLastOrderCandidate,
-    setToasts
+    setToasts,
+    addSyncTask
   });
 
   // NEW: Trigger confirm dialog for settlement
@@ -952,6 +969,8 @@ const App: React.FC = () => {
         isUnlocked={auth.isUnlocked}
         setIsUnlocked={auth.setIsUnlocked}
         isOnline={isOnline}
+        syncQueue={syncQueue}
+        isSyncingQueue={isSyncingQueue}
       />
 
       {/* --- Toast Container --- */}
