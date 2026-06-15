@@ -59,6 +59,15 @@ export function setupMockBackend() {
             return new Response(JSON.stringify({ success: true, data: { lastUpdated: now } }), { status: 200 });
           }
 
+          if (action === 'batchUpdateOrders') {
+            let items = getStorage('orders');
+            data.updates.forEach((u: any) => {
+              items = items.map((item: any) => item.id === u.id ? { ...item, status: u.status, lastUpdated: now, version: now } : item);
+            });
+            setStorage('orders', items);
+            return new Response(JSON.stringify({ success: true, data: { newLastUpdatedTs: now } }), { status: 200 });
+          }
+
           if (action === 'reorderProducts') {
             let items = getStorage('products');
             const orderedIds = data;

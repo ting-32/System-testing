@@ -130,15 +130,12 @@ function doPost(e) {
         break;
       case "updateOrderStatus":
         result = updateOrderStatus(params.data);
-        writeSystemLog("UPDATE_ORDER_STATUS", params.data.id ? `Order ID: ${params.data.id}` : "Batch", JSON.stringify({ status: params.data.status }));
         break;
       case "batchUpdateOrders":
         result = batchUpdateOrders(params.data);
-        writeSystemLog("UPDATE_ORDER_BATCH", "多筆訂單", JSON.stringify({ updates: params.data }));
         break;
       case "batchUpdatePaymentStatus":
         result = batchUpdatePaymentStatus(params.data);
-        writeSystemLog("UPDATE_PAYMENT_BATCH", "多筆訂單", JSON.stringify({ count: (params.data.orderIds || []).length, paid: params.data.isPaid }));
         break;
       case "deleteOrder":
         result = deleteOrder(params.data);
@@ -257,7 +254,6 @@ function doPost(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   } finally {
     SpreadsheetApp.flush(); // 強制將快取變更寫入 Sheets，確保後續 Lock 拿到最新資料
-    lock.releaseLock();
   }
 }
 
@@ -940,7 +936,6 @@ function createOrder(orderData) {
     if (rows.length > 0) {
       const lastRow = sheet.getLastRow();
       sheet.getRange(lastRow + 1, 1, rows.length, maxCol).setValues(rows);
-      SpreadsheetApp.flush();
     }
     return { lastUpdated: lastUpdatedTs, version: 1 };
   } finally {
@@ -1048,30 +1043,29 @@ function updateOrderStatus(data) {
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
     const values = sheet.getDataRange().getValues();
-    let updated = false;
-    let newVersion = 0;
     const targetId = String(data.id).trim();
     const newLastUpdatedTs = String(new Date().getTime());
+    let newVersion = 0;
     
+    let rowsToUpdate = [];
+
     for (let i = 1; i < values.length; i++) {
       if (String(values[i][1]).trim() === targetId) {
-        // Conflict check if provided and not forced
         const currentVersion = values[i][versionColIdx];
         if (data.version !== undefined && !data.force) {
            checkOrderVersionStrict(currentVersion, data.version);
         }
-        
         newVersion = Number(currentVersion || 0) + 1;
-        values[i][8] = data.status; // Status column (0-indexed, col 9)
+        values[i][8] = data.status; // Status column (index 8 is col 9)
         values[i][lastUpdatedColIdx] = newLastUpdatedTs;
         values[i][versionColIdx] = newVersion;
-        updated = true;
+        rowsToUpdate.push(i + 1);
       }
     }
     
-    if (updated) {
+    if (rowsToUpdate.length > 0) {
+      // 統一覆寫以避免多次 setValue 發送 API 請求的極大效能損耗
       sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
-      SpreadsheetApp.flush();
     } else {
       throw new Error("Order not found: " + targetId);
     }
@@ -1104,29 +1098,29 @@ function batchUpdateOrders(data) {
     const updateMap = new Map();
     updates.forEach(u => updateMap.set(String(u.id).trim(), u));
 
-    let modified = false;
+    let rowsToUpdate = [];
+
     for (let i = 1; i < values.length; i++) {
       const rowId = String(values[i][1]).trim();
       if (updateMap.has(rowId)) {
         const updateData = updateMap.get(rowId);
         const currentVersion = values[i][versionColIdx];
         
-        // Conflict check if provided and not forced
         if (!updateData.force && updateData.version !== undefined) {
            checkOrderVersionStrict(currentVersion, updateData.version);
         }
         
+        const newVersion = Number(currentVersion || 0) + 1;
         values[i][8] = updateData.status; // Status column (index 8 is col 9)
         values[i][lastUpdatedColIdx] = newLastUpdatedTs;
-        values[i][versionColIdx] = Number(currentVersion || 0) + 1; // bump version
+        values[i][versionColIdx] = newVersion;
+        rowsToUpdate.push(i + 1);
         updatedCount++;
-        modified = true;
       }
     }
     
-    if (modified && values.length > 1) {
+    if (rowsToUpdate.length > 0) {
       sheet.getRange(2, 1, values.length - 1, values[0].length).setValues(values.slice(1));
-      SpreadsheetApp.flush();
     }
     
     return { updatedCount, newLastUpdatedTs };

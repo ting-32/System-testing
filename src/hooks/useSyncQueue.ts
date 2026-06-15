@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { SyncTask } from '../types';
+import { fetchWithRetry } from '../utils/fetchUtils';
 
 export function useSyncQueue(
   apiEndpoint: string, 
   addToast?: (msg: string, type: 'success'|'error'|'info'|'warning') => void,
-  onSyncSuccess?: (task: SyncTask, newLastUpdatedTs: number) => void
+  onSyncSuccess?: (task: SyncTask, newLastUpdatedTs: number) => void,
+  onSyncError?: (task: SyncTask, errorMsg: string) => void
 ) {
   const [syncQueue, setSyncQueue] = useState<SyncTask[]>([]);
   const [isSyncingQueue, setIsSyncingQueue] = useState(false);
@@ -44,12 +46,20 @@ export function useSyncQueue(
            };
         }
 
-        const res = await fetch(apiEndpoint, {
-          method: 'POST',
-          body: JSON.stringify(bodyPayload)
-        });
+        const res = await fetchWithRetry(
+          apiEndpoint, 
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(bodyPayload)
+          },
+          undefined,
+          2, // retries
+          4000, // delay
+          true, // silentFail
+          30000 // timeout
+        );
 
-        // if success, remove task
         if (res.ok) {
            const json = await res.json();
            if (json.success) {
@@ -59,10 +69,12 @@ export function useSyncQueue(
                }
            } else {
                if (json.errorCode === 'VERSION_CONFLICT' || json.errorCode === 'ERR_VERSION_CONFLICT') {
-                   // Dead letter or conflict. We remove it and maybe let user handle, but user said background sync is silent.
-                   // Actually we will remove it so it doesn't block
                    setSyncQueue(prev => prev.filter(t => t.taskId !== task.taskId));
                    addToast?.('部分更新遇到版本衝突，已取消背景同步', 'warning');
+                   if (onSyncError) {
+                       onSyncError(task, '版本衝突');
+                   }
+                   // We could theoretically mark it conflict but silent sync is silent.
                } else {
                    throw new Error(json.error || 'Server error');
                }
@@ -70,26 +82,32 @@ export function useSyncQueue(
         } else {
            throw new Error('HTTP error');
         }
-      } catch (err) {
-        // failed, leave in queue. update retry count
+      } catch (err: any) {
         setSyncQueue(prev => prev.map(t => {
            if (t.taskId === task.taskId) {
                const newRetries = t.retryCount + 1;
-               if (newRetries > 20) {
-                 addToast?.(`訂單更新失敗20次，請檢查網路`, 'error');
-                 return null as any; // later filter out
+               if (newRetries > 10) {
+                 // 10 retries (~3-5 mins) then give up. 
+                 addToast?.(`訂單更新背景同步失敗過多次，請整理畫面重試`, 'error');
+                 if (onSyncError) {
+                     onSyncError(task, '同步失敗過多次');
+                 }
+                 return null as any; 
                }
                return { ...t, retryCount: newRetries };
            }
            return t;
         }).filter(Boolean));
+        // Add a delay before next attempt so we don't spam if it's an immediate failure
+        await new Promise(r => setTimeout(r, 6000));
       } finally {
         setIsSyncingQueue(false);
       }
     };
 
-    const timer = setInterval(processQueue, 5000);
-    return () => clearInterval(timer);
+    // run immediately without waiting for an interval
+    processQueue();
+
   }, [syncQueue, isSyncingQueue, apiEndpoint, addToast]);
 
   return { syncQueue, addSyncTask, isSyncingQueue };

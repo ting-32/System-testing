@@ -209,6 +209,7 @@ export const useOrderActions = ({
         const token = localStorage.getItem('APP_SESSION_TOKEN');
         const res = await fetchWithRetry(apiEndpoint, {
           method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ action: 'createOrder', token: token || "", data: { ...newOrder, items: uploadItems } })
         });
         const json = await res.json();
@@ -681,7 +682,7 @@ export const useOrderActions = ({
       if (apiEndpoint) { 
         const payload = { id: orderId, version: orderBackup.version };
         const token = localStorage.getItem('APP_SESSION_TOKEN');
-        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', token: token || "", data: payload }) }); 
+        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'deleteOrder', token: token || "", data: payload }) }); 
         const json = await res.json();
         if (!json.success) {
             if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
@@ -807,7 +808,15 @@ export const useOrderActions = ({
   }, [orders, setOrders, saveOrderToCloud, executeDeleteOrder]);
 
   const handleDiscardLocalError = useCallback((orderId: string) => {
-    setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId));
+    setOrders((prev: Order[]) => prev.map(o => {
+      if (o.id === orderId) {
+        if (o.pendingAction === 'create') {
+          return null as any; // delete if it was a create
+        }
+        return { ...o, syncStatus: 'synced', errorMessage: undefined, pendingAction: undefined };
+      }
+      return o;
+    }).filter(Boolean));
     addToast('已捨棄本地該筆異常任務。', 'info');
   }, [setOrders, addToast]);
 

@@ -181,7 +181,19 @@ const App: React.FC = () => {
     broadcastDataChange();
   }, [setOrders]);
 
-  const { syncQueue, addSyncTask, isSyncingQueue } = useSyncQueue(apiEndpoint, addToast, onSyncSuccess);
+  const onSyncError = useCallback((task: any, errorMsg: string) => {
+    setOrders((prev: Order[]) => prev.map(o => {
+      if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
+        const ids = task.payload.updates.map((u: any) => u.id);
+        if (ids.includes(o.id)) {
+           return { ...o, syncStatus: 'error', errorMessage: errorMsg };
+        }
+      }
+      return o;
+    }));
+  }, [setOrders]);
+
+  const { syncQueue, addSyncTask, isSyncingQueue } = useSyncQueue(apiEndpoint, addToast, onSyncSuccess, onSyncError);
 
   const customerMap = useMemo(() => {
     const map: Record<string, Customer> = {};
@@ -724,7 +736,7 @@ const App: React.FC = () => {
         (payload as any).originalLastUpdated = originalLastUpdated;
         (payload as any).force = true;
       }
-      const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateCustomer', data: payload }) });
+      const res = await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'updateCustomer', data: payload }) });
       const json = await res.json();
       if (!json.success) {
         setCustomers(previousCustomers); // Revert
@@ -759,7 +771,7 @@ const App: React.FC = () => {
   const onDeleteCustomerCloud = async (customerId: string, customerBackup: Customer) => {
     if (!apiEndpoint) return;
     try {
-      await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteCustomer', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) });
+      await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'deleteCustomer', data: { id: customerId, originalLastUpdated: customerBackup.lastUpdated } }) });
       broadcastDataChange();
     } catch (e) {
       console.error("刪除失敗:", e);
@@ -885,7 +897,7 @@ const App: React.FC = () => {
       if (isEditingProduct !== 'new') {
         (payload as any).originalLastUpdated = originalLastUpdated;
       }
-      const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'updateProduct', data: payload }) });
+      const res = await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'updateProduct', data: payload }) });
       const json = await res.json();
       if (!json.success) {
         setProducts(previousProducts);
@@ -919,7 +931,7 @@ const App: React.FC = () => {
   const onDeleteProductCloud = async (productId: string, productBackup: Product) => {
     if (!apiEndpoint) return;
     try {
-      await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteProduct', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) });
+      await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'deleteProduct', data: { id: productId, originalLastUpdated: productBackup.lastUpdated } }) });
       broadcastDataChange();
     } catch (e) {
       console.error("刪除失敗:", e);
@@ -932,7 +944,7 @@ const App: React.FC = () => {
      if (!apiEndpoint || isSaving) return false;
      setIsSaving(true);
      try {
-       await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'reorderProducts', data: orderedIds }) });
+       await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'reorderProducts', data: orderedIds }) });
        setInitialProductOrder(orderedIds);
        broadcastDataChange();
        return true;

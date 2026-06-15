@@ -577,9 +577,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       }
 
       let errMsg = e instanceof Error ? e.message : String(e);
-      if (!errMsg.includes('Order not found')) {
-        console.error("Sync Failed:", e);
-      }
       
       // === 自動修復機制 (幽靈訂單 UPSERT) ===
       // 如果後端說找不到訂單 (發生於本地建立失敗，但被使用者改了狀態後重試)
