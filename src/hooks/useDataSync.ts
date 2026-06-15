@@ -184,15 +184,15 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
       }
 
       const startDate = new Date(); 
-      startDate.setDate(startDate.getDate() - 60); 
+      startDate.setDate(startDate.getDate() - 90); 
       const startDateStr = formatDateStr(startDate); 
       
       let lastSyncStr = localStorage.getItem('nm_last_sync_ts');
       
       // 強制執行一次全量同步，確保近期人工新增但沒有 LastUpdated 的資料能被抓下來
-      if (localStorage.getItem('nm_force_full_sync_3') !== 'done') {
+      if (localStorage.getItem('nm_force_full_sync_7') !== 'done') {
         lastSyncStr = null;
-        localStorage.setItem('nm_force_full_sync_3', 'done');
+        localStorage.setItem('nm_force_full_sync_7', 'done');
       }
 
       const since = lastSyncStr && isSilent ? Number(lastSyncStr) : 0;
@@ -332,6 +332,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                         if (orderData.syncStatus === 'pending' || orderData.syncStatus === 'error') continue;
                         if (orderId.startsWith('MIGRATED-')) continue;
                         if (orderId.startsWith('AUTO-')) continue;
+                        if (orderId.startsWith('fallback_')) continue;
                         
                         // 若雲端有效名單內已經沒有這個 ID，即判定為已被其他裝置/後台刪除，進行本地除名
                         if (!activeSet.has(orderId)) {
@@ -375,7 +376,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         }
 
         if (!isSilent) {
-          addToast('雲端資料已同步完成 (近60天)', 'success');
+          addToast('雲端資料已同步完成 (近90天)', 'success');
         } else {
           addToast(`已更新至最新資料`, 'success');
         }
@@ -571,12 +572,14 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
          return; // 這裡攔截衝突不丟出錯誤，等待使用者解決
       }
       
-      if (e instanceof Error && e.message === "UNAUTHORIZED_OR_EXPIRED") {
+      if (String(e).includes("UNAUTHORIZED_OR_EXPIRED") || (e.message && e.message.includes("UNAUTHORIZED_OR_EXPIRED"))) {
          return; // 此情況已被全域捕捉並將自動重新整理，不再拋出及顯示跳窗
       }
 
-      console.error("Sync Failed:", e);
       let errMsg = e instanceof Error ? e.message : String(e);
+      if (!errMsg.includes('Order not found')) {
+        console.error("Sync Failed:", e);
+      }
       
       // === 自動修復機制 (幽靈訂單 UPSERT) ===
       // 如果後端說找不到訂單 (發生於本地建立失敗，但被使用者改了狀態後重試)

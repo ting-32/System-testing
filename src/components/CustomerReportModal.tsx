@@ -44,7 +44,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
       (reportType === 'month' 
         ? o.deliveryDate.startsWith(reportMonth) 
         : o.deliveryDate.startsWith(reportYear)) &&
-      o.status !== 'cancelled'
+      o.status !== 'CANCELLED' && o.status !== OrderStatus.CANCELLED
     ).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
   }, [orders, customerName, reportMonth, reportYear, reportType]);
 

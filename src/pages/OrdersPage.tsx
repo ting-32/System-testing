@@ -75,6 +75,7 @@ import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
   openGoogleMaps: (name: string) => void;
   handleDeleteOrder: (id: string) => void;
   handleRetrySync: (id: string) => void;
+  handleDiscardLocalError?: (id: string) => void;
   
   externalEditOrderId?: string | null;
   onClearExternalEdit?: () => void;
@@ -93,7 +94,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
   orderForm, setOrderForm,
   handleQuickAddSubmit, handleSwipeStatusChange, handleCopyOrder, handleShareOrder,
   handleEditOrder, handleSaveOrder, applyLastOrder, handleSelectExistingCustomer,
-  openGoogleMaps, handleDeleteOrder, handleRetrySync,
+  openGoogleMaps, handleDeleteOrder, handleRetrySync, handleDiscardLocalError,
   externalEditOrderId, onClearExternalEdit,
   externalAddOrderData, clearExternalAddOrder
 }) => {
@@ -355,7 +356,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
                                 onToggleSelection={() => { const newSet = new Set(selectedOrderIds); if (newSet.has(order.id)) newSet.delete(order.id); else newSet.add(order.id); setSelectedOrderIds(newSet); }}
                                 onStatusChange={handleSwipeStatusChange} onDelete={() => requireAuth(() => handleDeleteOrder(order.id))}
                                 onShare={handleShareOrder} onMap={openGoogleMaps} onEdit={(orderId) => requireAuth(() => handleEditOrder(orderId))}
-                                onRetry={handleRetrySync} onViewCustomer={setViewingCustomerProfile}
+                                onRetry={handleRetrySync} onDiscardLocal={handleDiscardLocalError} onViewCustomer={setViewingCustomerProfile}
                              />
                           ))}
                           <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => setQuickAddData({ customerName: custName, items: [{productId: '', quantity: 10, unit: '斤'}] }))} className="w-full mt-2 py-3 rounded-[16px] border-2 border-dashed border-morandi-blue/30 text-morandi-blue font-bold text-sm flex items-center justify-center gap-2 hover:bg-morandi-blue/5 transition-colors tracking-wide"><Plus className="w-4 h-4" /> 追加訂單</motion.button>

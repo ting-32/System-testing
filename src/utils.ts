@@ -37,29 +37,48 @@ export const normalizeDate = (dateStr: any, fallbackToToday = true) => {
   if (!dateStr && !fallbackToToday) return '';
   if (!dateStr) return getSmartDefaultDate();
   
+  if (typeof dateStr === 'string') {
+    let str = dateStr.trim().split(' ')[0].replace(/\./g, '-'); // remove time or (三)
+    // Extract padded Y-M-D
+    let match = str.match(/(?:(\d{2,4})[\/\-])?(\d{1,2})[\/\-日](\d{1,2})/);
+    if (match) {
+      let y = match[1] ? match[1] : new Date().getFullYear().toString();
+      if (y.length === 2) y = "20" + y; // 26 -> 2026
+      if (y.length === 3 && parseInt(y) < 1900) y = String(parseInt(y) + 1911); // 115 -> 2026
+      // specifically handle stupid JS 2001 default for short dates
+      if (parseInt(y) < 2010 && parseInt(y) > 1920) y = new Date().getFullYear().toString(); 
+      let m = match[2].padStart(2, '0');
+      let day = match[3].padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  }
+
   try {
-    const d = new Date(dateStr);
+    let d = new Date(dateStr);
+    
+    if (isNaN(d.getTime()) && typeof dateStr === 'string') {
+       const cleaned = dateStr.replace(/\//g, '-').split(' ')[0];
+       d = new Date(cleaned);
+    }
+    
     if (isNaN(d.getTime())) {
-      if (typeof dateStr === 'string') {
-         // handle yyyy/mm/dd mapping
-         const cleaned = dateStr.replace(/\//g, '-').split(' ')[0];
-         const d2 = new Date(cleaned);
-         if (!isNaN(d2.getTime())) {
-             return `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
-         }
-      }
       if (process.env.NODE_ENV === 'development') {
-          console.warn(`[Data Sanitization] Invalid date encountered: "${dateStr}". Falling back to system default.`);
+          console.warn(`[Data Sanitization] Invalid date encountered: "${dateStr}".`);
       }
       return fallbackToToday ? getSmartDefaultDate() : '';
     }
-    const y = d.getFullYear();
+    
+    let y = d.getFullYear();
+    if (y < 2010 && typeof dateStr === 'string' && /^\d{1,2}[\/\-]\d{1,2}$/.test(dateStr.trim())) {
+        y = new Date().getFullYear();
+    }
+    
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   } catch (e) {
     if (process.env.NODE_ENV === 'development') {
-         console.warn(`[Data Sanitization] Invalid date encountered: "${dateStr}". Falling back to system default.`);
+         console.warn(`[Data Sanitization] Invalid date encountered: "${dateStr}".`);
     }
     return fallbackToToday ? getSmartDefaultDate() : '';
   }

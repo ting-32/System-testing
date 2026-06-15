@@ -609,7 +609,26 @@ function getData(startDateStr, since = 0) {
         if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || 'Asia/Taipei';
         d = Utilities.formatDate(d, cachedTimeZone, 'yyyyMMdd');
       } else {
-        d = String(d || '').split(' ')[0].replace(/[\/-]/g, '');
+        d = String(d || '').trim().split(' ')[0];
+        // replace dots with dashes
+        d = d.replace(/\./g, '-');
+        if (/^\d{1,2}[\/\-]\d{1,2}$/.test(d)) {
+          let parts = d.split(/[\/\-]/);
+          let currentYear = new Date().getFullYear();
+          let m = parts[0].padStart(2, '0');
+          let day = parts[1].padStart(2, '0');
+          d = currentYear + m + day;
+        } else {
+          let parts = d.split(/[\/\-]/);
+          if (parts.length === 3) {
+            let y = parts[0];
+            if (y.length === 2) y = "20" + y; // 26 -> 2026
+            if (y.length === 3 && parseInt(y) < 1900) y = String(parseInt(y) + 1911); // 115 -> 2026
+            d = y + parts[1].padStart(2, '0') + parts[2].padStart(2, '0');
+          } else {
+            d = d.replace(/[\/-]/g, '');
+          }
+        }
       }
       return d >= startStr;
     });
@@ -619,7 +638,7 @@ function getData(startDateStr, since = 0) {
   const allActiveOrderIds = (since > 0) ? orders.map(o => String(o.id || "")).filter(id => id !== "") : [];
 
   if (since > 0) {
-    orders = orders.filter(o => o.lastUpdated > since);
+    orders = orders.filter(o => o.lastUpdated > since || o.lastUpdated === 0);
   }
   
   // Get settings

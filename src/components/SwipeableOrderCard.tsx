@@ -19,13 +19,14 @@ interface SwipeableOrderCardProps {
   onMap: (name: string) => void;
   onEdit: (order: Order) => void;
   onRetry?: (id: string) => void;
+  onDiscardLocal?: (id: string) => void;
   onViewCustomer?: (customerName: string) => void;
   isLoadingProducts?: boolean;
 }
 
 export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({ 
   order, productMap, customerMap, isSelectionMode, isSelected, onToggleSelection, 
-  onStatusChange, onDelete, onShare, onMap, onEdit, onRetry, onViewCustomer, isLoadingProducts
+  onStatusChange, onDelete, onShare, onMap, onEdit, onRetry, onDiscardLocal, onViewCustomer, isLoadingProducts
 }) => {
   const x = useMotionValue(0);
   
@@ -244,19 +245,29 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
           
           {/* Error Message & Retry Button */}
           {isSyncError && (
-            <div className="mt-3 bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-center justify-between">
+            <div className="mt-3 bg-rose-50 border border-rose-100 rounded-xl p-3 flex flex-col gap-2">
                 <div className="text-xs text-rose-600 font-bold flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {order.errorMessage || '同步失敗'}
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                    <span>{order.errorMessage || '同步失敗'}</span>
                 </div>
-                {onRetry && (
-                    <button 
-                        onClick={(e) => { e.stopPropagation(); onRetry(order.id); }}
-                        className="text-xs bg-rose-500 text-white px-3 py-1.5 rounded-lg font-bold shadow-sm active:scale-95 transition-transform flex items-center gap-1"
-                    >
-                        <RefreshCw className="w-3 h-3" /> 重試
-                    </button>
-                )}
+                <div className="flex justify-end gap-2 mt-1">
+                    {onDiscardLocal && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onDiscardLocal(order.id); }}
+                            className="text-xs bg-white text-rose-600 border border-rose-200 px-3 py-1.5 rounded-lg font-bold shadow-sm active:scale-95 transition-transform flex items-center gap-1"
+                        >
+                            <Trash2 className="w-3 h-3" /> 捨棄
+                        </button>
+                    )}
+                    {onRetry && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onRetry(order.id); }}
+                            className="text-xs bg-rose-500 text-white px-3 py-1.5 rounded-lg font-bold shadow-sm active:scale-95 transition-transform flex items-center gap-1"
+                        >
+                            <RefreshCw className="w-3 h-3" /> 重試
+                        </button>
+                    )}
+                </div>
             </div>
           )}
 

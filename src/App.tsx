@@ -556,7 +556,8 @@ const App: React.FC = () => {
     openGoogleMaps,
     handleDeleteOrder,
     handleBatchUpdateTrip,
-    handleRetrySync
+    handleRetrySync,
+    handleDiscardLocalError
   } = useOrderActions({
     orders,
     setOrders, customers,
@@ -1009,6 +1010,7 @@ const App: React.FC = () => {
           openGoogleMaps={openGoogleMaps}
           handleDeleteOrder={handleDeleteOrder}
           handleRetrySync={handleRetrySync}
+          handleDiscardLocalError={handleDiscardLocalError}
           externalEditOrderId={externalEditOrderId || (externalAction?.type === 'edit' ? externalAction.id : null)}
           onClearExternalEdit={() => { setExternalEditOrderId(null); setExternalAction(null); }}
           externalAddOrderData={externalAddOrderData}

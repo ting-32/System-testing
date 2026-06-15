@@ -54,7 +54,7 @@ export class DataMapper {
       const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
       return { 
         id: String(c.ID || c.id || ''), 
-        name: c.客戶名稱 || c.name || '', 
+        name: String(c.客戶名稱 || c.name || '').trim().replace(/[\r\n]/g, ''), 
         phone: c.電話 || c.phone || '', 
         address: c.地址 || c.address || '',
         coordinates: c.座標位置 || c.coordinates || c.GoogleMap網址 || c.googleMapUrl || '',
@@ -75,7 +75,7 @@ export class DataMapper {
   static mapProducts(rawProducts: any[]): Product[] {
     return rawProducts.map((p: any) => ({ 
       id: String(p.ID || p.id), 
-      name: p.品項 || p.name, 
+      name: String(p.品項 || p.name || '').trim().replace(/[\r\n]/g, ''), 
       unit: p.單位 || p.unit, 
       price: safeNumber(p.單價 || p.price, 0, `Product ${p.name} price`), 
       category: p.分類 || p.category || 'other',
@@ -85,20 +85,35 @@ export class DataMapper {
 
   static mapOrders(rawOrders: any[]): Order[] {
     const orderMap: { [key: string]: Order } = {}; 
-    rawOrders.forEach((o: any) => { 
-      const oid = String(o.訂單ID || o.id); 
+    rawOrders.forEach((o: any, index: number) => { 
+      let oid = o.訂單ID || o.id; 
+      if (!oid || String(oid).trim() === '') {
+        const custName = String(o.客戶名 || o.customerName || '未知客戶').trim().replace(/[\r\n]/g, '');
+        const date = o.配送日期 || o.deliveryDate || 'nodate';
+        const time = o.配送時間 || o.deliveryTime || 'notime';
+        oid = `fallback_${custName}_${date}_${time}`;
+      } else {
+        oid = String(oid);
+      }
+
       if (!orderMap[oid]) { 
         const rawDate = o.配送日期 || o.deliveryDate; 
         const normalizedDate = normalizeDate(rawDate); 
+        const statusRaw = String(o.狀態 || o.status || '').trim().toUpperCase();
+        let mappedStatus = OrderStatus.PENDING;
+        if (['SHIPPED', '已出貨'].includes(statusRaw)) mappedStatus = OrderStatus.SHIPPED;
+        else if (['PAID', '已收款'].includes(statusRaw)) mappedStatus = OrderStatus.PAID;
+        else if (['CANCELLED', '已取消', '取消', 'DELETED'].includes(statusRaw)) mappedStatus = OrderStatus.CANCELLED;
+
         orderMap[oid] = { 
           id: oid, 
           createdAt: o.建立時間 || o.createdAt, 
-          customerName: o.客戶名 || o.customerName || '未知客戶', 
+          customerName: String(o.客戶名 || o.customerName || '未知客戶').trim().replace(/[\r\n]/g, ''), 
           deliveryDate: normalizedDate, 
           deliveryTime: o.配送時間 || o.deliveryTime, 
           items: [], 
           note: o.備註 || o.note || '', 
-          status: (o.狀態 || o.status as OrderStatus) || OrderStatus.PENDING, 
+          status: mappedStatus,
           source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
           deliveryMethod: o.配送方式 || o.deliveryMethod || '',
           trip: o.趟次 || o.trip || '',
@@ -110,8 +125,8 @@ export class DataMapper {
       
       if (o.品項名 || o.productName || o.productId) { 
         orderMap[oid].items.push({ 
-          productId: o.產品ID || o.productId || o.品項名 || o.productName, 
-          productName: o.品項名 || o.productName, 
+          productId: String(o.產品ID || o.productId || o.品項名 || o.productName || '').trim().replace(/[\r\n]/g, ''), 
+          productName: String(o.品項名 || o.productName || '').trim().replace(/[\r\n]/g, ''), 
           quantity: safeNumber(o.數量 || o.quantity, 0, `Order ${oid} item ${o.productName} quantity`), 
           unit: o.單位 || o.unit || '斤' 
         }); 

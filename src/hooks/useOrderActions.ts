@@ -204,11 +204,20 @@ export const useOrderActions = ({
           const p = products.find(prod => prod.id === item.productId);
           return { productName: item.productName || p?.name || item.productId, quantity: item.quantity, unit: item.unit };
         });
+        const token = localStorage.getItem('APP_SESSION_TOKEN');
         const res = await fetchWithRetry(apiEndpoint, {
           method: 'POST',
-          body: JSON.stringify({ action: 'createOrder', data: { ...newOrder, items: uploadItems } })
+          body: JSON.stringify({ action: 'createOrder', token: token || "", data: { ...newOrder, items: uploadItems } })
         });
-        await res.json();
+        const json = await res.json();
+        if (json && !json.success && json.error === "UNAUTHORIZED_OR_EXPIRED") {
+             localStorage.removeItem('nm_auth_status');
+             localStorage.removeItem('APP_SESSION_TOKEN');
+             localStorage.removeItem('APP_USER_ROLE');
+             localStorage.removeItem('APP_USER_NAME');
+             window.dispatchEvent(new Event('app-unauthorized'));
+             return;
+        }
         broadcastDataChange();
       }
     } catch (e) {
@@ -245,12 +254,14 @@ export const useOrderActions = ({
                 version: orderToUpdate?.version || 1, 
                 force: true 
             }];
+            const token = localStorage.getItem('APP_SESSION_TOKEN');
             const res = await fetchWithRetry(
                 apiEndpoint, 
                 {
                     method: 'POST',
                     body: JSON.stringify({ 
                         action: 'batchUpdateOrders', 
+                        token: token || "",
                         data: { updates: updatesToProcess, customerName, deliveryDate } 
                     })
                 },
@@ -264,6 +275,14 @@ export const useOrderActions = ({
             const json = await res.json();
 
             if (!json.success) {
+                if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
+                    localStorage.removeItem('nm_auth_status');
+                    localStorage.removeItem('APP_SESSION_TOKEN');
+                    localStorage.removeItem('APP_USER_ROLE');
+                    localStorage.removeItem('APP_USER_NAME');
+                    window.dispatchEvent(new Event('app-unauthorized'));
+                    return;
+                }
                 if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
                      setConflictData({
                        action: 'batchUpdateOrders',
@@ -292,7 +311,7 @@ export const useOrderActions = ({
         }
     } catch (e: any) {
         if (e.message === 'VERSION_CONFLICT' || e.message === 'ERR_VERSION_CONFLICT') return;
-        if (e.message === "UNAUTHORIZED_OR_EXPIRED") return;
+        if (String(e).includes("UNAUTHORIZED_OR_EXPIRED") || (e.message && e.message.includes("UNAUTHORIZED_OR_EXPIRED"))) return;
         console.error("Sync Failed:", e);
         let errMsg = e instanceof Error ? e.message : String(e);
 
@@ -361,12 +380,14 @@ export const useOrderActions = ({
 
           try {
               if (apiEndpoint) {
+                  const token = localStorage.getItem('APP_SESSION_TOKEN');
                   const res = await fetchWithRetry(
                       apiEndpoint,
                       {
                           method: 'POST',
                           body: JSON.stringify({ 
                               action: 'batchUpdateOrders', 
+                              token: token || "",
                               data: { updates: updatesToProcess, customerName, deliveryDate } 
                           })
                       },
@@ -380,6 +401,14 @@ export const useOrderActions = ({
                   const json = await res.json();
 
                   if (!json.success) {
+                      if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
+                          localStorage.removeItem('nm_auth_status');
+                          localStorage.removeItem('APP_SESSION_TOKEN');
+                          localStorage.removeItem('APP_USER_ROLE');
+                          localStorage.removeItem('APP_USER_NAME');
+                          window.dispatchEvent(new Event('app-unauthorized'));
+                          return;
+                      }
                       if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
                            setConflictData({
                              action: 'batchUpdateOrders',
@@ -409,7 +438,7 @@ export const useOrderActions = ({
                   }
               }
           } catch (e: any) {
-              if (e.message === "UNAUTHORIZED_OR_EXPIRED") {
+              if (String(e).includes("UNAUTHORIZED_OR_EXPIRED") || (e.message && e.message.includes("UNAUTHORIZED_OR_EXPIRED"))) {
                   return;
               }
               console.error("Batch Sync Failed:", e);
@@ -798,9 +827,18 @@ export const useOrderActions = ({
     try { 
       if (apiEndpoint) { 
         const payload = { id: orderId, version: orderBackup.version };
-        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', data: payload }) }); 
+        const token = localStorage.getItem('APP_SESSION_TOKEN');
+        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', body: JSON.stringify({ action: 'deleteOrder', token: token || "", data: payload }) }); 
         const json = await res.json();
-         if (!json.success) {
+        if (!json.success) {
+            if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
+                localStorage.removeItem('nm_auth_status');
+                localStorage.removeItem('APP_SESSION_TOKEN');
+                localStorage.removeItem('APP_USER_ROLE');
+                localStorage.removeItem('APP_USER_NAME');
+                window.dispatchEvent(new Event('app-unauthorized'));
+                return;
+            }
             if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
                setOrders((prev: Order[]) => [...prev, orderBackup]); // Revert
                setConflictData({
@@ -822,6 +860,7 @@ export const useOrderActions = ({
          }
       } 
     } catch (e) { 
+      if (e instanceof Error && e.message === "UNAUTHORIZED_OR_EXPIRED") return;
       console.error("刪除失敗:", e); 
       setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error', pendingAction: 'delete' }]);
       addToast("刪除失敗，已標記為錯誤", 'error'); 
@@ -912,7 +951,12 @@ export const useOrderActions = ({
     } catch (e) {
       console.error(e);
     }
-  }, [orders, setOrders, saveOrderToCloud]);
+  }, [orders, setOrders, saveOrderToCloud, executeDeleteOrder]);
+
+  const handleDiscardLocalError = useCallback((orderId: string) => {
+    setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId));
+    addToast('已捨棄本地該筆異常任務。', 'info');
+  }, [setOrders, addToast]);
 
   return {
     handleQuickAddSubmit,
@@ -932,6 +976,7 @@ export const useOrderActions = ({
     openGoogleMaps,
     handleDeleteOrder,
     handleBatchUpdateTrip,
-    handleRetrySync
+    handleRetrySync,
+    handleDiscardLocalError
   };
 };
