@@ -102,11 +102,9 @@ export function Header({
             )}
           </AnimatePresence>
         </motion.button>
-        {localStorage.getItem('APP_USER_ROLE') === 'admin' && (
-          <motion.button whileTap={buttonTap} onClick={() => ui.openSettings()} className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center border border-slate-100 text-morandi-pebble hover:text-slate-600 transition-colors active:scale-95">
-            <Settings className="w-5 h-5" />
-          </motion.button>
-        )}
+        <motion.button whileTap={buttonTap} onClick={() => ui.openSettings()} className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center border border-slate-100 text-morandi-pebble hover:text-slate-600 transition-colors active:scale-95">
+          <Settings className="w-5 h-5" />
+        </motion.button>
       </div>
     </header>
   );
