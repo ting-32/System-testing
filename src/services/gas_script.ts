@@ -1192,7 +1192,7 @@ function deleteOrder(data) {
       
       // Update Status, LastUpdated, Version in memory
       values[i][statusColIdx] = 'DELETED';
-      values[i][lastUpdatedColIdx] = tsString;
+      values[i][lastUpdatedColIdx] = String(new Date().getTime());
       values[i][versionColIdx] = newVersion;
     }
   }

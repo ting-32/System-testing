@@ -331,7 +331,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
                         // 安全保護：跳過 "本地尚未上傳/重試中" 的訂單 以及 "歷史未帶 ID" 自動被冠上 MIGRATED- 前綴的老訂單
                         if (orderData.syncStatus === 'pending' || orderData.syncStatus === 'error') continue;
                         if (orderId.startsWith('MIGRATED-')) continue;
-                        if (orderId.startsWith('AUTO-')) continue;
                         if (orderId.startsWith('fallback_')) continue;
                         
                         // 若雲端有效名單內已經沒有這個 ID，即判定為已被其他裝置/後台刪除，進行本地除名
