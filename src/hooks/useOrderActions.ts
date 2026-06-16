@@ -188,7 +188,7 @@ export const useOrderActions = ({
     });
 
     const newOrder: Order = {
-      id: 'Q-ORD-' + Date.now(),
+      id: 'Q-ORD-' + Date.now() + Math.random().toString(36).substring(2, 6),
       createdAt: new Date().toISOString(),
       customerName: quickAddData.customerName,
       deliveryDate: selectedDate,
@@ -622,7 +622,7 @@ export const useOrderActions = ({
     });
 
     const newOrder: Order = {
-      id: editingOrderId || 'ORD-' + Date.now(),
+      id: editingOrderId || 'ORD-' + Date.now() + Math.random().toString(36).substring(2, 6),
       createdAt: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
       customerName: orderForm.customerName,
       deliveryDate: orderForm.date || selectedDate,

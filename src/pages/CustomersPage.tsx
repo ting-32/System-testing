@@ -103,57 +103,6 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
     return result;
   }, [customers, customerSearch]);
 
-  const handleSaveCustomer = async () => { 
-    if (!customerForm.name || isSaving) return; 
-    
-    const isDuplicateName = customers.some(c => String(c.name || '').trim() === String(customerForm.name || '').trim() && c.id !== (isEditingCustomer === 'new' ? null : isEditingCustomer)); 
-    if (isDuplicateName) { addToast('客戶名稱不可重複！', 'error'); return; } 
-    
-    // Validate coordinates
-    if (customerForm.coordinates) {
-      const coordPattern = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
-      if (!coordPattern.test(customerForm.coordinates)) {
-        addToast('請輸入正確的座標格式，例如：25.033964, 121.564468', 'error');
-        return;
-      }
-    }
-
-    const finalCustomer: Customer = { 
-      id: isEditingCustomer === 'new' ? Date.now().toString() : (isEditingCustomer as string), 
-      name: String(customerForm.name || '').trim(), 
-      phone: String(customerForm.phone || '').trim(), 
-      address: String(customerForm.address || '').trim(), 
-      coordinates: String(customerForm.coordinates || '').trim(), 
-      deliveryTime: customerForm.deliveryTime || '08:00', 
-      deliveryMethod: customerForm.deliveryMethod || '', 
-      paymentTerm: customerForm.paymentTerm || 'regular', 
-      defaultItems: (customerForm.defaultItems || []).filter((i: any) => i.productId !== ''), 
-      priceList: (customerForm.priceList || []), 
-      offDays: customerForm.offDays || [], 
-      holidayDates: customerForm.holidayDates || [], 
-      defaultTrip: customerForm.defaultTrip || '', 
-      autoOrderEnabled: customerForm.autoOrderEnabled || false, 
-      lastUpdated: Date.now() 
-    }; 
-    
-    // Backup old list for revert
-    const previousCustomers = [...customers];
-
-    // Optimistic Update
-    if (isEditingCustomer === 'new') setCustomers([...customers, finalCustomer]); 
-    else setCustomers(customers.map(c => c.id === isEditingCustomer ? finalCustomer : c)); 
-    
-    // Close modal UI immediately
-    const tempIsEditingCustomer = isEditingCustomer;
-    const tempOriginalLastUpdated = editingVersionRef.current;
-    
-    setIsEditingCustomer(null); 
-    editingVersionRef.current = undefined;
-
-    // Async sync to cloud
-    await onSaveCustomerCloud(finalCustomer, tempIsEditingCustomer, tempOriginalLastUpdated, previousCustomers);
-  };
-
   const executeDeleteCustomer = async (customerId: string) => { 
     setConfirmConfig((prev: any) => ({ ...prev, isOpen: false })); 
     const customerBackup = customers.find(c => c.id === customerId); 
@@ -178,10 +127,10 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
         </div>
         
         <motion.div variants={containerVariants} initial="hidden" animate="show" className="pt-4">
-        {filteredCustomers.map(c => {
+        {filteredCustomers.map((c, idx) => {
            const hasOrderToday = groupedOrders[c.name] && groupedOrders[c.name].length > 0;
            return (
-              <motion.div variants={itemVariants} key={c.id} className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-200 mb-4 hover:shadow-md transition-all relative overflow-hidden">
+              <motion.div variants={itemVariants} key={c.id || `fallback-${idx}`} className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-200 mb-4 hover:shadow-md transition-all relative overflow-hidden">
                 {hasOrderToday && <div className="absolute top-0 right-0 bg-amber-100 text-amber-700 text-[9px] font-bold px-3 py-1 rounded-bl-xl z-10">今日已下單</div>}
                 <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{String(c.name || '').charAt(0)}</div><div><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p>{(c.address || c.coordinates) && (() => {
 const targetUrl = c.coordinates ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.coordinates)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address || '')}`;

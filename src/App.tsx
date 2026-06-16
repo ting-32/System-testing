@@ -1141,8 +1141,11 @@ const App: React.FC = () => {
          handleChangePassword={handleChangePassword}
          handleSaveApiUrl={handleSaveApiUrl}
          handleForceRetry={handleForceRetry}
+         isSaving={isSaving}
          customers={customers}
+         setCustomers={setCustomers}
          products={products}
+         setProducts={setProducts}
          orders={orders}
          previewDate={previewDate}
          setPreviewDate={setPreviewDate}

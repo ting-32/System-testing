@@ -51,8 +51,11 @@ interface GlobalModalsProps {
   handleSaveApiUrl?: (url: string) => void;
   handleForceRetry?: () => void;
   customers?: any[];
+  setCustomers?: (customers: any[]) => void;
   products?: any[];
+  setProducts?: (products: any[]) => void;
   orders?: any[];
+  isSaving?: boolean;
   setOrders?: any;
   saveOrderToCloud?: any;
   saveTripsToCloud?: any;
@@ -65,7 +68,12 @@ export function GlobalModals(props: GlobalModalsProps) {
   const ui = useUIStore();
   
   // 從業務 Store 拿取需要的全域資料
-  const { setOrderForm, isSaving, setCustomers } = useAppStore();
+  const appStore = useAppStore();
+  const setOrderForm = appStore.setOrderForm;
+  
+  const isSaving = props.isSaving ?? appStore.isSaving;
+  const setCustomers = props.setCustomers || appStore.setCustomers;
+  const setProducts = props.setProducts || appStore.setProducts;
   
   // ✨ 把通知設定從真正的 store 取出來
   const notificationSettings = useSettingsStore();
@@ -78,23 +86,50 @@ export function GlobalModals(props: GlobalModalsProps) {
   const orders = props.orders || useAppStore(s => s.orders);
 
   const handleCustomerFormSubmit = async (formData: any) => {
-    if (!props.isEditingCustomer) return;
+    console.log("[DEBUG] handleCustomerFormSubmit called with:", formData);
+    if (!props.isEditingCustomer) {
+      console.log("[DEBUG] props.isEditingCustomer is null/falsy, returning early");
+      return;
+    }
     
     // Add simple validation
-    if (!formData.name) return;
+    if (!formData.name) {
+      alert('請填寫客戶名稱');
+      return;
+    }
     const isDuplicateName = customers.some(c => String(c.name || '').trim() === String(formData.name || '').trim() && c.id !== (props.isEditingCustomer === 'new' ? null : props.isEditingCustomer)); 
     if (isDuplicateName) { alert('客戶名稱不可重複！'); return; }
 
     const finalCustomer = { 
-      id: props.isEditingCustomer === 'new' ? Date.now().toString() : props.isEditingCustomer, 
-      ...formData 
+      id: props.isEditingCustomer === 'new' ? (Date.now().toString() + Math.random().toString(36).substring(2, 7)) : (props.isEditingCustomer as string), 
+      name: String(formData.name || '').trim(), 
+      phone: String(formData.phone || '').trim(), 
+      address: String(formData.address || '').trim(), 
+      coordinates: String(formData.coordinates || '').trim(), 
+      deliveryTime: formData.deliveryTime || '08:00', 
+      deliveryMethod: formData.deliveryMethod || '', 
+      paymentTerm: formData.paymentTerm || 'regular', 
+      defaultItems: (formData.defaultItems || []).filter((i: any) => i.productId !== ''), 
+      priceList: (formData.priceList || []), 
+      offDays: formData.offDays || [], 
+      holidayDates: formData.holidayDates || [], 
+      defaultTrip: formData.defaultTrip || '', 
+      autoOrderEnabled: formData.autoOrderEnabled || false, 
+      lastUpdated: Date.now() 
     };
+
+    console.log("[DEBUG] Created finalCustomer object:", finalCustomer);
 
     const previousCustomers = [...customers];
     
     // Optimistic Update
-    if (props.isEditingCustomer === 'new') setCustomers([...customers, finalCustomer]); 
-    else setCustomers(customers.map(c => c.id === props.isEditingCustomer ? finalCustomer : c)); 
+    if (props.isEditingCustomer === 'new') {
+      console.log("[DEBUG] Optimistically adding new customer to customers list");
+      setCustomers([...customers, finalCustomer]);
+    } else {
+      console.log("[DEBUG] Optimistically updating existing customer in customers list");
+      setCustomers(customers.map(c => c.id === props.isEditingCustomer ? finalCustomer : c)); 
+    }
     
     // Close modal UI immediately
     const tempIsEditingCustomer = props.isEditingCustomer;
@@ -102,7 +137,11 @@ export function GlobalModals(props: GlobalModalsProps) {
 
     // Call Cloud Save
     if (props.onSaveCustomerCloud) {
-       await props.onSaveCustomerCloud(finalCustomer, tempIsEditingCustomer, formData.lastUpdated, previousCustomers);
+       console.log("[DEBUG] Calling onSaveCustomerCloud...");
+       let success = await props.onSaveCustomerCloud(finalCustomer, tempIsEditingCustomer, formData.lastUpdated, previousCustomers);
+       console.log("[DEBUG] onSaveCustomerCloud finished with success:", success);
+    } else {
+       console.log("[DEBUG] props.onSaveCustomerCloud is missing!");
     }
   };
 

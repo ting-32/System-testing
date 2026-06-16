@@ -29,7 +29,7 @@ export class GasApiClient implements ApiClient {
     const finalConfig = { ...this.baseConfig, ...config };
     const token = localStorage.getItem('APP_SESSION_TOKEN');
     const payload = { action, token: token || "", data };
-    const timeoutToUse = finalConfig.timeoutMs ?? 25000;
+    const timeoutToUse = finalConfig.timeoutMs ?? 40000;
     const maxLockRetries = 3;
 
     for (let attempt = 0; attempt <= maxLockRetries; attempt++) {
@@ -100,7 +100,7 @@ export class GasApiClient implements ApiClient {
     }
 
     const finalConfig = { ...this.baseConfig, ...config };
-    const timeoutToUse = finalConfig.timeoutMs ?? 25000;
+    const timeoutToUse = finalConfig.timeoutMs ?? 40000;
     
     let res;
     try {

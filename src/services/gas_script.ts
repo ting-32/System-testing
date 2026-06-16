@@ -230,7 +230,10 @@ function doPost(e) {
       try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
     }
 
-    notifyFirebase();
+    const unneededNotifyActions = ["login", "checkUpdates", "getOrder", "testLineMessage", "dryRunRule", "getNotificationLogs", "getSystemLogs", "createOrder"];
+    if (!unneededNotifyActions.includes(action)) {
+      notifyFirebase();
+    }
 
     return ContentService.createTextOutput(JSON.stringify({ success: true, data: result }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -479,9 +482,24 @@ function getData(startDateStr, since = 0) {
           if (values.length <= 1) return [];
           const headers = values[0];
           const data = [];
+          
           for (let i = 1; i < values.length; i++) {
+            const row = values[i];
+
+            // ✨ 1. 防禦性檢查：保證 row 不是 undefined 或空陣列（防禦 API 例外回傳）
+            if (!row || row.length === 0) continue;
+            
+            // ✨ 2. 空白列檢查：確認是否整列都被清空了 (連純空白的字串也一起抓出來濾掉)
+            const isEmptyRow = row.every(cell => 
+              cell === '' || cell === null || cell === undefined || (typeof cell === 'string' && cell.trim() === '')
+            );
+            if (isEmptyRow) continue; 
+            
             let obj = {};
-            for (let j = 0; j < headers.length; j++) obj[headers[j]] = formatCellValue(values[i][j]);
+            for (let j = 0; j < headers.length; j++) {
+              // row[j] 放進 formatCellValue (已經避開了因為空列導致的 out-of-bounds error)
+              obj[headers[j]] = formatCellValue(row[j]);
+            }
             data.push(mapper(obj));
           }
           return data;
@@ -2239,8 +2257,8 @@ function archiveOldOrders() {
       // 確保日期格式為 YYYY-MM-DD 以便字串比對
       const dateStr = String(deliveryDate).substring(0, 10); 
       
-      // 條件：超過 90 天前，且狀態為 PAID (已結清) 或 DELETED (已刪除)
-      if (dateStr < cutoffString && (status === 'PAID' || status === 'DELETED')) {
+      // 條件：超過 90 天前且狀態為 PAID (已結清)，或者狀態為 DELETED (已刪除，不論天數)
+      if ((dateStr < cutoffString && status === 'PAID') || status === 'DELETED') {
         ordersToArchive.push(row);
       } else {
         activeOrders.push(row);

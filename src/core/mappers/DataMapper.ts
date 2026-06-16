@@ -49,10 +49,30 @@ export class DataMapper {
     });
   }
 
+  private static isValidRawCustomer(raw: any): boolean {
+    if (!raw) return false;
+    
+    const id = String(raw.ID || raw.id || '').trim();
+    const name = String(raw.客戶名稱 || raw.name || '').trim();
+    
+    // 必須同時具有 ID 與 名稱，才是有意義的店家資料
+    if (id === '' || name === '') {
+      // 技巧：在開發環境印出被過濾掉的幽靈資料，日後 Debug 找雲端傳了什麼垃圾過來時極度好用
+      if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
+        console.warn('⚠️ 發現並攔截 Google Sheets 的幽靈空列:', raw);
+      }
+      return false;
+    }
+    
+    return true;
+  }
+
   static mapCustomers(rawCustomers: any[]): Customer[] {
-    return rawCustomers.map((c: any) => {
-      const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
-      return { 
+    return rawCustomers
+      .filter(this.isValidRawCustomer)
+      .map((c: any) => {
+        const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
+        return { 
         id: String(c.ID || c.id || ''), 
         name: String(c.客戶名稱 || c.name || '').trim().replace(/[\r\n]/g, ''), 
         phone: c.電話 || c.phone || '', 

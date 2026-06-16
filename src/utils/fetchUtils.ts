@@ -13,7 +13,7 @@ export async function fetchWithRetry(
   maxRetries = 2,
   delayMs = 1500,
   silentFail = false,
-  timeoutMs = 25000
+  timeoutMs = 40000
 ): Promise<Response> {
   let lastError: any;
 

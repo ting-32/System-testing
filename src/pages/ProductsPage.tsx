@@ -52,7 +52,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
     // Validate uniqueness, but wait, usually uniqueness is good to have, though old logic didn't explicitly block it.
     
     const finalProduct: Product = { 
-        id: isEditingProduct === 'new' ? 'p' + Date.now() : (isEditingProduct as string), 
+        id: isEditingProduct === 'new' ? 'p' + Date.now() + Math.random().toString(36).substring(2, 7) : (isEditingProduct as string), 
         name: productForm.name || '', 
         unit: productForm.unit || '斤', 
         price: Number(productForm.price) || 0, 

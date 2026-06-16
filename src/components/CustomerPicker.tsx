@@ -103,13 +103,13 @@ export const CustomerPicker: React.FC<{ isOpen: boolean; onClose: () => void; on
             </div>
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-morandi-oatmeal/20">
               <div className="grid grid-cols-1 gap-3">
-                {filteredList.map(c => {
+                {filteredList.map((c, idx) => {
                   const isSelected = c.id === currentSelectedId;
                   const hasOrder = orderedCustomerNames.has(c.name);
                   const isResting = c.isRestingToday;
                   
                   return (
-                    <motion.button key={c.id} whileTap={{ scale: 0.98 }} onClick={() => { 
+                    <motion.button key={c.id || `cp-${idx}`} whileTap={{ scale: 0.98 }} onClick={() => { 
                       if (isResting) {
                         setPendingRestingCustomer(c);
                       } else {
