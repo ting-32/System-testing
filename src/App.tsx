@@ -56,6 +56,7 @@ import { GlobalModals } from './components/layout/GlobalModals';
 import { ViewManager } from './components/layout/ViewManager';
 import { useAppAuth } from './hooks/useAppAuth';
 import { useDataSync } from './hooks/useDataSync';
+import { useBackgroundSync } from './hooks/useBackgroundSync';
 import { useOrderCalculations } from './hooks/useOrderCalculations';
 import { useVoiceAssistant } from './hooks/useVoiceAssistant';
 import { useOrderActions } from './hooks/useOrderActions';
@@ -147,6 +148,8 @@ const App: React.FC = () => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
+  const isEditingRef = useRef(false);
+
   const {
     isAuthenticated,
     apiEndpoint, customers, setCustomers,
@@ -164,7 +167,7 @@ const App: React.FC = () => {
     handleForceRetry,
     saveOrderToCloud,
     saveTripsToCloud
-  } = useDataSync(addToast);
+  } = useDataSync(addToast, isEditingRef);
 
   const auth = useAppAuth({ handleLogin, addToast });
 
@@ -638,68 +641,10 @@ const App: React.FC = () => {
   
   // REFACTORED: syncData logic moved to useDataSync hook
 
-  // NEW: Automator Effect for Polling and Focus Refetch
-  useEffect(() => {
-    if (!isAuthenticated) return;
+  const isEditingAny = isAddingOrder || isEditingCustomer || isEditingProduct || !!quickAddData || !!editingOrderId;
+  isEditingRef.current = isEditingAny;
 
-    let intervalId: any = null;
-    let wakeoutId: any = null;
-
-    // 1. Define the silent sync executor with safety locks
-    const performSilentSync = () => {
-      if (document.visibilityState === 'hidden') return;
-      // Safety Lock: Don't sync if user is editing
-      if (isAddingOrder || isEditingCustomer || isEditingProduct || quickAddData || editingOrderId) {
-        console.log("使用者忙碌中，略過背景同步");
-        return;
-      }
-      
-      // Execute sync in silent mode
-      syncData(true);
-    };
-
-    const startPolling = () => {
-      if (!intervalId) {
-        intervalId = setInterval(performSilentSync, 60000);
-      }
-    };
-
-    const stopPolling = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-      if (wakeoutId) {
-        clearTimeout(wakeoutId);
-        wakeoutId = null;
-      }
-    };
-
-    // Initial Start
-    startPolling();
-
-    // 4. Focus Logic (Revalidate on Focus with 2 seconds debounce on wake-up)
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        // 等待兩秒鐘暖機，讓作業系統重新連結 Wi-Fi 或蜂窩網路
-        wakeoutId = setTimeout(() => {
-          performSilentSync();
-          startPolling();
-        }, 2000);
-      } else {
-        // 進入隱藏休眠，清除所有可能引爆的定時器
-        stopPolling();
-      }
-    };
-
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    // Cleanup
-    return () => {
-      stopPolling();
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [isAuthenticated, syncData, isAddingOrder, isEditingCustomer, isEditingProduct, quickAddData, editingOrderId]);
+  useBackgroundSync({ isAuthenticated, apiEndpoint, syncData, isEditingLock: isEditingAny });
 
   // Keep original initial load effect for first render
   // (Handled in useDataSync)

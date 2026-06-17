@@ -230,6 +230,16 @@ function doPost(e) {
       try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
     }
 
+    const mutationActions = [
+      "changePassword", "createOrder", "updateOrderContent", "updateOrderStatus",
+      "batchUpdateOrders", "batchUpdatePaymentStatus", "deleteOrder",
+      "reorderProducts", "updateCustomer", "deleteCustomer", 
+      "updateProduct", "deleteProduct", "saveTrips", "saveSettings"
+    ];
+    if (mutationActions.includes(action)) {
+      updateGlobalTimestamp();
+    }
+
     const unneededNotifyActions = ["login", "checkUpdates", "getOrder", "testLineMessage", "dryRunRule", "getNotificationLogs", "getSystemLogs", "createOrder"];
     if (!unneededNotifyActions.includes(action)) {
       notifyFirebase();
@@ -262,31 +272,21 @@ function doPost(e) {
 
 // --- Logic Functions ---
 
+function updateGlobalTimestamp() {
+  try {
+    let metaSheet = SS.getSheetByName("SystemMeta");
+    if (!metaSheet) {
+      metaSheet = SS.insertSheet("SystemMeta");
+      metaSheet.hideSheet();
+      metaSheet.getRange("A1").setValue("LastGlobalUpdate");
+    }
+    metaSheet.getRange("B1").setValue(new Date().getTime());
+  } catch (e) {
+    console.error("updateGlobalTimestamp error: ", e);
+  }
+}
+
 function checkUpdates(data) {
-  const sheets = getSheets();
-  let maxTs = 0;
-  
-  ['ORDERS', 'CUSTOMERS', 'PRODUCTS', 'RemindRules'].forEach(sheetName => {
-    let sheet;
-    if (sheetName === 'RemindRules') {
-      sheet = SS.getSheetByName("RemindRules"); // try to directly get RemindRules
-    } else {
-      sheet = sheets[sheetName];
-    }
-    if (!sheet) return;
-    const lastCol = sheet.getLastColumn();
-    if (lastCol === 0) return;
-    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    const lastUpdatedColIdx = headers.indexOf("LastUpdated");
-    if (lastUpdatedColIdx !== -1 && sheet.getLastRow() > 1) {
-      const values = sheet.getRange(2, lastUpdatedColIdx + 1, sheet.getLastRow() - 1, 1).getValues();
-      for (let i = 0; i < values.length; i++) {
-        const ts = parseLastUpdated(values[i][0]);
-        if (ts && ts > maxTs) maxTs = ts;
-      }
-    }
-  });
-  
   // 新增審計日誌攔截 (只有前端帶 auditObj 時才寫入)
   if (data && data.auditObj) {
     writeSystemLog("SYSTEM_DATA_ACCESS", "資料手動同步與檢視", JSON.stringify({
@@ -296,7 +296,9 @@ function checkUpdates(data) {
     }));
   }
   
-  return { globalLastUpdated: maxTs };
+  const metaSheet = SS.getSheetByName("SystemMeta");
+  const lastGlobalTs = metaSheet ? Number(metaSheet.getRange("B1").getValue()) : 0; 
+  return { globalLastUpdated: lastGlobalTs || 0 };
 }
 
 function getOrder(data) {

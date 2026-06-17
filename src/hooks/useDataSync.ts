@@ -68,7 +68,7 @@ export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: 
   return Array.from(mergedMap.values());
 }
 
-export const useDataSync = (addToast: (msg: string, type: ToastType) => void) => {
+export const useDataSync = (addToast: (msg: string, type: ToastType) => void, isEditingRef?: React.MutableRefObject<boolean>) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('nm_auth_status') === 'true';
@@ -652,66 +652,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
     } 
   }, [isAuthenticated, syncData]);
 
-  // Silent Background Polling
-  useEffect(() => {
-    if (!isAuthenticated || !apiEndpoint) return;
-
-    let pollInterval: any = null;
-    let wakeoutId: any = null;
-
-    const performPolling = async () => {
-      if (document.visibilityState === 'hidden') return;
-      try {
-        const { globalLastUpdated } = await container.syncRepo.checkUpdates();
-        const serverGlobalTs = globalLastUpdated;
-        if (lastGlobalUpdateRef.current > 0 && serverGlobalTs > lastGlobalUpdateRef.current) {
-          console.log("Background updates detected, syncing silently...");
-          syncData(true);
-        }
-        lastGlobalUpdateRef.current = serverGlobalTs;
-      } catch (e) {
-        // Suppress polling error log to avoid console spam when offline or endpoint is invalid
-      }
-    };
-
-    const startPolling = () => {
-      if (!pollInterval) {
-        pollInterval = setInterval(performPolling, 30000); // 30 seconds
-      }
-    };
-
-    const stopPolling = () => {
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
-      }
-      if (wakeoutId) {
-        clearTimeout(wakeoutId);
-        wakeoutId = null;
-      }
-    };
-
-    startPolling();
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        wakeoutId = setTimeout(() => {
-          performPolling();
-          startPolling();
-        }, 2000);
-      } else {
-        stopPolling();
-      }
-    };
-
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    return () => {
-      stopPolling();
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [isAuthenticated, apiEndpoint, syncData]);
-
   // 🔔 Firebase Realtime Database 門鈴監聽器
   useEffect(() => {
     // 只有在登入成功後才開啟監聽
@@ -721,6 +661,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
 
     try {
       unsubscribe = listenToDataChange(() => {
+        if (isEditingRef && isEditingRef.current) {
+          console.log(`收到 Firebase 門鈴訊號，但使用者編輯中，暫緩同步...`);
+          return;
+        }
         console.log(`🔔 收到 Firebase 門鈴訊號！準備背景同步...`);
         syncData(true);
       });
