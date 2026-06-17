@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Customer, Product, Order, ToastType } from '../types';
-import { Users, Plus, Search, MapPin, History, Edit2, Trash2, X, ChevronDown, Info } from 'lucide-react';
+import { Users, Plus, Search, MapPin, History, Edit2, Trash2, X, ChevronDown, Info, RefreshCw } from 'lucide-react';
 import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS } from '../constants';
 import { CustomerProfileDrawer } from '../components/CustomerProfileDrawer';
 import { CustomerReportModal } from '../components/CustomerReportModal';
@@ -11,6 +11,7 @@ import { ProductPicker } from '../components/ProductPicker';
 import { fetchWithRetry } from '../utils/fetchUtils';
 import { formatTimeDisplay, formatTimeForInput, getUpcomingHolidays, isDateInOffDays } from '../utils';
 import { buttonTap, buttonHover, containerVariants, itemVariants } from '../components/animations';
+import { SyncableStatusWrapper } from '../components/SyncableStatusWrapper';
 
 export interface CustomersPageProps {
   customers: Customer[];
@@ -107,8 +108,29 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
     setConfirmConfig((prev: any) => ({ ...prev, isOpen: false })); 
     const customerBackup = customers.find(c => c.id === customerId); 
     if (!customerBackup) return; 
-    setCustomers((prev: Customer[]) => prev.filter(c => c.id !== customerId)); 
-    await onDeleteCustomerCloud(customerId, customerBackup);
+
+    setCustomers((prev: Customer[]) => prev.map(c => c.id === customerId ? { ...c, _syncStatus: 'pending', pendingAction: 'delete', _localUpdatedTs: Date.now() } : c));
+    try {
+        await onDeleteCustomerCloud(customerId, customerBackup);
+        setCustomers((prev: Customer[]) => prev.filter(c => c.id !== customerId)); 
+    } catch (e) {
+        console.error("刪除失敗:", e);
+        setCustomers((prev: Customer[]) => prev.map(c => c.id === customerId ? { ...c, _syncStatus: 'error', pendingAction: 'delete' } : c));
+        addToast("刪除失敗，已標記為錯誤", 'error');
+    }
+  };
+
+  const handleRetry = async (c: Customer) => {
+    if ((c as any).pendingAction === 'delete') {
+      executeDeleteCustomer(c.id);
+      return;
+    }
+    setCustomers((prev: Customer[]) => prev.map(cust => cust.id === c.id ? { ...cust, _syncStatus: 'pending', lastUpdated: Date.now() } : cust));
+    try {
+      await onSaveCustomerCloud({ ...c, _syncStatus: undefined, _localUpdatedTs: Date.now(), lastUpdated: Date.now() }, c.id, String(c.lastUpdated), customers);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleDeleteCustomer = (customerId: string) => { 
@@ -130,8 +152,9 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
         {filteredCustomers.map((c, idx) => {
            const hasOrderToday = groupedOrders[c.name] && groupedOrders[c.name].length > 0;
            return (
-              <motion.div variants={itemVariants} key={c.id || `fallback-${idx}`} className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-200 mb-4 hover:shadow-md transition-all relative overflow-hidden">
-                {hasOrderToday && <div className="absolute top-0 right-0 bg-amber-100 text-amber-700 text-[9px] font-bold px-3 py-1 rounded-bl-xl z-10">今日已下單</div>}
+              <motion.div variants={itemVariants} key={c.id || `fallback-${idx}`} className="mb-4 relative">
+                <SyncableStatusWrapper syncStatus={c._syncStatus} onRetry={() => handleRetry(c)} className="bg-white rounded-[32px] p-6 shadow-sm border hover:shadow-md transition-all overflow-hidden border-slate-200">
+                {hasOrderToday && c._syncStatus !== 'pending' && c._syncStatus !== 'error' && <div className="absolute top-0 right-0 bg-amber-100/90 text-amber-700 text-[9px] font-bold px-3 py-1.5 rounded-bl-xl z-20 border-b border-l border-amber-200/50 backdrop-blur-sm">今日已下單</div>}
                 <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{String(c.name || '').charAt(0)}</div><div><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p>{(c.address || c.coordinates) && (() => {
 const targetUrl = c.coordinates ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.coordinates)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address || '')}`;
 const tooltipText = c.coordinates ? "開啟精準地圖連結" : "在 Google 地圖上搜尋此地址";
@@ -159,6 +182,7 @@ return (
                    <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => { setCustomerForm({ ...c, address: c.address || '', coordinates: c.coordinates || '', deliveryTime: formatTimeForInput(c.deliveryTime), paymentTerm: c.paymentTerm || 'regular', defaultTrip: c.defaultTrip || '' }); setIsEditingCustomer(c.id); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); editingVersionRef.current = c.lastUpdated; })} className="flex-1 py-3 bg-gray-50 rounded-2xl text-slate-700 font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"><Edit2 className="w-3.5 h-3.5" /></motion.button>
                    <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => handleDeleteCustomer(c.id))} className="px-4 py-3 bg-gray-50 rounded-2xl text-morandi-pink hover:text-rose-500 transition-colors border border-gray-100"><Trash2 className="w-4 h-4" /></motion.button>
                 </div>
+                </SyncableStatusWrapper>
               </motion.div>
            );
         })}
@@ -232,10 +256,11 @@ return (
                     originalLastUpdated: originalCustomer.lastUpdated, 
                     force: true
                   };
+                  const token = localStorage.getItem('APP_SESSION_TOKEN');
                   const res = await fetchWithRetry(apiEndpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: 'updateCustomer', data: payload })
+                    body: JSON.stringify({ action: 'updateCustomer', token: token || "", data: payload })
                   });
                   const json = await res.json();
                   

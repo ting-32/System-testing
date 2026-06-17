@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo } from 'react';
-import { motion, useMotionValue, useTransform, PanInfo } from 'framer-motion';
+import { motion, useMotionValue, useTransform, PanInfo, animate } from 'framer-motion';
 import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot, MessageCircle } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
 import { ORDERING_HABITS } from '../constants';
 import { getStatusStyles, formatTimeDisplay } from '../utils';
 import { buttonTap, triggerHaptic } from './animations';
+import { SyncableStatusWrapper } from './SyncableStatusWrapper';
+
 
 interface SwipeableOrderCardProps {
   order: Order;
@@ -65,6 +67,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
     const offset = info.offset.x; 
     if (offset > DRAG_THRESHOLD) { 
       triggerHaptic(50); 
+      animate(x, 0, { type: 'spring', stiffness: 300, damping: 20 });
       if (order.status === OrderStatus.PENDING) {
         onStatusChange(order.id, OrderStatus.SHIPPED);
       } else if (order.status === OrderStatus.SHIPPED) {
@@ -72,6 +75,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
       }
     } else if (offset < -DRAG_THRESHOLD) { 
       triggerHaptic([50, 50, 50]); 
+      animate(x, 0, { type: 'spring', stiffness: 300, damping: 20 });
       if (order.status === OrderStatus.PAID) {
         onStatusChange(order.id, OrderStatus.SHIPPED);
       } else if (order.status === OrderStatus.SHIPPED) {
@@ -87,11 +91,11 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   const bgOpacityLeft = useTransform(x, [0, -DRAG_THRESHOLD], [0, 1]); 
   const bgScaleLeft = useTransform(x, [0, -DRAG_THRESHOLD], [0.8, 1.2]);
 
-  const isSyncError = order.syncStatus === 'error';
-  const isSyncPending = order.syncStatus === 'pending';
+  const isSyncError = order.syncStatus === 'error' || order._syncStatus === 'error';
+  const isSyncPending = order.syncStatus === 'pending' || order._syncStatus === 'pending';
   
   return ( 
-    <div className="relative mb-4"> 
+    <div className={`relative mb-4`}> 
       <div className="absolute inset-0 rounded-[32px] flex items-center justify-between px-6 pointer-events-none overflow-hidden"> 
         <motion.div style={{ opacity: bgOpacityRight, scale: bgScaleRight }} className={`flex items-center gap-2 font-bold ${order.status === OrderStatus.PENDING ? 'text-blue-500' : order.status === OrderStatus.SHIPPED ? 'text-emerald-500' : 'text-transparent'}`}> 
           {order.status === OrderStatus.PENDING && (
@@ -136,32 +140,18 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
         initial={false} 
         animate={{ 
             backgroundColor: statusConfig.cardBg, 
-            borderColor: isSyncError ? '#ef4444' : statusConfig.cardBorder, 
             x: isSelectionMode ? 10 : 0,
-            opacity: isSyncPending ? 0.7 : 1
+            opacity: 1
         }} 
-        className={`rounded-[32px] overflow-hidden shadow-sm border-2 relative z-10 touch-pan-y ${isSelectionMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`} 
+        className={`rounded-[32px] overflow-hidden shadow-sm relative z-10 touch-pan-y ${isSelectionMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`} 
         onClick={() => { if (isSelectionMode) onToggleSelection(); }} 
       > 
+        <SyncableStatusWrapper syncStatus={order.syncStatus || order._syncStatus} onRetry={() => onRetry?.(order.id)} roundedClass="rounded-[32px]">
         {isSelectionMode && ( 
           <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20"> 
             {isSelected ? <div className="w-6 h-6 rounded-lg bg-morandi-blue flex items-center justify-center text-white shadow-md"><CheckCircle2 className="w-4 h-4" /></div> : <div className="w-6 h-6 rounded-lg border-2 border-slate-300 bg-white" />} 
           </div> 
         )} 
-        
-        {/* Sync Status Overlay/Badge */}
-        {isSyncError && (
-            <div className="absolute top-0 right-0 bg-rose-500 text-white text-[10px] px-3 py-1 rounded-bl-xl font-bold flex items-center gap-1 z-20">
-                <AlertCircle className="w-3 h-3" />
-                同步失敗
-            </div>
-        )}
-        {isSyncPending && (
-            <div className="absolute top-0 right-0 bg-slate-500/50 text-white text-[10px] px-3 py-1 rounded-bl-xl font-bold flex items-center gap-1 z-20">
-                <RefreshCw className="w-3 h-3 animate-spin" />
-                同步中...
-            </div>
-        )}
 
         <div className={`p-5 transition-all ${isSelectionMode ? 'pl-14' : ''}`}> 
           <div className="flex justify-between items-center mb-4"> 
@@ -280,6 +270,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
             {order.note && (<div className="text-[10px] font-bold text-gray-400 bg-white/40 px-3 py-1.5 rounded-lg max-w-[60%] truncate">備註: {order.note}</div>)} 
           </div> 
         </div> 
+        </SyncableStatusWrapper>
       </motion.div> 
     </div> 
   ); 

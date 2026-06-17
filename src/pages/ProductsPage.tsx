@@ -46,18 +46,35 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
   const [hasReorderedProducts, setHasReorderedProducts] = useState(false);
   const editingVersionRef = useRef<number | undefined>(undefined);
 
+  const handleRetry = async (p: Product) => {
+    if ((p as any).pendingAction === 'delete') {
+      executeDeleteProduct(p.id);
+      return;
+    }
+    
+    setProducts((prev: Product[]) => prev.map(prod => prod.id === p.id ? { ...prod, _syncStatus: 'pending', lastUpdated: Date.now() } : prod));
+    try {
+      await onSaveProductCloud({ ...p, _syncStatus: undefined, _localUpdatedTs: Date.now(), lastUpdated: Date.now() }, p.id, String(p.lastUpdated), products);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleSaveProduct = async () => { 
     if (!productForm.name || isSaving) return; 
     
     // Validate uniqueness, but wait, usually uniqueness is good to have, though old logic didn't explicitly block it.
     
+    const now = Date.now();
     const finalProduct: Product = { 
-        id: isEditingProduct === 'new' ? 'p' + Date.now() + Math.random().toString(36).substring(2, 7) : (isEditingProduct as string), 
+        id: isEditingProduct === 'new' ? 'p' + now + Math.random().toString(36).substring(2, 7) : (isEditingProduct as string), 
         name: productForm.name || '', 
         unit: productForm.unit || '斤', 
         price: Number(productForm.price) || 0, 
         category: productForm.category || 'other', 
-        lastUpdated: Date.now() 
+        lastUpdated: now,
+        _syncStatus: 'pending',
+        _localUpdatedTs: now
     }; 
     
     const previousProducts = [...products];
@@ -77,8 +94,19 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
     setConfirmConfig((prev: any) => ({ ...prev, isOpen: false })); 
     const productBackup = products.find(p => p.id === productId); 
     if (!productBackup) return; 
-    setProducts((prev: Product[]) => prev.filter(p => p.id !== productId)); 
-    await onDeleteProductCloud(productId, productBackup);
+
+    // Marking as pending deletion to avoid cache revert resurrection
+    setProducts((prev: Product[]) => prev.map(p => p.id === productId ? { ...p, _syncStatus: 'pending', pendingAction: 'delete', _localUpdatedTs: Date.now() } : p)); 
+    try {
+        await onDeleteProductCloud(productId, productBackup);
+        // After successful deletion loop, remove it locally.
+        setProducts((prev: Product[]) => prev.filter(p => p.id !== productId));
+    } catch (e) {
+        // If error, mark error and keep
+        console.error("刪除失敗:", e);
+        setProducts((prev: Product[]) => prev.map(p => p.id === productId ? { ...p, _syncStatus: 'error', pendingAction: 'delete' } : p));
+        addToast("刪除失敗，已標記為錯誤", 'error');
+    }
   };
 
   const handleDeleteProduct = (productId: string) => { 
@@ -124,6 +152,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
                    product={p} 
                    onEdit={(p) => requireAuth(() => { setProductForm(p); setIsEditingProduct(p.id); editingVersionRef.current = p.lastUpdated; })} 
                    onDelete={(id) => requireAuth(() => handleDeleteProduct(id))} 
+                   onRetry={handleRetry}
                />
            ))}
          </Reorder.Group>

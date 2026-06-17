@@ -1,19 +1,24 @@
 import React from 'react';
 import { motion, Reorder, useDragControls } from 'framer-motion';
-import { Box, Edit2, Trash2, GripVertical } from 'lucide-react';
+import { Box, Edit2, Trash2, GripVertical, RefreshCw } from 'lucide-react';
 import { Product } from '../types';
 import { PRODUCT_CATEGORIES } from '../constants';
 import { buttonTap } from './animations';
+import { SyncableStatusWrapper } from './SyncableStatusWrapper';
 
 interface SortableProductItemProps {
   product: Product;
   onEdit: (p: Product) => void;
   onDelete: (id: string) => void;
+  onRetry?: (p: Product) => void;
 }
 
-export const SortableProductItem: React.FC<SortableProductItemProps> = ({ product, onEdit, onDelete }) => {
+export const SortableProductItem: React.FC<SortableProductItemProps> = ({ product, onEdit, onDelete, onRetry }) => {
   const controls = useDragControls();
   const categoryColor = PRODUCT_CATEGORIES.find(c => c.id === product.category)?.color || '#E5E7EB';
+
+  const isPending = product._syncStatus === 'pending';
+  const isError = product._syncStatus === 'error';
 
   return (
     <Reorder.Item 
@@ -27,8 +32,9 @@ export const SortableProductItem: React.FC<SortableProductItemProps> = ({ produc
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         whileDrag={{ scale: 1.05, boxShadow: "0px 10px 20px rgba(0,0,0,0.1)", zIndex: 10 }}
-        className="bg-white rounded-2xl p-3 shadow-sm border border-slate-200 flex justify-between items-center mb-2 active:cursor-grabbing"
+        className="bg-white rounded-2xl shadow-sm mb-2"
       >
+        <SyncableStatusWrapper syncStatus={product._syncStatus} onRetry={() => onRetry?.(product)} roundedClass="rounded-2xl" className="p-3 border border-slate-200 rounded-2xl flex justify-between items-center bg-white overflow-hidden">
         <div className="flex items-center gap-3">
           <div 
             onPointerDown={(e) => controls.start(e)}
@@ -61,6 +67,7 @@ export const SortableProductItem: React.FC<SortableProductItemProps> = ({ produc
             <Trash2 className="w-4 h-4" />
           </motion.button>
         </div>
+        </SyncableStatusWrapper>
       </motion.div>
     </Reorder.Item>
   );

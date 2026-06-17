@@ -33,6 +33,41 @@ const debounceTrips = debounce(async (data: any) => {
   try { await localforage.setItem('availableTrips', data); } catch (e) { console.error(e); }
 }, 800);
 
+export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: number; _syncStatus?: string; syncStatus?: string; _localUpdatedTs?: number; pendingAction?: string; }>(
+  localItems: T[],
+  cloudItems: T[]
+): T[] {
+  const mergedMap = new Map<string, T>();
+  
+  cloudItems.forEach(item => {
+    mergedMap.set(item.id, item);
+  });
+
+  localItems.forEach(localItem => {
+    if (localItem._syncStatus === 'pending' || localItem.syncStatus === 'pending') {
+      const cloudItem = mergedMap.get(localItem.id);
+      if (!cloudItem) {
+         if (localItem.pendingAction === 'delete') {
+            // It is not in the cloud, and we wanted to delete it. It's successfully deleted! Drop it.
+         } else {
+            // It is not in the cloud, and we wanted to create/update it. It's a new item or server cache is missing it. Keep it.
+            mergedMap.set(localItem.id, localItem);
+         }
+      } else {
+         const cloudV = cloudItem.lastUpdated || 0;
+         const localV = localItem._localUpdatedTs || localItem.lastUpdated || 0;
+         if (cloudV < localV) {
+            mergedMap.set(localItem.id, localItem);
+         } else if (cloudV === localV && localItem.pendingAction === 'delete') {
+            mergedMap.set(localItem.id, localItem);
+         }
+      }
+    }
+  });
+
+  return Array.from(mergedMap.values());
+}
+
 export const useDataSync = (addToast: (msg: string, type: ToastType) => void) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -290,10 +325,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
         if (since > 0 && result.serverGlobalTs) {
            // 💡 訂單依然做增量合併，但字典檔 (客戶/商品) 採用全量覆蓋
            if (mappedCustomers.length > 0) {
-              setCustomers(mappedCustomers);
+              setCustomers(curr => mergeWithPendingMutations(curr, mappedCustomers));
            }
            if (mappedProducts.length > 0) {
-              setProducts(mappedProducts);
+              setProducts(curr => mergeWithPendingMutations(curr, mappedProducts));
            }
            if (fetchedTrips.length > 0) {
               setTrips(fetchedTrips);
@@ -345,8 +380,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void) =>
            }
         } else {
            // Full replacement
-           setCustomers(mappedCustomers);
-           setProducts(mappedProducts);
+           setCustomers(curr => mergeWithPendingMutations(curr, mappedCustomers));
+           setProducts(curr => mergeWithPendingMutations(curr, mappedProducts));
            if (fetchedTrips.length > 0) {
                setTrips(fetchedTrips);
            }

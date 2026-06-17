@@ -100,8 +100,9 @@ export function GlobalModals(props: GlobalModalsProps) {
     const isDuplicateName = customers.some(c => String(c.name || '').trim() === String(formData.name || '').trim() && c.id !== (props.isEditingCustomer === 'new' ? null : props.isEditingCustomer)); 
     if (isDuplicateName) { alert('客戶名稱不可重複！'); return; }
 
+    const now = Date.now();
     const finalCustomer = { 
-      id: props.isEditingCustomer === 'new' ? (Date.now().toString() + Math.random().toString(36).substring(2, 7)) : (props.isEditingCustomer as string), 
+      id: props.isEditingCustomer === 'new' ? (now.toString() + Math.random().toString(36).substring(2, 7)) : (props.isEditingCustomer as string), 
       name: String(formData.name || '').trim(), 
       phone: String(formData.phone || '').trim(), 
       address: String(formData.address || '').trim(), 
@@ -115,7 +116,9 @@ export function GlobalModals(props: GlobalModalsProps) {
       holidayDates: formData.holidayDates || [], 
       defaultTrip: formData.defaultTrip || '', 
       autoOrderEnabled: formData.autoOrderEnabled || false, 
-      lastUpdated: Date.now() 
+      lastUpdated: now,
+      _syncStatus: 'pending' as const,
+      _localUpdatedTs: now
     };
 
     console.log("[DEBUG] Created finalCustomer object:", finalCustomer);

@@ -239,8 +239,9 @@ export const useOrderActions = ({
     if (!orderToUpdate) return;
 
     // 1. 純前端瞬間切換狀態 (Optimistic UI 飛速體驗) 🚀
+    const now = Date.now();
     setOrders((prev: Order[]) => prev.map(o => 
-      o.id === orderId ? { ...o, status: newStatus, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o
+      o.id === orderId ? { ...o, status: newStatus, syncStatus: 'pending', pendingAction: 'statusUpdate', _syncStatus: 'pending', _localUpdatedTs: now } : o
     ));
 
     // 2. 將實際的連線動作包裝成任務，交給背景 Queue 處理
@@ -275,8 +276,9 @@ export const useOrderActions = ({
     if (!orderIds.length) return;
 
     // 1. 純前端瞬間切換狀態 (Optimistic UI)
+    const now = Date.now();
     setOrders((prev: Order[]) => prev.map(o => 
-      orderIds.includes(o.id) ? { ...o, status: OrderStatus.PAID, syncStatus: 'pending', pendingAction: 'statusUpdate' } : o
+      orderIds.includes(o.id) ? { ...o, status: OrderStatus.PAID, syncStatus: 'pending', pendingAction: 'statusUpdate', _syncStatus: 'pending', _localUpdatedTs: now } : o
     ));
 
     // 2. 將實際的連線動作包裝成任務，交給背景 Queue 處理
@@ -621,8 +623,9 @@ export const useOrderActions = ({
       return { productId: item.productId, quantity: Math.max(0, finalQuantity), unit: finalUnit };
     });
 
+    const timestamp = Date.now();
     const newOrder: Order = {
-      id: editingOrderId || 'ORD-' + Date.now() + Math.random().toString(36).substring(2, 6),
+      id: editingOrderId || 'ORD-' + timestamp + Math.random().toString(36).substring(2, 6),
       createdAt: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
       customerName: orderForm.customerName,
       deliveryDate: orderForm.date || selectedDate,
@@ -635,7 +638,10 @@ export const useOrderActions = ({
       status: editingOrderId ? (orders.find(o => o.id === editingOrderId)?.status || OrderStatus.PENDING) : OrderStatus.PENDING,
       version: editingOrderId ? editingVersionRef.current : undefined,
       syncStatus: 'pending',
-      pendingAction: editingOrderId ? 'update' : 'create'
+      pendingAction: editingOrderId ? 'update' : 'create',
+      _syncStatus: 'pending',
+      _localUpdatedTs: timestamp,
+      lastUpdated: timestamp
     };
 
     // Optimistic Update
@@ -663,11 +669,11 @@ export const useOrderActions = ({
       editingOrderId ? 'updateOrderContent' : 'createOrder',
       editingVersionRef.current,
       () => {
-         setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+         setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o));
          addToast('同步成功', 'success');
       },
       (errMsg: string) => {
-         setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+         setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o));
          addToast("同步失敗，已標記為錯誤", 'error');
       }
     );
@@ -677,7 +683,11 @@ export const useOrderActions = ({
     setConfirmConfig((prev: any) => ({ ...prev, isOpen: false })); 
     const orderBackup = orders.find(o => o.id === orderId); 
     if (!orderBackup) return; 
-    setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId)); 
+
+    const now = Date.now();
+    // Instead of completely removing, we mark it as pending deletion to prevent cache revert resurrections
+    setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, _syncStatus: 'pending', syncStatus: 'pending', pendingAction: 'delete', _localUpdatedTs: now } : o));
+
     try { 
       if (apiEndpoint) { 
         const payload = { id: orderId, version: orderBackup.version };
@@ -694,7 +704,8 @@ export const useOrderActions = ({
                 return;
             }
             if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
-               setOrders((prev: Order[]) => [...prev, orderBackup]); // Revert
+               setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId)); // Revert if conflict? Wait, if conflict on delete, we should maybe restore it to backup
+               setOrders((prev: Order[]) => [...prev.filter(o => o.id !== orderId), orderBackup]);
                setConflictData({
                   action: 'deleteOrder',
                   data: payload,
@@ -706,17 +717,19 @@ export const useOrderActions = ({
                return;
             } else {
                // Add back with error status
-               setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' }]);
+               setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...orderBackup, syncStatus: 'error', _syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' } : o));
                addToast("刪除失敗，已標記為錯誤", 'error');
             }
          } else {
+            // Delete succeeded, remove from local state
+            setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId));
             broadcastDataChange();
          }
       } 
     } catch (e) { 
       if (e instanceof Error && e.message === "UNAUTHORIZED_OR_EXPIRED") return;
       console.error("刪除失敗:", e); 
-      setOrders((prev: Order[]) => [...prev, { ...orderBackup, syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error', pendingAction: 'delete' }]);
+      setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...orderBackup, syncStatus: 'error', _syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error', pendingAction: 'delete' } : o));
       addToast("刪除失敗，已標記為錯誤", 'error'); 
     } 
   };
@@ -726,9 +739,10 @@ export const useOrderActions = ({
     setIsSaving(true);
     
     const ids = Array.from(selectedOrderIds);
+    const now = Date.now();
     const updatedOrders = orders.map(o => {
       if (ids.includes(o.id)) {
-        return { ...o, trip: tripName, syncStatus: 'pending' as const, pendingAction: 'update' as const };
+        return { ...o, trip: tripName, syncStatus: 'pending' as const, pendingAction: 'update' as const, _syncStatus: 'pending' as const, _localUpdatedTs: now };
       }
       return o;
     });
@@ -743,10 +757,10 @@ export const useOrderActions = ({
           'updateOrderContent',
           order.version,
           () => {
-             setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o));
+             setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o));
           },
           (errMsg: string) => {
-             setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o));
+             setOrders((prev: Order[]) => prev.map(o => o.id === id ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o));
           }
         );
       }
@@ -771,7 +785,8 @@ export const useOrderActions = ({
     if (!order || !order.pendingAction) return;
 
     // Reset status to pending
-    setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'pending', errorMessage: undefined } : o));
+    const now = Date.now();
+    setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'pending', errorMessage: undefined, _syncStatus: 'pending', _localUpdatedTs: now } : o));
 
     const action = order.pendingAction;
     try {
@@ -780,8 +795,8 @@ export const useOrderActions = ({
           order,
           'updateOrderStatus',
           order.version,
-          () => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined } : o)),
-          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o))
+          () => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o)),
+          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o))
         );
       } else if (action === 'delete') {
          executeDeleteOrder(orderId);
@@ -790,16 +805,16 @@ export const useOrderActions = ({
           order,
           'createOrder',
           undefined,
-          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...updatedOrder, syncStatus: 'synced', pendingAction: undefined } : o)),
-          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o))
+          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...updatedOrder, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o)),
+          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o))
         );
       } else if (action === 'update') {
          await saveOrderToCloud(
           order,
           'updateOrderContent',
           order.version,
-          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined, version: updatedOrder.version } : o)),
-          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg } : o))
+          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined, version: updatedOrder.version, _syncStatus: 'synced' } : o)),
+          (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o))
         );
       }
     } catch (e) {

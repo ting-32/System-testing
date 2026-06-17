@@ -25,6 +25,10 @@ export interface Product {
   price?: number; // 預設單價
   category?: string; // 新增：產品分類
   lastUpdated?: number; // 版本控制時間戳
+  // --- 暫態屬性 (僅限前端使用) ---
+  _syncStatus?: 'pending' | 'synced' | 'error';
+  _localUpdatedTs?: number;
+  pendingAction?: 'create' | 'update' | 'delete';
 }
 
 export interface DefaultItem {
@@ -58,6 +62,10 @@ export interface Customer {
   holidayDates: string[]; // ['2026-01-20', ...] - 特定日期公休
   autoOrderEnabled?: boolean; // 新增：自動建單開關
   lastUpdated?: number; // 版本控制時間戳
+  // --- 暫態屬性 (僅限前端使用) ---
+  _syncStatus?: 'pending' | 'synced' | 'error';
+  _localUpdatedTs?: number;
+  pendingAction?: 'create' | 'update' | 'delete';
 }
 
 export interface OrderItem {
@@ -85,6 +93,9 @@ export interface Order {
   syncStatus?: 'synced' | 'pending' | 'error'; // 同步狀態
   errorMessage?: string; // 錯誤訊息
   pendingAction?: 'create' | 'update' | 'delete' | 'statusUpdate'; // 待處理動作
+  // --- 暫態屬性 (僅限前端使用) ---
+  _syncStatus?: 'pending' | 'synced' | 'error';
+  _localUpdatedTs?: number;
 }
 
 export interface ReminderCondition {

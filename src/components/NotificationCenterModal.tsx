@@ -228,11 +228,13 @@ export const NotificationCenterModal: React.FC<Props> = ({
     if (!currentDryRunRuleId) return;
     setIsSaving(true);
     try {
+      const token = localStorage.getItem('APP_SESSION_TOKEN');
       const res = await fetchWithRetry(apiEndpoint, {
         method: "POST",
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action: "testRule",
+          token: token || "",
           data: { ruleId: currentDryRunRuleId }
         })
       });
