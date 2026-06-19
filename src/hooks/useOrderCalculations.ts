@@ -175,21 +175,29 @@ export const useOrderCalculations = ({
     
     let thisMonthRevenue = 0;
     let thisMonthCollected = 0;
+    let thisMonthPendingCollected = 0;
     
     const now = new Date();
     const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
     orders.forEach(order => {
       const amount = calculateOrderTotalAmount(order);
+      const isPending = order.syncStatus === 'pending' || order.syncStatus === 'error';
       
       // Calculate this month's revenue
       if (order.deliveryDate.startsWith(currentMonthPrefix) && order.status !== OrderStatus.CANCELLED) {
         thisMonthRevenue += amount;
         if (order.status === OrderStatus.PAID) {
-          thisMonthCollected += amount;
+          if (!isPending) {
+            thisMonthCollected += amount;
+          } else {
+            thisMonthPendingCollected += amount;
+          }
         }
       }
 
+      // If it is UNPAID (or optimistic UNPAID, which is fine), it's debt.
+      // Or if it is optimistic PAID but pending, then the server STILL considers it debt.
       if (order.status !== OrderStatus.PAID && order.status !== OrderStatus.CANCELLED) {
         grandTotalDebt += amount;
 
@@ -204,6 +212,12 @@ export const useOrderCalculations = ({
         if (order.deliveryDate < entry.oldestDate) {
           entry.oldestDate = order.deliveryDate;
         }
+      } else if (order.status === OrderStatus.PAID && isPending) {
+        // Technically this is still unpaid on the server, so we could show it as "Server Debt".
+        // But if we want local UI to be responsive, maybe we shouldn't add it to grandTotalDebt directly,
+        // or we CAN add it to grandTotalDebt but subtract it visually. 
+        // Let's just track it in case we need it, but for now we follow user's UI requirement:
+        // User mainly talked about collected amount.
       }
     });
 
@@ -221,7 +235,7 @@ export const useOrderCalculations = ({
       })
       .sort((a, b) => b.totalDebt - a.totalDebt);
 
-    return { grandTotalDebt, outstanding: sortedOutstanding, thisMonthRevenue, thisMonthCollected };
+    return { grandTotalDebt, outstanding: sortedOutstanding, thisMonthRevenue, thisMonthCollected, thisMonthPendingCollected };
   }, [orders, customers, products]);
 
   // 7. Settlement Preview

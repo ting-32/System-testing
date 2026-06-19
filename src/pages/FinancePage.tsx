@@ -21,6 +21,7 @@ export interface FinancePageProps {
   financeData: {
     grandTotalDebt: number;
     thisMonthCollected: number;
+    thisMonthPendingCollected: number;
     thisMonthRevenue: number;
     outstanding: Array<{
       name: string;
@@ -168,7 +169,14 @@ export const FinancePage: React.FC<FinancePageProps> = ({
                          <div className="absolute right-[-10px] top-[-10px] opacity-10"><CheckCircle2 className="w-24 h-24" /></div>
                          <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-widest mb-1">本月已收帳款</p>
                          <h3 className="text-2xl font-black text-white tracking-tight">${financeData.thisMonthCollected.toLocaleString()}</h3>
-                         <p className="text-[9px] text-emerald-100 mt-1 font-medium tracking-wide">佔本月營收 {financeData.thisMonthRevenue > 0 ? Math.round((financeData.thisMonthCollected / financeData.thisMonthRevenue) * 100) : 0}%</p>
+                         <div className="mt-1">
+                           <p className="text-[9px] text-emerald-100 font-medium tracking-wide">佔本月營收 {financeData.thisMonthRevenue > 0 ? Math.round((financeData.thisMonthCollected / financeData.thisMonthRevenue) * 100) : 0}%</p>
+                           {financeData.thisMonthPendingCollected > 0 && (
+                             <p className="text-[10px] text-emerald-50/90 font-bold bg-emerald-600/50 inline-block px-1.5 py-0.5 rounded mt-1 opacity-90">
+                               ...另有 ${financeData.thisMonthPendingCollected.toLocaleString()} 網路同步中
+                             </p>
+                           )}
+                         </div>
                        </div>
                      </motion.div>
                    ) : (

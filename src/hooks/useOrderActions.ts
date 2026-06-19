@@ -36,6 +36,8 @@ interface UseOrderActionsProps {
   setLastOrderCandidate: React.Dispatch<React.SetStateAction<any>>;
   setToasts: React.Dispatch<React.SetStateAction<any[]>>;
   addSyncTask?: (task: any) => void;
+  removeTaskByPayloadId?: (payloadId: string) => void;
+  syncData?: (forceRefresh?: boolean) => void; // also add syncData if needed, wait no we need to trigger syncData, so I will add syncData to props too
 }
 
 export const useOrderActions = ({
@@ -67,7 +69,9 @@ export const useOrderActions = ({
   lastOrderCandidate,
   setLastOrderCandidate,
   setToasts,
-  addSyncTask
+  addSyncTask,
+  removeTaskByPayloadId,
+  syncData
 }: UseOrderActionsProps) => {
 
   const pendingUpdatesRef = useRef<Map<string, any>>(new Map());
@@ -305,13 +309,20 @@ export const useOrderActions = ({
         const customerName = firstOrder?.customerName || '';
         const deliveryDate = firstOrder?.deliveryDate || '';
 
-        addSyncTask({
-          taskId: crypto.randomUUID(),
-          type: 'BATCH_UPDATE',
-          payload: { updates: updatesToProcess, customerName, deliveryDate },
-          retryCount: 0,
-          timestamp: Date.now()
-        });
+        // [防呆容錯 / 批次 Payload 節流切塊]
+        // 為了避免一次修改 200 筆訂單導致網路壅塞或是 GAS 執行超時，將大型批次操作自動分切為多個 Chunk。
+        // 前端瞬間呈現 200 筆綠燈，而背景依照 CHUNK_SIZE 優雅依序更新。
+        const CHUNK_SIZE = 30;
+        for (let i = 0; i < updatesToProcess.length; i += CHUNK_SIZE) {
+            const chunk = updatesToProcess.slice(i, i + CHUNK_SIZE);
+            addSyncTask({
+              taskId: crypto.randomUUID(),
+              type: 'BATCH_UPDATE',
+              payload: { updates: chunk, customerName, deliveryDate },
+              retryCount: 0,
+              timestamp: Date.now()
+            });
+        }
 
         addToast(`已成功結清 ${orderIds.length} 筆訂單`, 'success');
     }
@@ -822,18 +833,27 @@ export const useOrderActions = ({
     }
   }, [orders, setOrders, saveOrderToCloud, executeDeleteOrder]);
 
-  const handleDiscardLocalError = useCallback((orderId: string) => {
+  const handleDiscardLocalError = useCallback(async (orderId: string) => {
     setOrders((prev: Order[]) => prev.map(o => {
       if (o.id === orderId) {
         if (o.pendingAction === 'create') {
           return null as any; // delete if it was a create
         }
-        return { ...o, syncStatus: 'synced', errorMessage: undefined, pendingAction: undefined };
+        return { ...o, syncStatus: undefined, _syncStatus: undefined, errorMessage: undefined, pendingAction: undefined };
       }
       return o;
     }).filter(Boolean));
-    addToast('已捨棄本地該筆異常任務。', 'info');
-  }, [setOrders, addToast]);
+    
+    if (removeTaskByPayloadId) {
+      await removeTaskByPayloadId(orderId);
+    }
+    
+    addToast('已還原至雲端最新狀態', 'success');
+    
+    if (syncData) {
+      syncData(true);
+    }
+  }, [setOrders, addToast, removeTaskByPayloadId, syncData]);
 
   return {
     handleQuickAddSubmit,

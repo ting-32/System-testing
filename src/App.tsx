@@ -148,6 +148,7 @@ const App: React.FC = () => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
+  const onReconciledRef = useRef<(id: string) => void>();
   const isEditingRef = useRef(false);
 
   const {
@@ -167,7 +168,7 @@ const App: React.FC = () => {
     handleForceRetry,
     saveOrderToCloud,
     saveTripsToCloud
-  } = useDataSync(addToast, isEditingRef);
+  } = useDataSync(addToast, isEditingRef, (id) => onReconciledRef.current?.(id));
 
   const auth = useAppAuth({ handleLogin, addToast });
 
@@ -196,7 +197,35 @@ const App: React.FC = () => {
     }));
   }, [setOrders]);
 
-  const { syncQueue, addSyncTask, isSyncingQueue } = useSyncQueue(apiEndpoint, addToast, onSyncSuccess, onSyncError);
+  const onSyncGiveUp = useCallback((task: any) => {
+    setOrders((prev: Order[]) => prev.map(o => {
+      let isMatch = false;
+      if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
+        const ids = task.payload.updates.map((u: any) => u.id);
+        if (ids.includes(o.id)) isMatch = true;
+      } else if (task.payload && task.payload.id === o.id) {
+        isMatch = true;
+      }
+      
+      if (isMatch) {
+         // [防呆容錯 / 版本衝突退回]
+         // 當網路任務被徹底捨棄(例如：重試次數用盡，或遭遇不可逆的 VERSION_CONFLICT)
+         // 清除此筆本地死鎖標記。後續緊接著的 syncData 由於找不到 pending 標記，
+         // 就會聽命於雲端最新下發的資料，從而實現 UI 狀態的完美 Rollback。
+         return { ...o, syncStatus: undefined, _syncStatus: undefined, errorMessage: undefined, pendingAction: undefined };
+      }
+      return o;
+    }));
+    
+    // 引發一次雲端強拉
+    syncData(true);
+  }, [setOrders, syncData]);
+
+  const { syncQueue, addSyncTask, isSyncingQueue, removeTaskByPayloadId } = useSyncQueue(apiEndpoint, addToast, onSyncSuccess, onSyncError, onSyncGiveUp);
+
+  useEffect(() => {
+    onReconciledRef.current = removeTaskByPayloadId;
+  }, [removeTaskByPayloadId]);
 
   const customerMap = useMemo(() => {
     const map: Record<string, Customer> = {};
@@ -618,7 +647,9 @@ const App: React.FC = () => {
     lastOrderCandidate,
     setLastOrderCandidate,
     setToasts,
-    addSyncTask
+    addSyncTask,
+    removeTaskByPayloadId,
+    syncData
   });
 
   // NEW: Trigger confirm dialog for settlement

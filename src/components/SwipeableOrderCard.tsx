@@ -62,8 +62,11 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   const customer = customerMap[order.customerName];
   const habitLabel = ORDERING_HABITS.find(h => h.value === customer?.paymentTerm)?.label;
   const DRAG_THRESHOLD = 80;
+  const isSyncError = order.syncStatus === 'error' || order._syncStatus === 'error';
+  const isSyncPending = order.syncStatus === 'pending' || order._syncStatus === 'pending';
   
   const handleDragEnd = (_event: any, info: PanInfo) => { 
+    if (isSelectionMode) return;
     const offset = info.offset.x; 
     if (offset > DRAG_THRESHOLD) { 
       triggerHaptic(50); 
@@ -91,8 +94,10 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   const bgOpacityLeft = useTransform(x, [0, -DRAG_THRESHOLD], [0, 1]); 
   const bgScaleLeft = useTransform(x, [0, -DRAG_THRESHOLD], [0.8, 1.2]);
 
-  const isSyncError = order.syncStatus === 'error' || order._syncStatus === 'error';
-  const isSyncPending = order.syncStatus === 'pending' || order._syncStatus === 'pending';
+  const handleStatusSelectChange = (status: OrderStatus) => {
+    triggerHaptic(50);
+    onStatusChange(order.id, status);
+  };
   
   return ( 
     <div className={`relative mb-4`}> 
@@ -163,7 +168,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
               {habitLabel && (<span className="text-[10px] font-bold text-morandi-blue bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">{habitLabel}</span>)} 
             </div> 
             <div className="relative group" onClick={(e) => isSelectionMode && e.stopPropagation()}> 
-              <select disabled={isSelectionMode} value={order.status || OrderStatus.PENDING} onChange={(e) => onStatusChange(order.id, e.target.value as OrderStatus)} className={`appearance-none pl-4 pr-9 py-2 rounded-xl text-xs font-extrabold cursor-pointer outline-none transition-all duration-300 border border-transparent hover:brightness-95 ${isSelectionMode ? 'opacity-50 pointer-events-none' : ''}`} style={{ backgroundColor: statusConfig.tagBg, color: statusConfig.tagText }}> 
+              <select disabled={isSelectionMode} value={order.status || OrderStatus.PENDING} onChange={(e) => handleStatusSelectChange(e.target.value as OrderStatus)} className={`appearance-none pl-4 pr-9 py-2 rounded-xl text-xs font-extrabold cursor-pointer outline-none transition-all duration-300 border border-transparent hover:brightness-95 ${isSelectionMode ? 'opacity-50 pointer-events-none' : ''}`} style={{ backgroundColor: statusConfig.tagBg, color: statusConfig.tagText }}> 
                 <option value={OrderStatus.PENDING}>待處理</option><option value={OrderStatus.SHIPPED}>已配送</option><option value={OrderStatus.PAID}>已收款</option> 
               </select> 
               <ChevronDown className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-300 group-hover:rotate-180" style={{ color: statusConfig.iconColor }} /> 

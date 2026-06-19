@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, MutableRefObject } from 'react';
 import localforage from 'localforage';
 import { debounce } from 'lodash';
 import { Customer, Product, Order, OrderStatus, ToastType } from '../types';
@@ -44,7 +44,10 @@ export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: 
   });
 
   localItems.forEach(localItem => {
-    if (localItem._syncStatus === 'pending' || localItem.syncStatus === 'pending') {
+    const isPending = localItem._syncStatus === 'pending' || localItem.syncStatus === 'pending';
+    const isError = localItem._syncStatus === 'error' || localItem.syncStatus === 'error';
+    
+    if (isPending || isError) {
       const cloudItem = mergedMap.get(localItem.id);
       if (!cloudItem) {
          if (localItem.pendingAction === 'delete') {
@@ -56,7 +59,16 @@ export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: 
       } else {
          const cloudV = cloudItem.lastUpdated || 0;
          const localV = localItem._localUpdatedTs || localItem.lastUpdated || 0;
-         if (cloudV < localV) {
+         const isServerNewer = cloudV > localV;
+
+         if (isError && isServerNewer) {
+            // 代表在本地出錯卡死的這段時間，雲端有人更新過了（雲端時間 > 本地出錯時間）
+            // -> 別人已經處理好了，放棄本地錯誤版本，全面擁抱雲端最新資料
+            // 雲端資料 (cloudItem) 已經在 mergedMap 裡，所以什麼都不做
+         } else if (cloudV < localV || isPending) {
+            // 如果本地時間較新，或是我們還處於活躍的 pending 狀態
+            // 當 cloudV === localV 時，若為 pending，也優先相信本地
+            // (除非要等伺服器回來更新狀態為成功才解鎖)
             mergedMap.set(localItem.id, localItem);
          } else if (cloudV === localV && localItem.pendingAction === 'delete') {
             mergedMap.set(localItem.id, localItem);
@@ -68,7 +80,7 @@ export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: 
   return Array.from(mergedMap.values());
 }
 
-export const useDataSync = (addToast: (msg: string, type: ToastType) => void, isEditingRef?: React.MutableRefObject<boolean>) => {
+export const useDataSync = (addToast: (msg: string, type: ToastType) => void, isEditingRef?: MutableRefObject<boolean>, onReconciled?: (orderId: string) => void) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('nm_auth_status') === 'true';
@@ -349,6 +361,18 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
                     const existOrder = mergedMap.get(newOrder.id);
                     if (existOrder) {
                         if (existOrder.syncStatus === 'pending' || existOrder.syncStatus === 'error') {
+                            // [Reconciliation / 假性失敗的自動和解]
+                            // 偷看答案：如果目前這筆訂單的「雲端實際狀態」已經等於了我們本地「樂觀更新鎖死」的「變更目標」
+                            // 就代表我們先前的請求（如：切換為 PAID）GAS 已經處理成功，只是回傳時 Timeout 導致被誤判失敗。
+                            // 若狀態與趟次等關鍵維度完全吻合，即可「握手言和」，解除 UI 死鎖。
+                            if (newOrder.status === existOrder.status && newOrder.trip === existOrder.trip && newOrder.deliveryMethod === existOrder.deliveryMethod) {
+                                // 覆寫成純淨的雲端資料（無 pending/error）解鎖 UI
+                                mergedMap.set(newOrder.id, newOrder);
+                                // 通知 Queue 把舊的失敗任務刪除
+                                if (onReconciled) {
+                                    onReconciled(newOrder.id);
+                                }
+                            }
                             return; 
                         }
                         if ((existOrder.lastUpdated || 0) >= (newOrder.lastUpdated || 0)) {

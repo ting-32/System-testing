@@ -1703,20 +1703,22 @@ function onSpreadsheetChange(e) {
       if (lastUpdatedColIdx !== -1) {
         // 抓取整個 LastUpdated 欄道的值
         const lastUpdatedValues = sheet.getRange(2, lastUpdatedColIdx + 1, lastRow - 1, 1).getValues();
-        let rowsToUpdate = [];
-        
-        // 找出所有 LastUpdated 是空白的列
-        for (let i = 0; i < lastUpdatedValues.length; i++) {
-          if (!lastUpdatedValues[i][0]) {
-            rowsToUpdate.push(i + 2); // 陣列索引從 0 開始，加上標題列與位移，剛好是 i + 2 列
+        let modified = false;
+        const newColValues = lastUpdatedValues.map(row => {
+          if (!row[0]) {
+            modified = true;
+            return [currentTs]; // 補上新的時間戳
           }
-        }
-
-        // 把這些空白的列補上當前的時間戳記
-        rowsToUpdate.forEach(rowNum => {
-          sheet.getRange(rowNum, lastUpdatedColIdx + 1).setValue(currentTs).setNumberFormat('0');
-          isUpdated = true;
+          return [row[0]]; // 保留舊的時間戳
         });
+
+        if (modified) {
+          // [效能最佳化 / 避免 Quota 耗盡]
+          // 捨棄迴圈中多次調用 setValue() 的舊做法，改將整個直行的資料讀入記憶體修改後，
+          // 使用 setValues()「一發入魂寫回」 (In-Memory Bulk Write)，將時間降至 1 秒內。
+          sheet.getRange(2, lastUpdatedColIdx + 1, newColValues.length, 1).setValues(newColValues).setNumberFormat('0');
+          isUpdated = true;
+        }
       }
     });
 

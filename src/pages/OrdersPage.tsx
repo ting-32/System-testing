@@ -209,7 +209,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
 
   return (
     <>
-      <div className="space-y-6 relative pb-24">
+      <div className="space-y-6 relative">
         <div className="sticky top-0 z-30 bg-morandi-oatmeal py-2 space-y-2 px-1 mb-2 shadow-sm rounded-b-[20px] pb-4">
            {/* Top UI */}
            <motion.div 
@@ -328,8 +328,8 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
                 else if (allShipped) statusTag = { label: '已配送', color: 'bg-amber-50 text-amber-600 border-amber-100' };
 
                 return (
-                  <div key={custName} className="pb-3 px-1">
-                    <motion.div variants={itemVariants} className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow duration-300">
+                  <div key={custName} className="px-1">
+                    <motion.div variants={itemVariants} className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow duration-300 h-fit">
                       <button onClick={() => setExpandedCustomer(isExpanded ? null : custName)} className="w-full flex items-center justify-between p-5 text-left active:bg-morandi-oatmeal/30 transition-colors">
                         <div className="flex items-center gap-4 overflow-hidden">
                           <div className={`w-12 h-12 rounded-[16px] flex-shrink-0 flex items-center justify-center text-xl font-extrabold transition-colors ${isExpanded ? 'bg-morandi-blue text-white' : 'bg-morandi-oatmeal text-morandi-pebble'}`}>{String(custName || '').charAt(0)}</div>
