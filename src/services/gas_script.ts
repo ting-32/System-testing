@@ -1210,60 +1210,66 @@ function batchUpdatePaymentStatus(data) {
 }
 
 function deleteOrder(data) {
-  const sheet = getSheets().ORDERS;
-  const lastRow = sheet.getLastRow();
-  
-  if (lastRow <= 1) return false;
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const sheet = getSheets().ORDERS;
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow <= 1) return false;
 
-  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version", "Status"]);
-  const lastUpdatedColIdx = headerMap["LastUpdated"];
-  const versionColIdx = headerMap["Version"];
-  const statusColIdx = headerMap["Status"];
-  const totalCols = sheet.getMaxColumns();
-  const values = sheet.getDataRange().getValues();
-  const targetId = String(data.id).trim();
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version", "Status"]);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const versionColIdx = headerMap["Version"];
+    const statusColIdx = headerMap["Status"];
+    const totalCols = sheet.getMaxColumns();
+    const values = sheet.getDataRange().getValues();
+    const targetId = String(data.id).trim();
 
-  let modified = false;
-  let newVersion = 0;
-  
-  if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
-  const tsString = Utilities.formatDate(new Date(), cachedTimeZone, "yyyy/MM/dd HH:mm:ss");
+    let modified = false;
+    let newVersion = 0;
+    
+    if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
+    const tsString = Utilities.formatDate(new Date(), cachedTimeZone, "yyyy/MM/dd HH:mm:ss");
 
-  // Conflict check first
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][1]).trim() === targetId) {
-      if (!data.force && data.version !== undefined) {
-         checkOrderVersionStrict(values[i][versionColIdx], data.version);
+    // Conflict check first
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][1]).trim() === targetId) {
+        if (!data.force && data.version !== undefined) {
+           checkOrderVersionStrict(values[i][versionColIdx], data.version);
+        }
       }
     }
-  }
 
-  // Update rows
-  for (let i = 1; i < values.length; i++) {
-    // 匹配 ID 欄位 (通常在 Col 2，也就是 values[i][1])
-    if (String(values[i][1]).trim() === targetId) {
-      if (!modified) {
-        newVersion = Number(values[i][versionColIdx] || 0) + 1;
-        modified = true;
+    // Update rows
+    for (let i = 1; i < values.length; i++) {
+      // 匹配 ID 欄位 (通常在 Col 2，也就是 values[i][1])
+      if (String(values[i][1]).trim() === targetId) {
+        if (!modified) {
+          newVersion = Number(values[i][versionColIdx] || 0) + 1;
+          modified = true;
+        }
+        
+        // Update Status, LastUpdated, Version in memory
+        // 注意：直接寫入第 9 欄 (index 8) 與 updateOrderStatus 一致，確保覆蓋 "狀態" 欄
+        values[i][8] = 'DELETED';
+        // 兼容性寫入，若動態取得的欄位跟 8 不同，也一併更新以防萬一
+        if (statusColIdx !== 8 && statusColIdx !== undefined) {
+           values[i][statusColIdx] = 'DELETED';
+        }
+        
+        values[i][lastUpdatedColIdx] = String(new Date().getTime());
+        values[i][versionColIdx] = newVersion;
       }
-      
-      // Update Status, LastUpdated, Version in memory
-      // 注意：直接寫入第 9 欄 (index 8) 與 updateOrderStatus 一致，確保覆蓋 "狀態" 欄
-      values[i][8] = 'DELETED';
-      // 兼容性寫入，若動態取得的欄位跟 8 不同，也一併更新以防萬一
-      if (statusColIdx !== 8 && statusColIdx !== undefined) {
-         values[i][statusColIdx] = 'DELETED';
-      }
-      
-      values[i][lastUpdatedColIdx] = String(new Date().getTime());
-      values[i][versionColIdx] = newVersion;
     }
-  }
 
-  if (modified && values.length > 1) {
-    safeSetValues(sheet, 2, 1, values.slice(1));
+    if (modified && values.length > 1) {
+      safeSetValues(sheet, 2, 1, values.slice(1));
+    }
+    return true;
+  } finally {
+    lock.releaseLock();
   }
-  return true;
 }
 
 function reorderProducts(orderedIds) {
@@ -1494,10 +1500,14 @@ function generateTomorrowDefaultOrders() {
     const sheets = getSheets();
     const orderSheet = sheets.ORDERS;
   
-  const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip"]);
+  const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip", "Status", "狀態"]);
   const sourceColIdx = headerMap["資料來源"];
   const lastUpdatedColIdx = headerMap["LastUpdated"];
   const tripColIdx = headerMap["Trip"];
+  
+  // 取得狀態欄位位置 (自動適配英中文標題，預設降級為 Index 8)
+  const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : 
+                       (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
   
   const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
   const today = new Date();
@@ -1519,14 +1529,17 @@ function generateTomorrowDefaultOrders() {
     let rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
     const rowCustomer = existingOrders[i][2]; // 第 3 欄 (Index 2) 是客戶名稱
     
+    // 👇 新增這行：抓取該筆訂單的狀態
+    const rowStatus = String(existingOrders[i][statusColIdx] || '').trim().toUpperCase();
+    
     // 【修改 1：統一型別】避免 Google Sheets 欄位為純 Date 物件，導致嚴格等於(===)比對失敗
     if (rowDate instanceof Date) {
       rowDate = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
     }
     
     // 【修改 2：邏輯加強】只要明天 (targetDateStr) 已經有該客戶的訂單 (不論是手動建好的還是自動的)，
-    // 就將他記到「已建單名單」，接下來就不會再幫這間店新增訂單了。
-    if (rowDate === targetDateStr) {
+    // 而且該訂單的狀態不是 DELETED，就將他記到「已建單名單」，接下來就不會再幫這間店新增訂單了。
+    if (rowDate === targetDateStr && rowStatus !== 'DELETED') {
       alreadyGeneratedCustomers.add(rowCustomer); 
     }
   }

@@ -135,6 +135,7 @@ export const useOrderCalculations = ({
   // 4. Schedule Tab Orders
   const scheduleOrders = useMemo(() => {
     const rawOrders = orders.filter(o => {
+      if (o.pendingAction === 'delete') return false;
       if (o.deliveryDate !== scheduleDate) return false;
       if (scheduleDeliveryMethodFilter.length > 0) {
         const customer = customers.find(c => c.name === o.customerName);
@@ -181,6 +182,7 @@ export const useOrderCalculations = ({
     const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
     orders.forEach(order => {
+      if (order.pendingAction === 'delete') return;
       const amount = calculateOrderTotalAmount(order);
       const isPending = order.syncStatus === 'pending' || order.syncStatus === 'error';
       
@@ -242,6 +244,7 @@ export const useOrderCalculations = ({
   const settlementPreview = useMemo(() => {
     if (!settlementTarget) return null;
     const filteredOrders = orders.filter(o => {
+      if (o.pendingAction === 'delete') return false;
       if (!settlementTarget.allOrderIds.includes(o.id)) return false;
       return o.deliveryDate <= settlementDate;
     });
@@ -257,7 +260,7 @@ export const useOrderCalculations = ({
   // 8. Grouped Orders (Main Order List)
   const { groups: groupedOrders, dayOrders } = useMemo(() => {
     const groups: { [key: string]: Order[] } = {};
-    let dayOrders = orders.filter(o => o.deliveryDate === selectedDate);
+    let dayOrders = orders.filter(o => o.deliveryDate === selectedDate && o.pendingAction !== 'delete');
 
     // Filter by Search Term
     if (orderSearch) {
@@ -304,7 +307,7 @@ export const useOrderCalculations = ({
 
   // 10. Work Sheet Data (Production List)
   const workSheetData = useMemo(() => {
-    let filtered = orders.filter(o => workDates.includes(o.deliveryDate));
+    let filtered = orders.filter(o => workDates.includes(o.deliveryDate) && o.pendingAction !== 'delete');
     
     // Deduplicate
     const seen = new Set();

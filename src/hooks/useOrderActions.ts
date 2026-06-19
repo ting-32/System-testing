@@ -699,50 +699,16 @@ export const useOrderActions = ({
     // Instead of completely removing, we mark it as pending deletion to prevent cache revert resurrections
     setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, _syncStatus: 'pending', syncStatus: 'pending', pendingAction: 'delete', _localUpdatedTs: now } : o));
 
-    try { 
-      if (apiEndpoint) { 
-        const payload = { id: orderId, version: orderBackup.version };
-        const token = localStorage.getItem('APP_SESSION_TOKEN');
-        const res = await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'deleteOrder', token: token || "", data: payload }) }); 
-        const json = await res.json();
-        if (!json.success) {
-            if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
-                localStorage.removeItem('nm_auth_status');
-                localStorage.removeItem('APP_SESSION_TOKEN');
-                localStorage.removeItem('APP_USER_ROLE');
-                localStorage.removeItem('APP_USER_NAME');
-                window.dispatchEvent(new Event('app-unauthorized'));
-                return;
-            }
-            if (json.errorCode === 'ERR_VERSION_CONFLICT' || json.errorCode === 'VERSION_CONFLICT') {
-               setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId)); // Revert if conflict? Wait, if conflict on delete, we should maybe restore it to backup
-               setOrders((prev: Order[]) => [...prev.filter(o => o.id !== orderId), orderBackup]);
-               setConflictData({
-                  action: 'deleteOrder',
-                  data: payload,
-                  description: `刪除訂單: ${orderBackup.customerName}`,
-                  type: 'delete_order',
-                  clientData: payload,
-                  serverData: json.serverData || json.data
-               });
-               return;
-            } else {
-               // Add back with error status
-               setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...orderBackup, syncStatus: 'error', _syncStatus: 'error', errorMessage: json.error || 'Delete failed', pendingAction: 'delete' } : o));
-               addToast("刪除失敗，已標記為錯誤", 'error');
-            }
-         } else {
-            // Delete succeeded, remove from local state
-            setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId));
-            broadcastDataChange();
-         }
-      } 
-    } catch (e) { 
-      if (e instanceof Error && e.message === "UNAUTHORIZED_OR_EXPIRED") return;
-      console.error("刪除失敗:", e); 
-      setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...orderBackup, syncStatus: 'error', _syncStatus: 'error', errorMessage: e instanceof Error ? e.message : 'Network error', pendingAction: 'delete' } : o));
-      addToast("刪除失敗，已標記為錯誤", 'error'); 
-    } 
+    if (apiEndpoint && addSyncTask) {
+      addSyncTask({
+        id: `DELETE_${orderId}_${now}`,
+        type: 'delete_order',
+        payload: { id: orderId, version: orderBackup.version },
+        description: `刪除訂單 ${orderBackup.customerName}`
+      });
+    } else {
+      setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId));
+    }
   };
 
   const handleBatchUpdateTrip = async (tripName: string, selectedOrderIds: Set<string>, setSelectedOrderIds: (s: Set<string>) => void, setIsSelectionMode: (b: boolean) => void) => {

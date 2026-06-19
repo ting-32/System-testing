@@ -68,7 +68,7 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
       setAvailableTrips(newTrips);
       saveTripsToCloud(newTrips);
       
-      const idsToUpdate = orders.filter(o => o.trip === oldName).map(o => o.id);
+      const idsToUpdate = orders.filter(o => o.trip === oldName && o.pendingAction !== 'delete').map(o => o.id);
       
       if (idsToUpdate.length > 0) {
         // 先樂觀更新 UI 為 pending
@@ -115,7 +115,7 @@ export const TripManagerModal: React.FC<TripManagerModalProps> = ({
       setAvailableTrips(newTrips);
       saveTripsToCloud(newTrips);
       
-      const idsToUpdate = orders.filter(o => o.trip === tripToDelete).map(o => o.id);
+      const idsToUpdate = orders.filter(o => o.trip === tripToDelete && o.pendingAction !== 'delete').map(o => o.id);
       
       if (idsToUpdate.length > 0) {
         setOrders(prevOrders => prevOrders.map(order => 

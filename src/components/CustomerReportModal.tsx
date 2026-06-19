@@ -40,6 +40,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
 
   const reportOrders = useMemo(() => {
     return orders.filter(o => 
+      o.pendingAction !== 'delete' &&
       o.customerName === customerName && 
       (reportType === 'month' 
         ? o.deliveryDate.startsWith(reportMonth) 

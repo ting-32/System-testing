@@ -79,7 +79,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
   };
 
   const findLastOrder = (customerId: string, customerName: string) => {
-    const customerOrders = orders.filter(o => o.customerName === customerName || customers.find(c => c.id === customerId)?.name === o.customerName);
+    const customerOrders = orders.filter(o => o.pendingAction !== 'delete' && (o.customerName === customerName || customers.find(c => c.id === customerId)?.name === o.customerName));
     const currentDay = new Date(selectedDate);
     const lastWeekDate = new Date(currentDay);
     lastWeekDate.setDate(currentDay.getDate() - 7);

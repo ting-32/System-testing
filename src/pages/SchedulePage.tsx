@@ -73,6 +73,7 @@ export const SchedulePage: React.FC<SchedulePageProps> = ({
   // 行程明細計算
   const scheduleOrders = useMemo(() => {
     const rawOrders = orders.filter(o => {
+      if (o.pendingAction === 'delete') return false;
       if (o.deliveryDate !== scheduleDate) return false;
       if (scheduleDeliveryMethodFilter.length > 0) {
         const customer = customers.find(c => c.name === o.customerName);
