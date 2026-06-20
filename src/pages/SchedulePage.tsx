@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, Reorder } from 'framer-motion';
 import { 
-  CalendarCheck, Banknote, X, CheckSquare, Filter, Clock, Settings, Plus, GripVertical, Navigation 
+  CalendarCheck, Banknote, X, CheckSquare, Filter, Clock, Settings, GripVertical, Navigation 
 } from 'lucide-react';
 import { WorkCalendar } from '../components/WorkCalendar';
 import { ScheduleOrderCard } from '../components/ScheduleOrderCard';
@@ -27,7 +27,6 @@ export interface SchedulePageProps {
     onError: (msg: string) => void
   ) => void;
   setIsTripManagerOpen: (isOpen: boolean) => void;
-  onNavigateToAddOrder: (date: string) => void;
   handleSwipeStatusChange: (id: string, status: 'PAID' | 'UNPAID') => void;
   handleShareOrder: (order: Order) => void;
   openGoogleMaps: (customerName: string) => void;
@@ -47,7 +46,6 @@ export const SchedulePage: React.FC<SchedulePageProps> = ({
   setAvailableTrips,
   saveOrderToCloud,
   setIsTripManagerOpen,
-  onNavigateToAddOrder,
   handleSwipeStatusChange,
   handleShareOrder,
   openGoogleMaps,
@@ -290,12 +288,6 @@ export const SchedulePage: React.FC<SchedulePageProps> = ({
               className="px-3 py-1 bg-white text-slate-600 border border-slate-200 text-xs font-bold rounded-full shadow-sm flex items-center gap-1 hover:bg-slate-50 transition-colors"
             >
               <Settings className="w-3 h-3" /> 編輯趟數
-            </button>
-            <button 
-              onClick={() => onNavigateToAddOrder(scheduleDate)}
-              className="px-3 py-1 bg-morandi-blue text-white text-xs font-bold rounded-full shadow-sm flex items-center gap-1"
-            >
-              <Plus className="w-3 h-3" /> 臨時加單
             </button>
             <button 
               onClick={async () => {

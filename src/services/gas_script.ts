@@ -335,6 +335,7 @@ function getOrder(data) {
     status: firstRow.Status || firstRow.status || firstRow.狀態,
     deliveryMethod: firstRow.DeliveryMethod || firstRow.deliveryMethod || firstRow.配送方式,
     lastUpdated: parseLastUpdated(firstRow.LastUpdated),
+    version: Number(firstRow.Version || 0),
     trip: firstRow.Trip || firstRow.trip || firstRow.趟次 || '',
     items: orderRows.map(r => ({
       productId: r.ProductName || r.productName || r.品項,
@@ -1005,88 +1006,148 @@ function updateOrderContent(orderData) {
     lock.waitLock(15000);
     
     const sheet = getSheets().ORDERS;
-    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Trip", "資料來源", "Version"]);
-    const lastUpdatedColIdx = headerMap["LastUpdated"];
-    const tripColIdx = headerMap["Trip"];
-    const sourceColIdx = headerMap["資料來源"];
-    const versionColIdx = headerMap["Version"];
     
-    const maxColReq = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
-      if (sheet.getMaxColumns() < maxColReq) {
-        sheet.insertColumnsAfter(sheet.getMaxColumns(), maxColReq - sheet.getMaxColumns());
+    // 動態標題映射 (Dynamic Header Mapping)
+    const headers = sheet.getRange(1, 1, 1, sheet.getMaxColumns()).getValues()[0];
+    const headerMap = {};
+    headers.forEach((h, i) => { if (h) headerMap[String(h).trim()] = i; });
+    
+    // 確保必備欄位存在
+    const requiredHeaders = ["LastUpdated", "Trip", "資料來源", "Version"];
+    let needsInsert = false;
+    requiredHeaders.forEach(req => {
+      if (headerMap[req] === undefined) {
+         headerMap[req] = headers.length;
+         headers.push(req);
+         needsInsert = true;
       }
-  
-      const lastRow = sheet.getLastRow();
-      const totalCols = sheet.getMaxColumns();
-  
-      let values = [];
-      if (lastRow > 1) {
-        values = sheet.getDataRange().getValues();
+    });
+
+    if (needsInsert) {
+      if (sheet.getMaxColumns() < headers.length) {
+         sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
       }
-      
-      const targetId = String(orderData.id).trim();
-      let originalCreatedAt = "";
-      
-      // 1. Conflict Detection Phase (In-Memory)
-      let currentVersion = 0;
-      if (lastRow > 1) {
-        for (let i = values.length - 1; i >= 1; i--) {
-          const sheetId = String(values[i][1]).trim();
-          if (sheetId === targetId) {
-            const sheetVersion = values[i][versionColIdx];
-            currentVersion = Number(sheetVersion || 0);
-            if (!orderData.force) {
-              checkOrderVersionStrict(sheetVersion, orderData.version);
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
+    
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const versionColIdx = headerMap["Version"];
+    const totalCols = headers.length;
+
+    const lastRow = sheet.getLastRow();
+    
+    // 預設寫回全表變數
+    let values = [];
+    if (lastRow > 1) {
+      values = sheet.getDataRange().getValues();
+    }
+    
+    const targetId = String(orderData.id).trim();
+    const newLastUpdatedTs = String(new Date().getTime());
+    let currentVersion = 0;
+    
+    // PARTIAL UPDATE MODE (若前端只傳送 updateFields)
+    if (orderData.updateFields && !orderData.items) {
+      let updatedRowsCount = 0;
+      for (let i = values.length - 1; i >= 1; i--) {
+        if (String(values[i][1]).trim() === targetId) {
+          const sheetVersion = values[i][versionColIdx];
+          currentVersion = Number(sheetVersion || 0);
+          
+          if (!orderData.force) {
+            checkOrderVersionStrict(sheetVersion, orderData.version);
+          }
+          
+          // 在記憶體中進行屬性合併
+          for (const [key, newValue] of Object.entries(orderData.updateFields)) {
+            let colIndex = headerMap[key];
+            // 嘗試容錯不同的預設名稱
+            if (colIndex === undefined) {
+               if (key === 'note') colIndex = headerMap['備註'];
+               else if (key === 'trip') colIndex = headerMap['Trip'] || headerMap['趟次'];
+               else if (key === 'status') colIndex = headerMap['Status'] || headerMap['狀態'];
+               else if (key === 'deliveryDate') colIndex = headerMap['Date'] || headerMap['日期'];
             }
-            if (!originalCreatedAt) originalCreatedAt = values[i][0];
+            if (colIndex !== undefined) {
+              values[i][colIndex] = newValue;
+            }
           }
+          
+          values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+          values[i][versionColIdx] = currentVersion + 1;
+          updatedRowsCount++;
         }
       }
-  
-      let timestamp = formatCellValue(originalCreatedAt);
-      if (!timestamp) {
-        timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+      
+      if (updatedRowsCount > 0) {
+        safeSetValues(sheet, 2, 1, values.slice(1));
+        return { lastUpdated: newLastUpdatedTs, version: currentVersion + 1 };
       }
-      const newLastUpdatedTs = String(new Date().getTime());
-  
-      // 2. Filter out old rows (In-Memory Deletion)
-      const newRows = [];
-      if (lastRow > 1) {
-        for (let i = 1; i < values.length; i++) {
-          if (String(values[i][1]).trim() !== targetId) {
-            const r = values[i].slice();
-            while (r.length < totalCols) r.push("");
-            newRows.push(r.slice(0, totalCols));
+      throw new Error("Order not found: " + targetId);
+    }
+    
+    // FULL UPDATE MODE (包含 items 異動，需要重新產生 rows)
+    let originalCreatedAt = "";
+    if (lastRow > 1) {
+      for (let i = values.length - 1; i >= 1; i--) {
+        const sheetId = String(values[i][1]).trim();
+        if (sheetId === targetId) {
+          const sheetVersion = values[i][versionColIdx];
+          currentVersion = Number(sheetVersion || 0);
+          if (!orderData.force) {
+            checkOrderVersionStrict(sheetVersion, orderData.version);
           }
+          if (!originalCreatedAt) originalCreatedAt = values[i][0];
         }
       }
-  
-      // 3. Append new rows
+    }
+
+    let timestamp = formatCellValue(originalCreatedAt);
+    if (!timestamp) {
+      timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+    }
+
+    // Filter out old rows (In-Memory Deletion)
+    const newRows = [];
+    if (lastRow > 1) {
+      for (let i = 1; i < values.length; i++) {
+        if (String(values[i][1]).trim() !== targetId) {
+          const r = values[i].slice();
+          while (r.length < totalCols) r.push("");
+          newRows.push(r.slice(0, totalCols));
+        }
+      }
+    }
+
+    // Append new rows
+    if (orderData.items && Array.isArray(orderData.items)) {
       orderData.items.forEach(item => {
         const row = new Array(totalCols).fill("");
         row[0] = timestamp;
         row[1] = orderData.id;
         row[2] = orderData.customerName;
         row[3] = orderData.deliveryDate;
-        row[4] = orderData.deliveryTime;
+        row[4] = orderData.deliveryTime || "";
         row[5] = item.productName || item.productId;
         row[6] = item.quantity;
         row[7] = orderData.note || "";
         row[8] = orderData.status || "PENDING";
         row[9] = orderData.deliveryMethod || "";
         row[10] = item.unit || "斤";
+        
         row[lastUpdatedColIdx] = newLastUpdatedTs;
-        row[tripColIdx] = orderData.trip || "";
-        row[sourceColIdx] = orderData.source || "";
-        row[versionColIdx] = currentVersion + 1; // 每次更新遞增 version
+        if (headerMap["Trip"]) row[headerMap["Trip"]] = orderData.trip || "";
+        if (headerMap["資料來源"]) row[headerMap["資料來源"]] = orderData.source || "";
+        row[versionColIdx] = currentVersion + 1; 
+        
         newRows.push(row);
       });
-      
-      // 4. Batch Write Back
-      if (lastRow > 1) {
-        sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-      }
-      
+    }
+
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
+    }
+    
     if (newRows.length > 0) {
       safeSetValues(sheet, 2, 1, newRows);
     }
@@ -1102,9 +1163,32 @@ function updateOrderStatus(data) {
   try {
     lock.waitLock(15000);
     const sheet = getSheets().ORDERS;
-    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version"]);
+    
+    const headers = sheet.getRange(1, 1, 1, sheet.getMaxColumns()).getValues()[0];
+    const headerMap = {};
+    headers.forEach((h, i) => { if (h) headerMap[String(h).trim()] = i; });
+    
+    const requiredHeaders = ["LastUpdated", "Version"];
+    let needsInsert = false;
+    requiredHeaders.forEach(req => {
+      if (headerMap[req] === undefined) {
+         headerMap[req] = headers.length;
+         headers.push(req);
+         needsInsert = true;
+      }
+    });
+
+    if (needsInsert) {
+      if (sheet.getMaxColumns() < headers.length) {
+         sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
+      }
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
+
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
+    const statusColIdx = headerMap["Status"] || headerMap["狀態"] || 8; 
+    
     const values = sheet.getDataRange().getValues();
     const targetId = String(data.id).trim();
     const newLastUpdatedTs = String(new Date().getTime());
@@ -1119,7 +1203,7 @@ function updateOrderStatus(data) {
            checkOrderVersionStrict(currentVersion, data.version);
         }
         newVersion = Number(currentVersion || 0) + 1;
-        values[i][8] = data.status; // Status column (index 8 is col 9)
+        values[i][statusColIdx] = data.status; 
         values[i][lastUpdatedColIdx] = newLastUpdatedTs;
         values[i][versionColIdx] = newVersion;
         rowsToUpdate.push(i + 1);
@@ -1127,7 +1211,6 @@ function updateOrderStatus(data) {
     }
     
     if (rowsToUpdate.length > 0) {
-      // 統一覆寫以避免多次 setValue 發送 API 請求的極大效能損耗
       safeSetValues(sheet, 2, 1, values.slice(1));
     } else {
       throw new Error("Order not found: " + targetId);

@@ -183,20 +183,168 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
   }, [reportOrders, products, customer, reportMonth, reportType]);
 
   const [printWarning, setPrintWarning] = useState(false);
+  const [printOptions, setPrintOptions] = useState({
+    showUnitPrice: true,
+    showTotalPrice: true,
+    showDeliveryTrip: true,
+    showNotes: true
+  });
 
   const handlePrint = () => {
-    try {
-      if (window.self !== window.top) {
-        // 在 iframe 內，顯示自訂警告
-        setPrintWarning(true);
-        setTimeout(() => setPrintWarning(false), 8000);
-      } else {
-        window.print();
-      }
-    } catch (e) {
-      // 若同源政策等原因報錯，仍嘗試呼叫
-      window.print();
+    if (reportOrders.length === 0) {
+      alert('目前沒有對帳單資料可供列印');
+      return;
     }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('彈跳視窗被封鎖，無法開啟列印頁面');
+      return;
+    }
+
+    const reportTitle = `${customerName} - ${reportType === 'month' ? reportMonth.replace('-', '年') + '月' : `${reportYear}年度`} 對帳單`;
+
+    // 匯總表 HTML
+    let tableHtml = `
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th width="${(printOptions.showUnitPrice && printOptions.showTotalPrice) ? '30%' : (printOptions.showTotalPrice ? '50%' : printOptions.showUnitPrice ? '60%' : '80%')}">品項</th>
+            ${printOptions.showUnitPrice ? `<th width="20%" class="text-right">單價</th>` : ''}
+            <th width="20%" class="text-right">總數</th>
+            ${printOptions.showTotalPrice ? `<th width="30%" class="text-right">總金額</th>` : ''}
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    aggregatedItems.sort((a, b) => b.totalAmount - a.totalAmount).forEach(item => {
+      tableHtml += `
+        <tr>
+          <td><strong>${item.productName}</strong></td>
+          ${printOptions.showUnitPrice ? `<td class="text-right text-gray">${item.unitPrice ? '$' + item.unitPrice : '-'}</td>` : ''}
+          <td class="text-right"><strong>${item.totalQuantity}</strong> ${item.unit}</td>
+          ${printOptions.showTotalPrice ? `<td class="text-right"><strong>$${item.totalAmount.toLocaleString()}</strong></td>` : ''}
+        </tr>
+      `;
+    });
+
+    tableHtml += `
+        </tbody>
+        ${printOptions.showTotalPrice ? `
+        <tfoot>
+          <tr>
+            <td colspan="${printOptions.showUnitPrice ? '3' : '2'}" class="text-right" style="font-size: 20px; font-weight: bold;">總計金額</td>
+            <td class="text-right" style="font-size: 24px; font-weight: bold;">$${kpis.totalSpend.toLocaleString()}</td>
+          </tr>
+        </tfoot>
+        ` : ''}
+      </table>
+    `;
+
+    // 每日明細 HTML
+    let detailsHtml = `
+      <h2 style="font-size: 24px; margin-top: 40px; border-bottom: 2px solid #ddd; padding-bottom: 10px;">每日出貨明細</h2>
+      <table class="details-table">
+        <thead>
+          <tr>
+            <th width="20%">日期</th>
+            <th width="${(printOptions.showDeliveryTrip && printOptions.showTotalPrice) ? '50%' : (printOptions.showTotalPrice ? '65%' : printOptions.showDeliveryTrip ? '65%' : '80%')}">品項明細</th>
+            ${printOptions.showDeliveryTrip ? `<th width="15%">配送</th>` : ''}
+            ${printOptions.showTotalPrice ? `<th width="15%" class="text-right">小計</th>` : ''}
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    reportOrders.forEach(order => {
+      const orderTotal = order.items.reduce((sum, item) => {
+        const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+        const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
+        const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+        return sum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
+      }, 0);
+
+      const itemsHtml = order.items.map(item => {
+        const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+        return `
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span style="font-weight: bold;">${item.productName || p?.name || '未知品項'}</span>
+            <span>
+              <span style="display: inline-block; width: 80px; text-align: right;">${item.quantity} ${item.unit || p?.unit || '斤'}</span>
+            </span>
+          </div>
+        `;
+      }).join('');
+
+      detailsHtml += `
+        <tr>
+          <td style="vertical-align: top; font-weight: bold; font-size: 18px;">${order.deliveryDate.substring(5).replace('-', '/')}</td>
+          <td style="vertical-align: top;">
+            ${itemsHtml}
+            ${(printOptions.showNotes && order.note) ? `<div style="font-size: 14px; color: #666; margin-top: 4px; font-style: italic;">外站備註: ${order.note}</div>` : ''}
+          </td>
+          ${printOptions.showDeliveryTrip ? `<td style="vertical-align: top;">${order.trip || customer?.defaultTrip || '未分配'}</td>` : ''}
+          ${printOptions.showTotalPrice ? `<td style="vertical-align: top;" class="text-right font-bold text-lg">$${orderTotal.toLocaleString()}</td>` : ''}
+        </tr>
+      `;
+    });
+
+    detailsHtml += `
+        </tbody>
+      </table>
+    `;
+
+    const htmlContent = `<!DOCTYPE html>
+    <html>
+      <head>
+        <title>${reportTitle}</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 20px; color: #222; }
+          h1 { text-align: center; margin-bottom: 5px; font-size: 32px; }
+          p.date { text-align: center; color: #666; margin-bottom: 30px; font-size: 20px; font-weight: bold; }
+          .summary-table, .details-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 18px; }
+          .summary-table th, .summary-table td, .details-table th, .details-table td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+          .summary-table th, .details-table th { background-color: #f5f5f5; font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 20px; border-bottom: 3px solid #ccc; }
+          .summary-table tr:nth-child(even), .details-table tr:nth-child(even) { background-color: #fafafa; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .text-right { text-align: right; }
+          .font-bold { font-weight: bold; }
+          .text-gray { color: #666; }
+          .text-lg { font-size: 20px; }
+          .footer { margin-top: 40px; text-align: center; font-size: 14px; color: #999; border-top: 1px solid #eee; padding-top: 10px; }
+          
+          @page { margin: 15mm; }
+          
+          /* 僅在螢幕上顯示，列印時隱藏 */
+          @media screen {
+            .close-btn {
+              position: fixed; top: 20px; right: 20px; background-color: #1e293b; color: white; border: none; padding: 15px 30px; font-size: 18px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); cursor: pointer; font-weight: bold;
+            }
+          }
+          @media print {
+            .no-print { display: none !important; }
+          }
+        </style>
+      </head>
+      <body>
+        <button class="no-print close-btn" onclick="window.close(); if(!window.closed){window.history.back();}">
+          返回 / 關閉
+        </button>
+        
+        <h1>${reportTitle}</h1>
+        <p class="date">共 ${reportOrders.length} 筆訂單，總計出貨 ${kpis.totalVolume.toLocaleString()} 單位</p>
+        
+        ${tableHtml}
+        
+        ${detailsHtml}
+        
+        <div class="footer">列印時間: ${new Date().toLocaleString()}</div>
+        <script>window.onload = function() { setTimeout(function() { window.print(); }, 500); };</script>
+      </body>
+    </html>`;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   if (!isOpen) return null;
@@ -259,6 +407,47 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                <Printer className="w-4 h-4" /> 列印 / PDF
              </button>
           </div>
+        </div>
+
+        {/* 列印選項設定區 */}
+        <div className="flex items-center gap-4 py-3 px-6 bg-gray-50 border-b border-gray-200 print:hidden text-sm justify-center">
+          <span className="font-bold text-gray-700">列印顯示內容：</span>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={printOptions.showUnitPrice}
+              onChange={(e) => setPrintOptions(prev => ({ ...prev, showUnitPrice: e.target.checked }))}
+              className="rounded text-morandi-blue focus:ring-morandi-blue"
+            />
+            單價
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={printOptions.showTotalPrice}
+              onChange={(e) => setPrintOptions(prev => ({ ...prev, showTotalPrice: e.target.checked }))}
+              className="rounded text-morandi-blue focus:ring-morandi-blue"
+            />
+            總金額
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={printOptions.showDeliveryTrip}
+              onChange={(e) => setPrintOptions(prev => ({ ...prev, showDeliveryTrip: e.target.checked }))}
+              className="rounded text-morandi-blue focus:ring-morandi-blue"
+            />
+            配送趟次
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={printOptions.showNotes}
+              onChange={(e) => setPrintOptions(prev => ({ ...prev, showNotes: e.target.checked }))}
+              className="rounded text-morandi-blue focus:ring-morandi-blue"
+            />
+            備註資訊
+          </label>
         </div>
 
         {/* Warning missing print functionality in iframe */}

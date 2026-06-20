@@ -824,7 +824,8 @@ const App: React.FC = () => {
           
           /* 移除瀏覽器預設列印頁首頁尾 */
           @page {
-            margin: 0;
+            size: A4; /* 建議明確指定紙張尺寸 */
+            margin: 15mm; /* 讓紙張自然產生邊界，避免瀏覽器預設頁首尾過度干擾 */
           }
           
           /* 僅在螢幕上顯示，列印時隱藏 */
@@ -850,7 +851,18 @@ const App: React.FC = () => {
           }
           @media print {
             body {
-              padding: 15mm;
+              padding: 0; /* 移除原本錯誤的 Body padding */
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            thead {
+              display: table-header-group; /* 讓長表格如果跨到下一頁，每一頁都會自動重複顯示表頭 */
+            }
+            .group-header {
+              page-break-after: avoid; /* 避免分類標題印在第一頁底，但表格內容卻跑到第二頁 */
+            }
+            .print-row {
+              page-break-inside: avoid; /* 核心：讓斷頁只允許發生在「品項圖塊之間」，不會把單一列從中切斷 */
             }
             .no-print {
               display: none !important;
@@ -868,7 +880,29 @@ const App: React.FC = () => {
         <p class="date">出貨日期: ${dateRangeDisplay}</p>`; 
         
     workSheetData.forEach(group => { 
-      htmlContent += `<div style="page-break-inside: avoid;"><div class="group-header" style="background-color: ${group.color}40; border-left: 8px solid ${group.color};"> ${group.label} (共 ${group.totalWeight} 單位)</div><table><thead><tr><th width="20%">品項</th><th width="15%">總量</th><th width="10%">單位</th><th>分配明細</th></tr></thead><tbody>${group.items.map(item => `<tr><td style="font-weight: bold; font-size: 22px;">${item.name}</td><td class="text-right total-cell">${item.totalQty}</td><td class="text-center" style="font-size: 18px;">${item.unit}</td><td>${item.details.map(d => `<span class="badge">${d.customerName} <b>${d.qty}</b></span>`).join('')}</td></tr>`).join('')}</tbody></table></div>`; 
+      htmlContent += `
+        <div style="margin-bottom: 24px;"> <!-- 拔除外層的 page-break-inside: avoid -->
+          <div class="group-header" style="background-color: ${group.color}40; border-left: 8px solid ${group.color}; padding: 8px 12px; margin-bottom: 10px; font-weight: bold; font-size: 20px;">
+            ${group.label} (共 ${group.totalWeight} 單位)
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th width="20%">品項</th><th width="15%">總量</th><th width="10%">單位</th><th>分配明細</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${group.items.map(item => `
+                <tr class="print-row"> 
+                  <td style="font-weight: bold; font-size: 22px;">${item.name}</td>
+                  <td class="text-right total-cell">${item.totalQty}</td>
+                  <td class="text-center" style="font-size: 18px;">${item.unit}</td>
+                  <td>${item.details.map(d => `<span class="badge">${d.customerName} <b>${d.qty}</b></span>`).join('')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>`; 
     }); 
     
     htmlContent += `<div class="footer">列印時間: ${new Date().toLocaleString()}</div><script>window.onload = function() { setTimeout(function() { window.print(); }, 500); };</script></body></html>`; 
@@ -1112,12 +1146,6 @@ const App: React.FC = () => {
           isLoadingProducts={isLoadingProducts}
           setAvailableTrips={setAvailableTrips}
           setIsTripManagerOpen={setIsTripManagerOpen}
-          onNavigateToAddOrder={(date: string) => {
-            setSelectedDate(date);
-            dummySetOrderForm();
-            setEditingOrderId(null);
-            dummySetIsAddingOrder(true);
-          }}
           calculateOrderTotalAmount={calculateOrderTotalAmount}
           // FinancePage Props
           financeData={financeData}
