@@ -134,7 +134,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
         customerName: cust.name,
         deliveryTime: isAdhoc ? currentTime : formatTimeForInput(cust.deliveryTime),
         deliveryMethod: cust.deliveryMethod || '',
-        items: cust.defaultItems && cust.defaultItems.length > 0 ? cust.defaultItems.map(di => ({ ...di })) : [{ productId: '', quantity: 10, unit: '斤' }]
+        items: cust.defaultItems && cust.defaultItems.length > 0 ? cust.defaultItems.map(di => ({ ...di, productName: products.find(p => p.id === di.productId)?.name })) : [{ productId: '', quantity: 10, unit: '斤' }]
       });
       findLastOrder(id, cust.name);
     }
@@ -291,7 +291,7 @@ export const OrderFormModal: React.FC<OrderFormModalProps> = ({
                    onSelect: (pid) => { 
                      const n = [...orderForm.items]; 
                      const p = products.find(x => x.id === pid); 
-                     n[idx] = { ...item, productId: pid, unit: p?.unit || '斤' }; 
+                     n[idx] = { ...item, productId: pid, productName: p?.name, unit: p?.unit || '斤' }; 
                      handleOrderFormChange('items', n); 
                    } 
                  }); 

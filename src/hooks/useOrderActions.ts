@@ -188,7 +188,7 @@ export const useOrderActions = ({
         finalQuantity = parseFloat((finalQuantity * (1000 / 600)).toFixed(2));
         finalUnit = '斤';
       }
-      return { productId: item.productId, quantity: Math.max(0, finalQuantity), unit: finalUnit };
+      return { productId: item.productId, productName: item.productName || product?.name, quantity: Math.max(0, finalQuantity), unit: finalUnit };
     });
 
     const newOrder: Order = {
@@ -631,7 +631,7 @@ export const useOrderActions = ({
         finalQuantity = parseFloat((finalQuantity * (1000 / 600)).toFixed(2));
         finalUnit = '斤';
       }
-      return { productId: item.productId, quantity: Math.max(0, finalQuantity), unit: finalUnit };
+      return { productId: item.productId, productName: item.productName || product?.name, quantity: Math.max(0, finalQuantity), unit: finalUnit };
     });
 
     const timestamp = Date.now();
