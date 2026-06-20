@@ -207,7 +207,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[60] bg-slate-50 overflow-y-auto print:bg-white"
+        className="fixed inset-0 z-[60] bg-slate-50 overflow-y-auto print:bg-white modal-container"
       >
         {/* Sticky Header (Hidden in Print) */}
         <div className="sticky top-0 z-20 bg-white border-b border-gray-100 shadow-sm px-4 py-3 flex items-center justify-between print:hidden">

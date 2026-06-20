@@ -1754,6 +1754,10 @@ function onSpreadsheetChange(e) {
 // 🔔 Notification Center Check (Intended for Time-Driven Trigger)
 // Runs periodically (e.g. hourly) to evaluate rules and send notifications
 function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
+  // 1. 設置碼表 (GAS 極限是 360 秒，我們設 280 秒也就是 4.6 分鐘就準備收尾)
+  const START_TIME = Date.now();
+  const TIME_LIMIT = 280000; 
+
   let forceRuleId = forceRuleIdOrEvent;
   let triggerSource = "MANUAL_TEST";
 
@@ -1766,6 +1770,8 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
   }
   
   let dryRunResults = [];
+  let batchLogs = []; // 把原本每一圈都在寫的日誌，全部存在記憶體
+
   const configSheet = getConfigSheet();
   const settingsDataStr = getSystemConfig(configSheet, "AppSettings");
   if (!settingsDataStr) return;
@@ -1811,30 +1817,56 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
   const formattedTimeStr = `${year}-${month}-${dateStr}(${dayName})${period}${displayHour}:${m}`;
   // =================================
   
-  // Date format YYYY-MM-DD
-  const todayStr = `${year}-${month}-${dateStr}`;
+  // 以昨天作為起點，避免遺漏
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const startFetchDateStr = Utilities.formatDate(yesterday, timeZone, "yyyy-MM-dd");
   
-  const data = getData(todayStr, 0); // Only get orders from today onwards
+  const data = getData(startFetchDateStr, 0); 
   const customers = data.customers || [];
   
+  // =================================
+  // 打擊範圍縮圈 (Data Bounding)
+  // 解決配額提早耗盡 (Quota Drain)，只抓出貨日與今天相差 3 天內的訂單進迴圈
+  // =================================
+  if (data.orders && Array.isArray(data.orders)) {
+    // 過濾前的數量，如果很大，這一步可以省下巨量運算時間
+    data.orders = data.orders.filter(order => {
+      let dStr = order.deliveryDate;
+      if (!dStr) return false;
+      let d = (dStr instanceof Date) ? dStr : new Date(String(dStr).split(' ')[0].replace(/\//g, '-'));
+      if (isNaN(d.getTime())) return true;
+      const diffDays = Math.abs((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      return diffDays <= 3; // 取前後 3 天
+    });
+  }
+
   let notifications = [];
   
-  rules.forEach(rule => {
+  for (let r = 0; r < rules.length; r++) {
+    // 2. 迴圈每一圈都看錶，超過 4.6 分鐘直接停手
+    if (Date.now() - START_TIME > TIME_LIMIT) {
+      console.warn("即將超時，主動中斷規則檢查以確保寫入 Log！");
+      break; 
+    }
+
+    const rule = rules[r];
     // 定義初始偵測包
     let trace = { step: "INIT", message: "開始評估", customersEvaluated: 0, customersMatched: 0 };
 
     const logAndReturn = (status, details) => {
         if (!isDryRun) {
-            writeTraceLog(triggerSource, rule.id, rule.name, status, details);
+            const currentTs = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+            const safeDetails = details ? JSON.stringify(details) : "{}";
+            batchLogs.push([currentTs, triggerSource, rule.id, rule.name, status, safeDetails]);
         }
         if (isDryRun) dryRunResults.push({ ruleId: rule.id, ruleName: rule.name, status, details });
     };
 
-    if (forceRuleId && rule.id !== forceRuleId) return;
+    if (forceRuleId && rule.id !== forceRuleId) continue;
 
     if (!rule.isActive && rule.id !== forceRuleId) {
        logAndReturn("SKIPPED", { reason: "規則已停用" });
-       return;
+       continue;
     }
     
     // Check Date & Time match
@@ -1853,7 +1885,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     
     if (!isTimeMatched) {
         // 時間未到或非指定星期，直接略過，不寫入試算表避免塞爆
-        return;
+        continue;
     }
     
     // === 支援多天檢查未來的訂單 ===
@@ -1913,7 +1945,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
 
     if (activeCustomers.length === 0) {
         logAndReturn("SKIPPED", { reason: "今日所有目標客戶皆為休假日", targetDatesText });
-        return;
+        continue;
     }
 
     const triggeredCustomers = activeCustomers.filter(customer => {
@@ -1958,7 +1990,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
 
     if (triggeredCustomers.length === 0) {
         logAndReturn("SKIPPED", { reason: "客戶有營業，但條件未達成 (例如客戶已下單)", targetDatesText });
-        return;
+        continue;
     }
 
     if (triggeredCustomers.length > 0) {
@@ -2000,7 +2032,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
         logError: (err) => logAndReturn("ERROR", { ...trace, Error: err.message || err.toString() })
       });
     }
-  });
+  }
   
   // Actually send
   if (notifications.length > 0) {
@@ -2015,33 +2047,68 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       
       if (!isDryRun) {
         // 【修改點】針對每一則通知獨立發動 API 請求，使其成為獨立對話泡泡
-        notifications.forEach(n => {
-          try {
-            UrlFetchApp.fetch(endpoint, {
-              method: "post",
-              headers: { 
-                "Content-Type": "application/json",
-                "Authorization": "Bearer " + channelToken 
-              },
-              payload: JSON.stringify({
-                to: payloadTo,
-                // 只放入當下的這則 message
-                messages: [{ type: "text", text: n.message }]
-              })
-            });
-            // 該則訊息發送成功，寫入成功 Log
-            n.logSuccess();
-          } catch(err) {
-            console.log("LINE Messaging API failed: " + err.message);
-            // 該則訊息發送失敗，寫入失敗 Log
-            n.logError(err);
-          }
-        });
+        // 準備一個發射清單，採用 UrlFetchApp.fetchAll (非同步併發) 解決網路等待延遲
+        const requests = [];
+        for (let j = 0; j < notifications.length; j++) {
+           const n = notifications[j];
+           requests.push({
+             url: endpoint,
+             method: "post",
+             headers: { 
+               "Content-Type": "application/json",
+               "Authorization": "Bearer " + channelToken 
+             },
+             payload: JSON.stringify({
+               to: payloadTo,
+               messages: [{ type: "text", text: n.message }]
+             }),
+             muteHttpExceptions: true
+           });
+        }
+        
+        try {
+          // 全部一起發射！
+          const responses = UrlFetchApp.fetchAll(requests);
+          
+          // 發射完再來統一整理 Log
+          responses.forEach((res, index) => {
+            const n = notifications[index];
+            if (res.getResponseCode() === 200) {
+              n.logSuccess();
+            } else {
+              n.logError(new Error(`API failed with ${res.getResponseCode()}: ${res.getContentText()}`));
+            }
+          });
+        } catch (err) {
+           console.log("LINE Messaging API fetchAll failed: " + err.message);
+           notifications.forEach(n => n.logError(err));
+        }
       } else {
          notifications.forEach(n => n.logSuccess());
       }
     } else {
         notifications.forEach(n => n.logError(new Error("未設定 LINE userId")));
+    }
+  }
+
+  // 4. 安全下莊：統一一次性寫入 Log
+  if (batchLogs.length > 0) {
+    try {
+      const logSheet = getNotificationLogSheet();
+      const lastRow = logSheet.getLastRow();
+      let startRow = lastRow > 0 ? lastRow + 1 : 2;
+      logSheet.getRange(startRow, 1, batchLogs.length, batchLogs[0].length).setValues(batchLogs);
+      
+      // 效能防禦：Rolling Window (保留最新 800 筆)
+      const afterLastRow = logSheet.getLastRow();
+      const MAX_LOGS = 1000;
+      const DELETE_COUNT = 200;
+      
+      if (afterLastRow > MAX_LOGS) {
+        logSheet.deleteRows(2, DELETE_COUNT);
+      }
+    } catch (e) {
+      console.log("Failed to write batch logs: " + e.toString());
     }
   }
 

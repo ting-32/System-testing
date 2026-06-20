@@ -101,6 +101,26 @@
         @media print {
             @page { margin: 0; }
             body { padding: 1.5cm; } /* ensure the content doesn't hit the physical page edge */
+
+            /* 1. 隱藏不必要列印的 UI 元素 (如導覽列、按鈕、側邊欄、浮動球等) */
+            .no-print {
+                display: none !important;
+            }
+
+            /* 2. 解除所有捲動與高度限制 */
+            body, html, #root {
+                height: auto !important;
+                overflow: visible !important;
+            }
+
+            /* 3. 如果你的對帳單包在 Modal 裡面，需要把它解放出來 */
+            .modal-container {
+                position: static !important;
+                height: auto !important;
+                overflow: visible !important;
+                /* 移除背景變暗的遮罩 */
+                background: transparent !important;
+            }
         }
     </style>
 <script type="importmap">
