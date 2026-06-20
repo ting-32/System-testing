@@ -1000,94 +1000,101 @@ function createOrder(orderData) {
 }
 
 function updateOrderContent(orderData) {
-  const sheet = getSheets().ORDERS;
-  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Trip", "資料來源", "Version"]);
-  const lastUpdatedColIdx = headerMap["LastUpdated"];
-  const tripColIdx = headerMap["Trip"];
-  const sourceColIdx = headerMap["資料來源"];
-  const versionColIdx = headerMap["Version"];
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    
+    const sheet = getSheets().ORDERS;
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Trip", "資料來源", "Version"]);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const tripColIdx = headerMap["Trip"];
+    const sourceColIdx = headerMap["資料來源"];
+    const versionColIdx = headerMap["Version"];
+    
+    const maxColReq = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
+      if (sheet.getMaxColumns() < maxColReq) {
+        sheet.insertColumnsAfter(sheet.getMaxColumns(), maxColReq - sheet.getMaxColumns());
+      }
   
-  const maxColReq = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
-    if (sheet.getMaxColumns() < maxColReq) {
-      sheet.insertColumnsAfter(sheet.getMaxColumns(), maxColReq - sheet.getMaxColumns());
-    }
-
-    const lastRow = sheet.getLastRow();
-    const totalCols = sheet.getMaxColumns();
-
-    let values = [];
-    if (lastRow > 1) {
-      values = sheet.getDataRange().getValues();
-    }
-    
-    const targetId = String(orderData.id).trim();
-    let originalCreatedAt = "";
-    
-    // 1. Conflict Detection Phase (In-Memory)
-    let currentVersion = 0;
-    if (lastRow > 1) {
-      for (let i = values.length - 1; i >= 1; i--) {
-        const sheetId = String(values[i][1]).trim();
-        if (sheetId === targetId) {
-          const sheetVersion = values[i][versionColIdx];
-          currentVersion = Number(sheetVersion || 0);
-          if (!orderData.force) {
-            checkOrderVersionStrict(sheetVersion, orderData.version);
+      const lastRow = sheet.getLastRow();
+      const totalCols = sheet.getMaxColumns();
+  
+      let values = [];
+      if (lastRow > 1) {
+        values = sheet.getDataRange().getValues();
+      }
+      
+      const targetId = String(orderData.id).trim();
+      let originalCreatedAt = "";
+      
+      // 1. Conflict Detection Phase (In-Memory)
+      let currentVersion = 0;
+      if (lastRow > 1) {
+        for (let i = values.length - 1; i >= 1; i--) {
+          const sheetId = String(values[i][1]).trim();
+          if (sheetId === targetId) {
+            const sheetVersion = values[i][versionColIdx];
+            currentVersion = Number(sheetVersion || 0);
+            if (!orderData.force) {
+              checkOrderVersionStrict(sheetVersion, orderData.version);
+            }
+            if (!originalCreatedAt) originalCreatedAt = values[i][0];
           }
-          if (!originalCreatedAt) originalCreatedAt = values[i][0];
         }
       }
-    }
-
-    let timestamp = formatCellValue(originalCreatedAt);
-    if (!timestamp) {
-      timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
-    }
-    const newLastUpdatedTs = String(new Date().getTime());
-
-    // 2. Filter out old rows (In-Memory Deletion)
-    const newRows = [];
-    if (lastRow > 1) {
-      for (let i = 1; i < values.length; i++) {
-        if (String(values[i][1]).trim() !== targetId) {
-          const r = values[i].slice();
-          while (r.length < totalCols) r.push("");
-          newRows.push(r.slice(0, totalCols));
-        }
-      }
-    }
-
-    // 3. Append new rows
-    orderData.items.forEach(item => {
-      const row = new Array(totalCols).fill("");
-      row[0] = timestamp;
-      row[1] = orderData.id;
-      row[2] = orderData.customerName;
-      row[3] = orderData.deliveryDate;
-      row[4] = orderData.deliveryTime;
-      row[5] = item.productName || item.productId;
-      row[6] = item.quantity;
-      row[7] = orderData.note || "";
-      row[8] = orderData.status || "PENDING";
-      row[9] = orderData.deliveryMethod || "";
-      row[10] = item.unit || "斤";
-      row[lastUpdatedColIdx] = newLastUpdatedTs;
-      row[tripColIdx] = orderData.trip || "";
-      row[sourceColIdx] = orderData.source || "";
-      row[versionColIdx] = currentVersion + 1; // 每次更新遞增 version
-      newRows.push(row);
-    });
-    
-    // 4. Batch Write Back
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-    }
-    
-  if (newRows.length > 0) {
-    safeSetValues(sheet, 2, 1, newRows);
-  }
   
-  return { lastUpdated: newLastUpdatedTs, version: currentVersion + 1 };
+      let timestamp = formatCellValue(originalCreatedAt);
+      if (!timestamp) {
+        timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+      }
+      const newLastUpdatedTs = String(new Date().getTime());
+  
+      // 2. Filter out old rows (In-Memory Deletion)
+      const newRows = [];
+      if (lastRow > 1) {
+        for (let i = 1; i < values.length; i++) {
+          if (String(values[i][1]).trim() !== targetId) {
+            const r = values[i].slice();
+            while (r.length < totalCols) r.push("");
+            newRows.push(r.slice(0, totalCols));
+          }
+        }
+      }
+  
+      // 3. Append new rows
+      orderData.items.forEach(item => {
+        const row = new Array(totalCols).fill("");
+        row[0] = timestamp;
+        row[1] = orderData.id;
+        row[2] = orderData.customerName;
+        row[3] = orderData.deliveryDate;
+        row[4] = orderData.deliveryTime;
+        row[5] = item.productName || item.productId;
+        row[6] = item.quantity;
+        row[7] = orderData.note || "";
+        row[8] = orderData.status || "PENDING";
+        row[9] = orderData.deliveryMethod || "";
+        row[10] = item.unit || "斤";
+        row[lastUpdatedColIdx] = newLastUpdatedTs;
+        row[tripColIdx] = orderData.trip || "";
+        row[sourceColIdx] = orderData.source || "";
+        row[versionColIdx] = currentVersion + 1; // 每次更新遞增 version
+        newRows.push(row);
+      });
+      
+      // 4. Batch Write Back
+      if (lastRow > 1) {
+        sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
+      }
+      
+    if (newRows.length > 0) {
+      safeSetValues(sheet, 2, 1, newRows);
+    }
+    
+    return { lastUpdated: newLastUpdatedTs, version: currentVersion + 1 };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateOrderStatus(data) {

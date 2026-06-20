@@ -80,7 +80,7 @@ export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: 
   return Array.from(mergedMap.values());
 }
 
-export const useDataSync = (addToast: (msg: string, type: ToastType) => void, isEditingRef?: MutableRefObject<boolean>, onReconciled?: (orderId: string) => void) => {
+export const useDataSync = (addToast: (msg: string, type: ToastType) => void, isEditingRef?: MutableRefObject<boolean>, onReconciled?: (orderId: string) => void, getAddSyncTask?: () => any) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('nm_auth_status') === 'true';
@@ -611,6 +611,25 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
     onSuccess: (updatedOrder?: Order) => void,
     onError: (msg: string) => void
   ) => {
+    if (actionName === 'updateOrderContent' && getAddSyncTask) {
+      const addSyncTask = getAddSyncTask();
+      if (addSyncTask) {
+        addSyncTask({
+          taskId: `UPDATE_CONTENT_${newOrder.id}_${Date.now()}`,
+          type: 'UPDATE_CONTENT',
+          payload: { ...newOrder, version: originalVersion },
+          retryCount: 0,
+          timestamp: Date.now()
+        });
+
+        // 樂觀讓畫面直接更新，剩下的讓 Queue 背景處理
+        setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, _syncStatus: 'pending' } : o));
+        onSuccess(newOrder);
+        broadcastDataChange();
+        return;
+      }
+    }
+
     try {
       // @ts-ignore
       const savedOrder = await container.orderService.saveOrder(actionName, newOrder, products, originalVersion);

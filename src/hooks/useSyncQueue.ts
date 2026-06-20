@@ -25,8 +25,18 @@ export function useSyncQueue(
     const hydrateQueue = async () => {
       try {
         const tasks: SyncTask[] = [];
-        await queueStore.iterate((value: SyncTask) => {
-          tasks.push(value);
+        await queueStore.iterate((value: any, key: string) => {
+          let fixedValue = { ...value };
+          if (!fixedValue.taskId) {
+            fixedValue.taskId = key || fixedValue.id || crypto.randomUUID();
+          }
+          if (typeof fixedValue.retryCount !== 'number' || isNaN(fixedValue.retryCount)) {
+            fixedValue.retryCount = 0;
+          }
+          if (!fixedValue.timestamp) {
+            fixedValue.timestamp = Date.now();
+          }
+          tasks.push(fixedValue as SyncTask);
         });
         
         // 確保依照發生順序打 API
@@ -141,6 +151,10 @@ export function useSyncQueue(
              token: token || "",
              data: task.payload
            };
+        } else if (task.type === 'UPDATE_CONTENT') {
+           bodyPayload = { action: 'updateOrderContent', token: token || "", data: task.payload };
+        } else if (task.type === 'delete_order') {
+           bodyPayload = { action: 'deleteOrder', token: token || "", data: task.payload };
         }
 
         const res = await fetchWithRetry(
@@ -165,7 +179,7 @@ export function useSyncQueue(
                setSyncQueue(prev => prev.filter(t => t.taskId !== task.taskId));
                
                if (onSyncSuccess) {
-                   onSyncSuccess(task, json.data?.newLastUpdatedTs || Date.now());
+                   onSyncSuccess(task, json.data || {});
                }
            } else {
                if (json.errorCode === 'VERSION_CONFLICT' || json.errorCode === 'ERR_VERSION_CONFLICT') {
@@ -189,7 +203,8 @@ export function useSyncQueue(
         
         setSyncQueue(prev => prev.map(t => {
            if (t.taskId === task.taskId) {
-               const newRetries = t.retryCount + 1;
+               const currentRetries = typeof t.retryCount === 'number' && !isNaN(t.retryCount) ? t.retryCount : 0;
+               const newRetries = currentRetries + 1;
                if (newRetries > 10) {
                  // 10 retries (~3-5 mins) then give up. 
                  isTaskGivenUp = true;

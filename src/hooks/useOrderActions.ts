@@ -680,8 +680,10 @@ export const useOrderActions = ({
       editingOrderId ? 'updateOrderContent' : 'createOrder',
       editingVersionRef.current,
       () => {
-         setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o));
-         addToast('同步成功', 'success');
+         if (!editingOrderId) {
+           setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o));
+           addToast('同步成功', 'success');
+         }
       },
       (errMsg: string) => {
          setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o));
@@ -701,10 +703,11 @@ export const useOrderActions = ({
 
     if (apiEndpoint && addSyncTask) {
       addSyncTask({
-        id: `DELETE_${orderId}_${now}`,
+        taskId: `DELETE_${orderId}_${now}`,
         type: 'delete_order',
         payload: { id: orderId, version: orderBackup.version },
-        description: `刪除訂單 ${orderBackup.customerName}`
+        retryCount: 0,
+        timestamp: Date.now()
       });
     } else {
       setOrders((prev: Order[]) => prev.filter(o => o.id !== orderId));
@@ -790,7 +793,7 @@ export const useOrderActions = ({
           order,
           'updateOrderContent',
           order.version,
-          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined, version: updatedOrder.version, _syncStatus: 'synced' } : o)),
+          (updatedOrder: Order) => {}, // Queue handles the state now
           (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o))
         );
       }

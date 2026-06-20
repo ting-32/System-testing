@@ -178,8 +178,15 @@ export const useOrderCalculations = ({
     let thisMonthCollected = 0;
     let thisMonthPendingCollected = 0;
     
+    let lastMonthRevenue = 0;
+    let lastMonthCollected = 0;
+    let lastMonthPendingCollected = 0;
+    
     const now = new Date();
     const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    
+    const previousMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthPrefix = `${previousMonthDate.getFullYear()}-${String(previousMonthDate.getMonth() + 1).padStart(2, '0')}`;
 
     orders.forEach(order => {
       if (order.pendingAction === 'delete') return;
@@ -194,6 +201,15 @@ export const useOrderCalculations = ({
             thisMonthCollected += amount;
           } else {
             thisMonthPendingCollected += amount;
+          }
+        }
+      } else if (order.deliveryDate.startsWith(lastMonthPrefix) && order.status !== OrderStatus.CANCELLED) {
+        lastMonthRevenue += amount;
+        if (order.status === OrderStatus.PAID) {
+          if (!isPending) {
+            lastMonthCollected += amount;
+          } else {
+            lastMonthPendingCollected += amount;
           }
         }
       }
@@ -237,7 +253,16 @@ export const useOrderCalculations = ({
       })
       .sort((a, b) => b.totalDebt - a.totalDebt);
 
-    return { grandTotalDebt, outstanding: sortedOutstanding, thisMonthRevenue, thisMonthCollected, thisMonthPendingCollected };
+    return { 
+      grandTotalDebt, 
+      outstanding: sortedOutstanding, 
+      thisMonthRevenue, 
+      thisMonthCollected, 
+      thisMonthPendingCollected,
+      lastMonthRevenue,
+      lastMonthCollected,
+      lastMonthPendingCollected
+    };
   }, [orders, customers, products]);
 
   // 7. Settlement Preview

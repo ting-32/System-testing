@@ -159,7 +159,7 @@ export interface SystemLog {
 
 export interface SyncTask {
   taskId: string;      
-  type: 'UPDATE_STATUS' | 'BATCH_UPDATE';
+  type: 'UPDATE_STATUS' | 'BATCH_UPDATE' | 'UPDATE_CONTENT' | 'delete_order';
   payload: any;        // 給 GAS 的參數
   retryCount: number;  // 重試次數計算
   timestamp: number;

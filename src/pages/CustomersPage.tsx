@@ -140,7 +140,7 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
   return (
     <>
       <div className="relative pb-24">
-        <div className="sticky top-0 z-20 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
+        <div className="sticky top-0 z-30 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2>
             <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setCustomerForm({ name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button>
@@ -154,7 +154,7 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
            return (
               <motion.div variants={itemVariants} key={c.id || `fallback-${idx}`} className="mb-4 relative">
                 <SyncableStatusWrapper syncStatus={c._syncStatus} onRetry={() => handleRetry(c)} className="bg-white rounded-[32px] p-6 shadow-sm border hover:shadow-md transition-all overflow-hidden border-slate-200">
-                {hasOrderToday && c._syncStatus !== 'pending' && c._syncStatus !== 'error' && <div className="absolute top-0 right-0 bg-amber-100/90 text-amber-700 text-[9px] font-bold px-3 py-1.5 rounded-bl-xl z-20 border-b border-l border-amber-200/50 backdrop-blur-sm">今日已下單</div>}
+                {hasOrderToday && c._syncStatus !== 'pending' && c._syncStatus !== 'error' && <div className="absolute top-0 right-0 bg-amber-100/90 text-amber-700 text-[9px] font-bold px-3 py-1.5 rounded-bl-xl z-10 border-b border-l border-amber-200/50 backdrop-blur-sm">今日已下單</div>}
                 <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{String(c.name || '').charAt(0)}</div><div><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p>{(c.address || c.coordinates) && (() => {
 const targetUrl = c.coordinates ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.coordinates)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address || '')}`;
 const tooltipText = c.coordinates ? "開啟精準地圖連結" : "在 Google 地圖上搜尋此地址";

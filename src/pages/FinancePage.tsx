@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Wallet, DollarSign, CheckCircle2, ListChecks, 
   MoreVertical, X, Copy, MapPin, Search, SearchX, XCircle, ChevronDown,
-  TrendingUp, BarChart3
+  TrendingUp, BarChart3, AlertCircle, Clock
 } from 'lucide-react';
 import { getLastMonthEndDate } from '../utils';
 
@@ -53,7 +53,7 @@ export const FinancePage: React.FC<FinancePageProps> = ({
   const [selectedPartialOrderIds, setSelectedPartialOrderIds] = useState<Set<string>>(new Set());
   const [actionMenuTarget, setActionMenuTarget] = useState<any | null>(null);
   const [isCopyMenuExpanded, setIsCopyMenuExpanded] = useState(false);
-  const [activeSummaryTab, setActiveSummaryTab] = useState<'cashflow' | 'operation'>('cashflow');
+  const [activeSummaryTab, setActiveSummaryTab] = useState<'cashflow' | 'operation' | 'lastMonth'>('cashflow');
 
   useEffect(() => {
     if (!actionMenuTarget) setIsCopyMenuExpanded(false);
@@ -144,6 +144,12 @@ export const FinancePage: React.FC<FinancePageProps> = ({
                    >
                      本月營運概況
                    </button>
+                   <button 
+                     onClick={() => setActiveSummaryTab('lastMonth')}
+                     className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors ${activeSummaryTab === 'lastMonth' ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                   >
+                     上月營運概況
+                   </button>
                  </div>
 
                  {/* 👇 視角內容渲染區 */}
@@ -196,10 +202,39 @@ export const FinancePage: React.FC<FinancePageProps> = ({
                          <p className="text-[9px] text-blue-100 mt-1 font-medium tracking-wide">包含已收與未結</p>
                        </div>
                        
-                       {/* 營運卡片 2：日後可擴充指標保留位 */}
-                       <div className="bg-gray-100 rounded-[24px] p-5 shadow-inner text-gray-500 relative overflow-hidden flex flex-col justify-center items-center h-full min-h-[110px] border border-gray-200 border-dashed">
-                           <BarChart3 className="w-6 h-6 text-gray-300 mb-1" />
-                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">更多指標規劃中</p>
+                       {/* 修改後的 營運卡片 2：本月未結金額 */}
+                       <div className="bg-amber-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                         <div className="absolute right-[-10px] top-[-10px] opacity-10"><AlertCircle className="w-24 h-24" /></div>
+                         <p className="text-[10px] font-bold text-amber-100 uppercase tracking-widest mb-1">本月未結金額</p>
+                         <h3 className="text-2xl font-black text-white tracking-tight">
+                           ${(financeData.thisMonthRevenue - financeData.thisMonthCollected - financeData.thisMonthPendingCollected).toLocaleString()}
+                         </h3>
+                       </div>
+                     </motion.div>
+                   )}
+                   {activeSummaryTab === 'lastMonth' && (
+                     <motion.div 
+                       key="lastMonth"
+                       initial={{ opacity: 0, x: 10 }}
+                       animate={{ opacity: 1, x: 0 }}
+                       exit={{ opacity: 0, x: -10 }}
+                       transition={{ duration: 0.2 }}
+                       className="grid grid-cols-2 gap-3"
+                     >
+                       {/* 上月總營收 */}
+                       <div className="bg-indigo-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                         <div className="absolute right-[-10px] top-[-10px] opacity-10"><TrendingUp className="w-24 h-24" /></div>
+                         <p className="text-[10px] font-bold text-indigo-100 uppercase tracking-widest mb-1">上月總營收</p>
+                         <h3 className="text-2xl font-black text-white tracking-tight">${financeData.lastMonthRevenue.toLocaleString()}</h3>
+                       </div>
+                       
+                       {/* 上月未結金額 */}
+                       <div className="bg-rose-500 rounded-[24px] p-5 shadow-lg text-white relative overflow-hidden">
+                         <div className="absolute right-[-10px] top-[-10px] opacity-10"><Clock className="w-24 h-24" /></div>
+                         <p className="text-[10px] font-bold text-rose-100 uppercase tracking-widest mb-1">上月未結金額</p>
+                         <h3 className="text-2xl font-black text-white tracking-tight">
+                           ${(financeData.lastMonthRevenue - financeData.lastMonthCollected - financeData.lastMonthPendingCollected).toLocaleString()}
+                         </h3>
                        </div>
                      </motion.div>
                    )}

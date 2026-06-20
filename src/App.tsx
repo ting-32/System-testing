@@ -150,6 +150,7 @@ const App: React.FC = () => {
 
   const onReconciledRef = useRef<(id: string) => void>();
   const isEditingRef = useRef(false);
+  const addSyncTaskRef = useRef<any>();
 
   const {
     isAuthenticated,
@@ -168,16 +169,20 @@ const App: React.FC = () => {
     handleForceRetry,
     saveOrderToCloud,
     saveTripsToCloud
-  } = useDataSync(addToast, isEditingRef, (id) => onReconciledRef.current?.(id));
+  } = useDataSync(addToast, isEditingRef, (id) => onReconciledRef.current?.(id), () => addSyncTaskRef.current);
 
   const auth = useAppAuth({ handleLogin, addToast });
 
-  const onSyncSuccess = useCallback((task: any, newLastUpdatedTs: number) => {
+  const onSyncSuccess = useCallback((task: any, responseData: any) => {
     setOrders((prev: Order[]) => prev.map(o => {
       if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
         const ids = task.payload.updates.map((u: any) => u.id);
         if (ids.includes(o.id)) {
-           return { ...o, syncStatus: 'synced', pendingAction: undefined, version: newLastUpdatedTs || o.version };
+           return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || (o.version + 1), _syncStatus: 'synced' };
+        }
+      } else if (task.type === 'UPDATE_CONTENT' || task.type === 'delete_order') {
+        if (o.id === task.payload.id) {
+           return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || o.version, _syncStatus: 'synced' };
         }
       }
       return o;
@@ -190,7 +195,11 @@ const App: React.FC = () => {
       if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
         const ids = task.payload.updates.map((u: any) => u.id);
         if (ids.includes(o.id)) {
-           return { ...o, syncStatus: 'error', errorMessage: errorMsg };
+           return { ...o, syncStatus: 'error', errorMessage: errorMsg, _syncStatus: 'error' };
+        }
+      } else if (task.type === 'UPDATE_CONTENT' || task.type === 'delete_order') {
+        if (o.id === task.payload.id) {
+           return { ...o, syncStatus: 'error', errorMessage: errorMsg, _syncStatus: 'error' };
         }
       }
       return o;
@@ -222,6 +231,10 @@ const App: React.FC = () => {
   }, [setOrders, syncData]);
 
   const { syncQueue, addSyncTask, isSyncingQueue, removeTaskByPayloadId } = useSyncQueue(apiEndpoint, addToast, onSyncSuccess, onSyncError, onSyncGiveUp);
+
+  useEffect(() => {
+    addSyncTaskRef.current = addSyncTask;
+  }, [addSyncTask]);
 
   useEffect(() => {
     onReconciledRef.current = removeTaskByPayloadId;
