@@ -191,51 +191,48 @@ export const useOrderActions = ({
       return { productId: item.productId, productName: item.productName || product?.name, quantity: Math.max(0, finalQuantity), unit: finalUnit };
     });
 
+    const timestamp = Date.now();
     const newOrder: Order = {
-      id: 'Q-ORD-' + Date.now() + Math.random().toString(36).substring(2, 6),
+      id: 'Q-ORD-' + timestamp + Math.random().toString(36).substring(2, 6),
       createdAt: new Date().toISOString(),
       customerName: quickAddData.customerName,
       deliveryDate: selectedDate,
       deliveryTime: deliveryTime,
       deliveryMethod: deliveryMethod,
-      source: '', // 快速追加不設定特定來源，或是看需求
+      source: '',
       items: processedItems,
       note: '追加單',
-      status: OrderStatus.PENDING
+      status: OrderStatus.PENDING,
+      // 增加以下同步佇列必需的屬性
+      syncStatus: 'pending',
+      pendingAction: 'create',
+      _syncStatus: 'pending',
+      _localUpdatedTs: timestamp,
+      lastUpdated: timestamp
     };
 
-    try {
-      if (apiEndpoint) {
-        const uploadItems = processedItems.map((item: any) => {
-          const p = products.find(prod => prod.id === item.productId);
-          return { productName: item.productName || p?.name || item.productId, quantity: item.quantity, unit: item.unit };
-        });
-        const token = localStorage.getItem('APP_SESSION_TOKEN');
-        const res = await fetchWithRetry(apiEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'createOrder', token: token || "", data: { ...newOrder, items: uploadItems } })
-        });
-        const json = await res.json();
-        if (json && !json.success && json.error === "UNAUTHORIZED_OR_EXPIRED") {
-             localStorage.removeItem('nm_auth_status');
-             localStorage.removeItem('APP_SESSION_TOKEN');
-             localStorage.removeItem('APP_USER_ROLE');
-             localStorage.removeItem('APP_USER_NAME');
-             window.dispatchEvent(new Event('app-unauthorized'));
-             return;
-        }
-        broadcastDataChange();
-      }
-    } catch (e) {
-      console.error(e);
-      addToast("追加失敗，請檢查網路", 'error');
-    }
-
+    // 1. 樂觀更新：立刻把訂單加入畫面
     setOrders((prev: Order[]) => [newOrder, ...prev]);
     setIsSaving(false);
     setQuickAddData(null);
-    addToast('追加訂單成功！', 'success');
+    addToast('追加訂單登錄成功 (背景同步中...)', 'success');
+
+    // 2. 交給統一的雲端佇列接手
+    await saveOrderToCloud(
+      newOrder,
+      'createOrder',
+      undefined,
+      (updatedOrder: Order) => {
+        // 同步成功後更新狀態為 synced
+        const orderToApply = updatedOrder || newOrder;
+        setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...orderToApply, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o));
+      },
+      (errMsg: string) => {
+         // 同步失敗處理
+         setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o));
+         addToast("追加訂單失敗，請檢查網路狀態", 'error');
+      }
+    );
   };
 
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus, showDefaultToast: boolean = true) => {
