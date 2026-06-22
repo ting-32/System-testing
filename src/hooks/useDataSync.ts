@@ -177,6 +177,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
   const isSyncingRef = useRef(false);
+  const isInitialLoadedRef = useRef(false);
   const lastGlobalUpdateRef = useRef<number>(0);
   
   useEffect(() => {
@@ -211,7 +212,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
     } 
     
     isSyncingRef.current = true;
-    if (!isSilent) setIsInitialLoading(true);
+    if (!isSilent && !isInitialLoadedRef.current) setIsInitialLoading(true);
     else setIsBackgroundSyncing(true);
 
     try { 
@@ -456,6 +457,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         addToast(errMsg, 'error'); 
       }
     } finally { 
+      isInitialLoadedRef.current = true;
       setIsInitialLoading(false); 
       setIsBackgroundSyncing(false);
       isSyncingRef.current = false;
