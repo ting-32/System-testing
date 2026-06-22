@@ -271,7 +271,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
           if (rawId && typeof rawId === 'string' && rawId.trim() === '') rawId = null;
           const oid = String(rawId || fallbackId); 
           if (!orderMap[oid]) { 
-            const rawDate = o.配送日期 || o.deliveryDate; 
+            let rawDate = o.配送日期 || o.deliveryDate; 
+            if (typeof rawDate === 'string') {
+               rawDate = rawDate.replace(/\//g, '-').replace(/-0?/g, '-').replace(/-(\d)(?!\d)/g, '-0$1');
+            }
             const normalizedDate = normalizeDate(rawDate); 
             orderMap[oid] = { 
               id: oid, 
@@ -365,7 +368,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
                             // 偷看答案：如果目前這筆訂單的「雲端實際狀態」已經等於了我們本地「樂觀更新鎖死」的「變更目標」
                             // 就代表我們先前的請求（如：切換為 PAID）GAS 已經處理成功，只是回傳時 Timeout 導致被誤判失敗。
                             // 若狀態與趟次等關鍵維度完全吻合，即可「握手言和」，解除 UI 死鎖。
-                            if (newOrder.status === existOrder.status && newOrder.trip === existOrder.trip && newOrder.deliveryMethod === existOrder.deliveryMethod) {
+                            if (existOrder.pendingAction !== 'delete' && newOrder.status === existOrder.status && newOrder.trip === existOrder.trip && newOrder.deliveryMethod === existOrder.deliveryMethod) {
                                 // 覆寫成純淨的雲端資料（無 pending/error）解鎖 UI
                                 mergedMap.set(newOrder.id, newOrder);
                                 // 通知 Queue 把舊的失敗任務刪除

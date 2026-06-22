@@ -174,19 +174,26 @@ const App: React.FC = () => {
   const auth = useAppAuth({ handleLogin, addToast });
 
   const onSyncSuccess = useCallback((task: any, responseData: any) => {
-    setOrders((prev: Order[]) => prev.map(o => {
-      if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
-        const ids = task.payload.updates.map((u: any) => u.id);
-        if (ids.includes(o.id)) {
-           return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || (o.version + 1), _syncStatus: 'synced' };
+    setOrders((prev: Order[]) => {
+      // 關鍵修復：如果是刪除成功，直接根除該筆資料
+      const filtered = task.type === 'delete_order' 
+          ? prev.filter(o => o.id !== task.payload.id) 
+          : prev;
+          
+      return filtered.map(o => {
+        if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
+          const ids = task.payload.updates.map((u: any) => u.id);
+          if (ids.includes(o.id)) {
+             return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || (o.version + 1), _syncStatus: 'synced' };
+          }
+        } else if (task.type === 'UPDATE_CONTENT') {
+          if (o.id === task.payload.id) {
+             return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || o.version, _syncStatus: 'synced' };
+          }
         }
-      } else if (task.type === 'UPDATE_CONTENT' || task.type === 'delete_order') {
-        if (o.id === task.payload.id) {
-           return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || o.version, _syncStatus: 'synced' };
-        }
-      }
-      return o;
-    }));
+        return o;
+      });
+    });
     broadcastDataChange();
   }, [setOrders]);
 
