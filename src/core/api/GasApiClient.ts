@@ -52,7 +52,16 @@ export class GasApiClient implements ApiClient {
         throw err;
       }
 
-      const json = await res.json() as GASResponse<any>;
+      let json: GASResponse<any>;
+      const rawText = await res.text();
+      try {
+        json = JSON.parse(rawText) as GASResponse<any>;
+      } catch (parseError) {
+        if (rawText.trim().startsWith('<')) {
+          throw new Error('伺服器回傳網頁而非 JSON 資料。請檢查 Apps Script 網址與部署權限是否正確。');
+        }
+        throw new Error(`回傳格式錯誤: ${rawText.substring(0, 50)}`);
+      }
       
       // Abstract the standard GAS response logic
       if (!json.success) {
@@ -113,10 +122,22 @@ export class GasApiClient implements ApiClient {
       if (err.message === 'ABORTED_BY_USER' || err.message === 'ABORTED') {
          throw err;
       }
+      if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
+        throw new Error(`API Request Timeout: 超過 ${timeoutToUse/1000} 秒未回應`);
+      }
       throw err;
     }
     
-    const json = await res.json() as GASResponse<any>;
+    let json: GASResponse<any>;
+    const rawText = await res.text();
+    try {
+      json = JSON.parse(rawText) as GASResponse<any>;
+    } catch (parseError) {
+      if (rawText.trim().startsWith('<')) {
+        throw new Error('伺服器回傳網頁而非 JSON 資料。請檢查 Apps Script 網址與部署權限是否正確。');
+      }
+      throw new Error(`回傳格式錯誤: ${rawText.substring(0, 50)}`);
+    }
     
     if (!json.success) {
       const error = new Error(json.error || 'API Request Failed');

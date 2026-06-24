@@ -451,7 +451,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
       console.error("無法連線至雲端:", e); 
       if (!isSilent) {
         let errMsg = "同步失敗，請檢查網路連線";
-        if ((e instanceof Error && e.message.includes('Failed to fetch')) || String(e).includes('Failed to fetch')) {
+        if (e.message && (e.message.includes('Timeout') || e.message.includes('TIMEOUT') || e.name === 'AbortError')) {
+           errMsg = "請求連線逾時，這可能是網路不穩定或資料量過大處理較慢，請重新嘗試。";
+        } else if ((e instanceof Error && e.message.includes('Failed to fetch')) || String(e).includes('Failed to fetch')) {
           errMsg = "雲端連線失敗 (CORS / 網址無效)。請確認 Apps Script 部署 URL 是否正確、權限是否為「所有人」，或程式碼是否有錯。";
         }
         addToast(errMsg, 'error'); 

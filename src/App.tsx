@@ -816,23 +816,34 @@ const App: React.FC = () => {
       <head>
         <title>麵廠職人 - 生產總表</title>
         <style>
-          body { font-family: sans-serif; padding: 20px; color: #333; } 
+          /* 1. 拔除 body 預設留白 */
+          body { font-family: sans-serif; margin: 0; padding: 0; color: #333; } 
           h1 { text-align: center; margin-bottom: 10px; font-size: 32px; } 
           p.date { text-align: center; color: #666; margin-bottom: 30px; font-size: 20px; font-weight: bold; } 
           table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 18px; } 
-          th, td { border: 1px solid #ddd; padding: 12px; text-align: left; vertical-align: top; } 
-          th { background-color: #f5f5f5; font-weight: bold; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 20px; } 
+          th, td { vertical-align: top; } 
+          
+          /* 1. 標題欄位縮小 50%：設定具體 px，並把 padding 稍微調小讓標題列不要太厚 */
+          th { background-color: #f8f9fa; font-weight: bold; text-align: center; border: 1px solid #ccc; font-size: 9px; padding: 6px; -webkit-print-color-adjust: exact; print-color-adjust: exact; } 
+          
+          /* 2. 內容欄位放大 150%：統一設定在 td */
+          td { border: 1px solid #ccc; padding: 12px; text-align: left; font-size: 27px; } 
+
+          /* 如果你想讓品項名稱特別粗，可以加一個專屬 class */
+          .item-name { font-weight: bold; font-size: 32px; }
+
           tr:nth-child(even) { background-color: #fafafa; -webkit-print-color-adjust: exact; print-color-adjust: exact; } 
           .text-right { text-align: right; } 
           .text-center { text-align: center; } 
-          .badge { display: inline-block; background: #fff; padding: 4px 8px; border-radius: 4px; font-size: 16px; margin: 4px; border: 1px solid #ddd; color: #555; } 
-          .total-cell { font-size: 24px; font-weight: bold; } 
+          .badge { display: inline-block; background: #fff; padding: 4px 8px; border-radius: 4px; font-size: 24px; margin: 4px; border: 1px solid #ddd; color: #555; } 
+          /* 總量欄位：極大化至 54px (200%)，並強制粗體 */
+          .total-cell { font-size: 54px; font-weight: bold; } 
           .footer { margin-top: 40px; text-align: right; font-size: 14px; color: #999; border-top: 1px solid #eee; padding-top: 10px; } 
           
           /* 移除瀏覽器預設列印頁首頁尾 */
           @page {
             size: A4; /* 建議明確指定紙張尺寸 */
-            margin: 15mm; /* 讓紙張自然產生邊界，避免瀏覽器預設頁首尾過度干擾 */
+            margin: 5mm; /* 建議保留 5mm 安全邊距防印表機硬體切字，若要極致貼滿可設為 0 */
           }
           
           /* 僅在螢幕上顯示，列印時隱藏 */
@@ -858,6 +869,7 @@ const App: React.FC = () => {
           }
           @media print {
             body {
+              margin: 0;
               padding: 0; /* 移除原本錯誤的 Body padding */
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
@@ -881,17 +893,11 @@ const App: React.FC = () => {
         <!-- 新增這行 -->
         <button class="no-print close-btn" onclick="window.close(); if(!window.closed){window.history.back();}">
           ╳ 關閉 / 返回
-        </button>
-        
-        <h1>生產總表</h1>
-        <p class="date">出貨日期: ${dateRangeDisplay}</p>`; 
+        </button>`; 
         
     workSheetData.forEach(group => { 
       htmlContent += `
-        <div style="margin-bottom: 24px;"> <!-- 拔除外層的 page-break-inside: avoid -->
-          <div class="group-header" style="background-color: ${group.color}40; border-left: 8px solid ${group.color}; padding: 8px 12px; margin-bottom: 10px; font-weight: bold; font-size: 20px;">
-            ${group.label} (共 ${group.totalWeight} 單位)
-          </div>
+        <div style="margin-bottom: 0;"> 
           <table>
             <thead>
               <tr>
@@ -901,9 +907,9 @@ const App: React.FC = () => {
             <tbody>
               ${group.items.map(item => `
                 <tr class="print-row"> 
-                  <td style="font-weight: bold; font-size: 22px;">${item.name}</td>
-                  <td class="text-right total-cell">${item.totalQty}</td>
-                  <td class="text-center" style="font-size: 18px;">${item.unit}</td>
+                  <td class="item-name">${item.name}</td>
+                  <td class="text-center total-cell">${item.totalQty}</td>
+                  <td class="text-center">${item.unit}</td>
                   <td>${item.details.map(d => `<span class="badge">${d.customerName} <b>${d.qty}</b></span>`).join('')}</td>
                 </tr>
               `).join('')}

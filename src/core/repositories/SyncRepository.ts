@@ -28,7 +28,7 @@ export class SyncRepository implements ISyncRepository {
   constructor(private apiClient: ApiClient) {}
 
   async sync(params: SyncDataParams, silentFail?: boolean, signal?: AbortSignal): Promise<SyncDataResult> {
-    return this.apiClient.get<SyncDataResult>('', params as any, { silentFail, signal });
+    return this.apiClient.get<SyncDataResult>('', params as any, { silentFail, signal, timeoutMs: 60000 });
   }
 
   async checkUpdates(auditObj?: any, signal?: AbortSignal): Promise<{ globalLastUpdated: number }> {

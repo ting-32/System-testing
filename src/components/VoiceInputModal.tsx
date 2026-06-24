@@ -25,7 +25,7 @@ export const VoiceInputModal: React.FC<{
     return () => stopListening();
   }, [isOpen]);
 
-  const startListening = () => {
+  const startListening = async () => {
     if (typeof window === 'undefined') return;
     
     // @ts-ignore
@@ -34,6 +34,19 @@ export const VoiceInputModal: React.FC<{
       alert('您的瀏覽器不支援語音輸入功能。');
       onClose();
       return;
+    }
+
+    // 關鍵修復：在 iframe 或某些瀏覽器環境中，SpeechRecognition 不會主動彈出權限請求，
+    // 因此先藉由 getUserMedia 強制喚起權限視窗。
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop()); // 取得權限後立刻關閉串流
+      }
+    } catch (err) {
+      console.warn('getUserMedia 失敗，可能是使用者拒絕或環境不允許', err);
+      setPermissionError(true);
+      return; // 直接中止，不要繼續執行後續的語音辨識
     }
 
     const recognition = new SpeechRecognition();
@@ -158,9 +171,14 @@ export const VoiceInputModal: React.FC<{
                     <li>點擊網址列左側的 <strong>🔒 (鎖頭)</strong> 或 <strong>ⓘ (資訊)</strong> 圖示。</li>
                     <li>找到「<strong>麥克風 (Microphone)</strong>」。</li>
                     <li>將設定改為「<strong>允許 (Allow)</strong>」。</li>
-                    <li>重新整理網頁後再試一次。</li>
                   </ol>
                 </div>
+                <button
+                  onClick={() => { setPermissionError(false); startListening(); }}
+                  className="mt-6 px-6 py-3 w-full bg-rose-500 hover:bg-rose-600 active:scale-95 text-white rounded-2xl font-bold transition-all shadow-md"
+                >
+                  設定完成，重新嘗試
+                </button>
               </div>
             ) : (
               <>

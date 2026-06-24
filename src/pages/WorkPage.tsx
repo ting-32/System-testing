@@ -196,14 +196,14 @@ export function WorkPage({
       {/* 麵種篩選 Bottom Sheet */}
       <AnimatePresence>
         {isProductFilterOpen && (
-          <div className="fixed inset-0 z-[100] flex flex-col justify-end">
+          <div className="fixed inset-0 z-[100] max-w-md mx-auto flex flex-col justify-end pointer-events-none">
             {/* 半透明遮罩 */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsProductFilterOpen(false)}
-              className="absolute inset-0 bg-black/40"
+              className="absolute inset-0 bg-black/40 pointer-events-auto"
             />
             
             {/* 視窗本體 */}
@@ -212,7 +212,7 @@ export function WorkPage({
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="relative w-full bg-white rounded-t-[32px] max-h-[85vh] flex flex-col shadow-2xl"
+              className="relative w-full bg-white rounded-t-[32px] max-h-[85vh] flex flex-col shadow-2xl pointer-events-auto"
             >
               {/* 視窗頭部 */}
               <div className="flex-shrink-0 pb-2">
@@ -316,7 +316,7 @@ export function WorkPage({
               </div>
 
               {/* 視窗底部 */}
-              <div className="flex-shrink-0 sticky bottom-0 bg-white p-5 border-t border-gray-100 rounded-b-[32px]">
+              <div className="flex-shrink-0 sticky bottom-0 bg-white p-5 pb-24 border-t border-gray-100 rounded-b-[32px]">
                 <button
                   onClick={() => setIsProductFilterOpen(false)}
                   className="w-full py-4 bg-morandi-blue text-white rounded-2xl font-bold text-lg shadow-lg shadow-morandi-blue/30 hover:bg-slate-600 active:scale-[0.98] transition-all"
