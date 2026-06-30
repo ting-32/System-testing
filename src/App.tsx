@@ -144,6 +144,16 @@ const App: React.FC = () => {
     }, 3000);
   }, []);
 
+  useEffect(() => {
+    const handleNetworkToast = (e: any) => {
+      if (e.detail) {
+        addToast(e.detail.message, e.detail.type);
+      }
+    };
+    window.addEventListener('app-network-toast', handleNetworkToast as EventListener);
+    return () => window.removeEventListener('app-network-toast', handleNetworkToast as EventListener);
+  }, [addToast]);
+
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);

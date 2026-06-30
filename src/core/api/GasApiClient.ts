@@ -47,6 +47,12 @@ export class GasApiClient implements ApiClient {
            throw err;
         }
         if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
+          if (attempt < maxLockRetries) {
+             console.warn(`API Request Timeout encountered, retrying... (Attempt ${attempt + 1}/${maxLockRetries})`);
+             window.dispatchEvent(new CustomEvent('app-network-toast', { detail: { message: "網路壅塞，背景同步中...", type: "info" } }));
+             await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1))); // Exponential backoff wait
+             continue;
+          }
           throw new Error(`API Request Timeout: 超過 ${timeoutToUse/1000} 秒未回應`);
         }
         throw err;
@@ -110,46 +116,61 @@ export class GasApiClient implements ApiClient {
 
     const finalConfig = { ...this.baseConfig, ...config };
     const timeoutToUse = finalConfig.timeoutMs ?? 40000;
+    const maxRetries = 3;
     
-    let res;
-    try {
-      res = await fetchWithRetry(finalUrl, { 
-        redirect: finalConfig.redirect, 
-        headers: finalConfig.headers, 
-        signal: finalConfig.signal 
-      }, undefined, 2, 1500, finalConfig.silentFail, timeoutToUse);
-    } catch (err: any) {
-      if (err.message === 'ABORTED_BY_USER' || err.message === 'ABORTED') {
-         throw err;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      let res;
+      try {
+        res = await fetchWithRetry(finalUrl, { 
+          redirect: finalConfig.redirect, 
+          headers: finalConfig.headers, 
+          signal: finalConfig.signal 
+        }, undefined, 2, 1500, finalConfig.silentFail, timeoutToUse);
+      } catch (err: any) {
+        if (err.message === 'ABORTED_BY_USER' || err.message === 'ABORTED') {
+           throw err;
+        }
+        if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
+          if (attempt < maxRetries) {
+             console.warn(`API Request Timeout encountered on GET, retrying... (Attempt ${attempt + 1}/${maxRetries})`);
+             window.dispatchEvent(new CustomEvent('app-network-toast', { detail: { message: "網路壅塞，背景同步中...", type: "info" } }));
+             await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1))); // Exponential backoff wait
+             continue;
+          }
+          throw new Error(`API Request Timeout: 超過 ${timeoutToUse/1000} 秒未回應`);
+        }
+        throw err;
       }
-      if (err.name === 'AbortError' || err.message === 'TIMEOUT') {
-        throw new Error(`API Request Timeout: 超過 ${timeoutToUse/1000} 秒未回應`);
+      
+      let json: GASResponse<any>;
+      const rawText = await res.text();
+      try {
+        json = JSON.parse(rawText) as GASResponse<any>;
+      } catch (parseError) {
+        if (rawText.trim().startsWith('<')) {
+          throw new Error('伺服器回傳網頁而非 JSON 資料。請檢查 Apps Script 網址與部署權限是否正確。');
+        }
+        throw new Error(`回傳格式錯誤: ${rawText.substring(0, 50)}`);
       }
-      throw err;
+      
+      if (!json.success) {
+        if (json.error && json.error.includes('Lock Timeout') && attempt < maxRetries) {
+          console.warn(`Lock Timeout encountered on GET, retrying... (Attempt ${attempt + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1) + Math.random() * 1000));
+          continue;
+        }
+        const error = new Error(json.error || 'API Request Failed');
+        (error as any).errorCode = json.errorCode;
+        if ((json as any).serverData) {
+          (error as any).serverData = (json as any).serverData;
+        } else if (json.data) {
+          (error as any).serverData = json.data;
+        }
+        throw error;
+      }
+  
+      return json.data as unknown as R;
     }
-    
-    let json: GASResponse<any>;
-    const rawText = await res.text();
-    try {
-      json = JSON.parse(rawText) as GASResponse<any>;
-    } catch (parseError) {
-      if (rawText.trim().startsWith('<')) {
-        throw new Error('伺服器回傳網頁而非 JSON 資料。請檢查 Apps Script 網址與部署權限是否正確。');
-      }
-      throw new Error(`回傳格式錯誤: ${rawText.substring(0, 50)}`);
-    }
-    
-    if (!json.success) {
-      const error = new Error(json.error || 'API Request Failed');
-      (error as any).errorCode = json.errorCode;
-      if ((json as any).serverData) {
-        (error as any).serverData = (json as any).serverData;
-      } else if (json.data) {
-        (error as any).serverData = json.data;
-      }
-      throw error;
-    }
-
-    return json.data as unknown as R;
+    throw new Error('Unexpected end of get loop');
   }
 }

@@ -441,8 +441,8 @@ function getRecentSheetData(sheet, limit) {
   const numRows = lastRow - startRow + 1;
   
   // 分別取出 標題行 與 局部資料區塊，這大幅降低了讀取體積
-  const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
-  const dataValues = sheet.getRange(startRow, 1, numRows, lastColumn).getDisplayValues();
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  const dataValues = sheet.getRange(startRow, 1, numRows, lastColumn).getValues();
   
   const result = [];
   for (let i = 0; i < dataValues.length; i++) {
@@ -616,7 +616,7 @@ function getData(startDateStr, since = 0) {
     if (rawDate instanceof Date) {
       finalDateStr = Utilities.formatDate(rawDate, cachedTimeZone, "yyyy-MM-dd");
     } else if (rawDate) {
-      finalDateStr = String(rawDate).trim().split(' ')[0]; // 取日期部分
+      finalDateStr = String(rawDate).replace(/\s+/g, '').split('T')[0];
       finalDateStr = finalDateStr
         .replace(/\//g, '-')
         .replace(/-0?/g, '-')
@@ -2517,6 +2517,8 @@ function archiveOldOrders() {
     if (values.length <= 1) return; // 只有標題列
     
     const headers = values[0];
+    const headerMap = {};
+    headers.forEach((h, idx) => { headerMap[String(h).trim()] = idx; });
     
     // 【修正 2】加上中英文與大小寫的容錯尋找機制，確保能精準捕捉到欄位
     const getColIdx = (aliases) => {
@@ -2546,9 +2548,13 @@ function archiveOldOrders() {
     const ordersToArchive = [];     // 準備搬去封存表的資料
     
     // 同步封存表的表頭
-    if (archiveSheet.getLastRow() === 0 || archiveSheet.getDataRange().getValues()[0].length === 0) {
+    if (archiveSheet.getLastRow() === 0 || archiveSheet.getLastColumn() === 0) {
       archiveSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     }
+    
+    // 取得實際的 History_Orders 標題陣列，供後續準確對應欄位
+    const archiveHeadersCol = archiveSheet.getLastColumn() > 0 ? archiveSheet.getLastColumn() : headers.length;
+    const archiveHeaders = archiveSheet.getRange(1, 1, 1, archiveHeadersCol).getValues()[0];
     
     // 從第 2 行開始掃描
     for (let i = 1; i < values.length; i++) {
@@ -2559,20 +2565,29 @@ function archiveOldOrders() {
       
       // 【修正 3】嚴格將日期轉化為標準的 "YYYY-MM-DD" 格式進行字串比對，杜絕格式導致的誤判
       let isOver90Days = false;
-      if (deliveryDate) {
-         let orderDate;
-         if (deliveryDate instanceof Date) {
-            orderDate = deliveryDate;
-         } else {
-            // 將所有格式轉換為安全的 V8 Date 物件解析，杜絕未補零的字串雷區
-            const safeDateStr = String(deliveryDate).replace(/-/g, '/').substring(0, 10);
-            orderDate = new Date(safeDateStr);
-         }
-         
-         if (!isNaN(orderDate.getTime())) {
-            // 直接以毫秒級的數值進行絕對大小比對，完全沒有誤差
-            isOver90Days = orderDate.getTime() < cutoffDate.getTime();
-         }
+      let dDate = null;
+      
+      if (deliveryDate instanceof Date) {
+        dDate = deliveryDate;
+      } else if (typeof deliveryDate === 'number') {
+        // 處理試算表純數字格式的日期 (將 Excel/Sheets 的 Serial 轉換為正確 JS Date)
+        dDate = new Date(Math.round((deliveryDate - 25569) * 86400 * 1000));
+      } else if (deliveryDate) {
+        // 嘗試解析字串日期
+        const safeDateStr = String(deliveryDate).replace(/-/g, '/').substring(0, 10);
+        dDate = new Date(safeDateStr);
+      }
+
+      // 【核心防呆機制】
+      // 如果解析出來的年份小於 2020，代表這絕對是異常資料 (純時間 1899 或 數字解析錯誤 1970)
+      // 將其強制重置為 null，避免被誤判為「很久以前的舊訂單」而誤封存
+      if (dDate && (isNaN(dDate.getTime()) || dDate.getFullYear() < 2020)) {
+        dDate = null;
+      }
+
+      if (dDate) {
+         // 直接以毫秒級的數值進行絕對大小比對，完全沒有誤差
+         isOver90Days = dDate.getTime() < cutoffDate.getTime();
       }
       
       // 【關鍵決策點】：這裡目前還是嚴格要求 status === 'PAID' (已結清) 才搬移。
@@ -2581,28 +2596,58 @@ function archiveOldOrders() {
       
       if (status === 'DELETED' || (isOver90Days && status === 'PAID')) {
         // ★ 在推進陣列前，對這一列的所有儲存格進行「防禦性清洗」
-        const cleanRow = row.map(cell => {
+        const cleanRow = archiveHeaders.map((header) => {
+           const headerName = String(header).trim();
+           let cell = row[headerMap[headerName]];
+           
            if (cell instanceof Date) {
               // 捕捉 Google 專屬的時間地雷 (純時間都會被判定為 1899 年)
               if (cell.getFullYear() <= 1900) {
-                 return Utilities.formatDate(cell, timeZone, "HH:mm");
+                 cell = Utilities.formatDate(cell, timeZone, "HH:mm");
+              } else {
+                 // 如果是正常的出貨日期，則轉為乾淨的 YYYY-MM-DD
+                 cell = Utilities.formatDate(cell, timeZone, "yyyy-MM-dd");
               }
-              // 如果是正常的出貨日期，則轉為乾淨的 YYYY-MM-DD
-              return Utilities.formatDate(cell, timeZone, "yyyy-MM-dd");
            }
-           return cell;
+           
+           // 時間欄位強制補上單引號，避免試算表假會解析成 1899 年
+           if (headerName === '配送時間' || headerName === 'DeliveryTime') {
+              return cell ? `'${cell}` : ''; 
+           }
+           
+           // LastUpdated 強制轉字串，避免奇怪的 1970 日期格式
+           if (headerName === 'LastUpdated') {
+              return String(cell || ''); 
+           }
+           
+           return cell === undefined ? '' : cell;
         });
 
         // 寫入清洗後的乾淨資料
         ordersToArchive.push(cleanRow);
       } else {
         // 同理，寫回 Orders 大表的活躍訂單也要保持乾淨
-        const cleanRow = row.map(cell => {
+        const cleanRow = headers.map((header, index) => {
+           let cell = row[index];
+           const headerName = String(header).trim();
+           
            if (cell instanceof Date) {
-              if (cell.getFullYear() <= 1900) return Utilities.formatDate(cell, timeZone, "HH:mm");
-              return Utilities.formatDate(cell, timeZone, "yyyy-MM-dd");
+              if (cell.getFullYear() <= 1900) {
+                 cell = Utilities.formatDate(cell, timeZone, "HH:mm");
+              } else {
+                 cell = Utilities.formatDate(cell, timeZone, "yyyy-MM-dd");
+              }
            }
-           return cell;
+           
+           if (headerName === '配送時間' || headerName === 'DeliveryTime') {
+              return cell ? `'${cell}` : ''; 
+           }
+           
+           if (headerName === 'LastUpdated') {
+              return String(cell || ''); 
+           }
+           
+           return cell === undefined ? '' : cell;
         });
         
         activeOrders.push(cleanRow);

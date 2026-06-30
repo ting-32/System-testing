@@ -9,7 +9,7 @@ import { CustomerReportModal } from '../components/CustomerReportModal';
 import { HolidayCalendar } from '../components/HolidayCalendar';
 import { ProductPicker } from '../components/ProductPicker';
 import { fetchWithRetry } from '../utils/fetchUtils';
-import { formatTimeDisplay, formatTimeForInput, getUpcomingHolidays, isDateInOffDays } from '../utils';
+import { formatTimeDisplay, formatTimeForInput, getUpcomingHolidays, isDateInOffDays, getSmartDefaultDate } from '../utils';
 import { buttonTap, buttonHover, containerVariants, itemVariants } from '../components/animations';
 import { SyncableStatusWrapper } from '../components/SyncableStatusWrapper';
 
@@ -86,14 +86,20 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
 
   const editingVersionRef = useRef<number | undefined>(undefined);
 
+  // 取得今天的標準日期格式 (YYYY-MM-DD)
+  const todayDate = useMemo(() => getSmartDefaultDate(), []);
+  
   // Group orders for "has order today" logic
   const groupedOrders = useMemo(() => {
     return orders.reduce((acc, order) => {
+      // 新增這行：如果訂單配送日期不是今天，就直接略過不計入
+      if (order.deliveryDate !== todayDate) return acc;
+      
       if (!acc[order.customerName]) acc[order.customerName] = [];
       acc[order.customerName].push(order);
       return acc;
     }, {} as Record<string, Order[]>);
-  }, [orders]);
+  }, [orders, todayDate]);
 
   const filteredCustomers = useMemo(() => {
     let result = customers;
