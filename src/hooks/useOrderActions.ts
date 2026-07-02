@@ -177,9 +177,10 @@ export const useOrderActions = ({
       const product = products.find(p => p.id === item.productId);
       const targetUnit = product?.unit || '斤';
 
+      const priceItem = customer?.priceList?.find(pl => pl.productId === item.productId);
+      const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
+
       if (item.unit === '元') {
-        const priceItem = customer?.priceList?.find(pl => pl.productId === item.productId);
-        const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
         if (unitPrice > 0) {
           finalQuantity = parseFloat((finalQuantity / unitPrice).toFixed(2));
           finalUnit = targetUnit;
@@ -188,7 +189,14 @@ export const useOrderActions = ({
         finalQuantity = parseFloat((finalQuantity * (1000 / 600)).toFixed(2));
         finalUnit = '斤';
       }
-      return { productId: item.productId, productName: item.productName || product?.name, quantity: Math.max(0, finalQuantity), unit: finalUnit };
+      return { 
+        productId: item.productId, 
+        productName: item.productName || product?.name, 
+        quantity: Math.max(0, finalQuantity), 
+        unit: finalUnit,
+        unitPrice: unitPrice,
+        subtotal: unitPrice * Math.max(0, finalQuantity)
+      };
     });
 
     const timestamp = Date.now();
@@ -208,7 +216,9 @@ export const useOrderActions = ({
       pendingAction: 'create',
       _syncStatus: 'pending',
       _localUpdatedTs: timestamp,
-      lastUpdated: timestamp
+      lastUpdated: timestamp,
+      unitPrice: processedItems[0]?.unitPrice,
+      subtotal: processedItems.reduce((acc: number, cur: any) => acc + (cur.subtotal || 0), 0)
     };
 
     // 1. 樂觀更新：立刻把訂單加入畫面
@@ -616,10 +626,11 @@ export const useOrderActions = ({
       const product = products.find(p => p.id === item.productId);
       const targetUnit = product?.unit || '斤';
 
+      const customer = customers.find(c => c.name === orderForm.customerName);
+      const priceItem = customer?.priceList?.find(pl => pl.productId === item.productId);
+      const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
+
       if (item.unit === '元') {
-        const customer = customers.find(c => c.id === orderForm.customerId);
-        const priceItem = customer?.priceList?.find(pl => pl.productId === item.productId);
-        const unitPrice = priceItem ? priceItem.price : (product?.price || 0);
         if (unitPrice > 0) {
           finalQuantity = parseFloat((finalQuantity / unitPrice).toFixed(2));
           finalUnit = targetUnit;
@@ -628,7 +639,14 @@ export const useOrderActions = ({
         finalQuantity = parseFloat((finalQuantity * (1000 / 600)).toFixed(2));
         finalUnit = '斤';
       }
-      return { productId: item.productId, productName: item.productName || product?.name, quantity: Math.max(0, finalQuantity), unit: finalUnit };
+      return { 
+        productId: item.productId, 
+        productName: item.productName || product?.name, 
+        quantity: Math.max(0, finalQuantity), 
+        unit: finalUnit,
+        unitPrice: unitPrice,
+        subtotal: unitPrice * Math.max(0, finalQuantity)
+      };
     });
 
     const timestamp = Date.now();
@@ -649,7 +667,9 @@ export const useOrderActions = ({
       pendingAction: editingOrderId ? 'update' : 'create',
       _syncStatus: 'pending',
       _localUpdatedTs: timestamp,
-      lastUpdated: timestamp
+      lastUpdated: timestamp,
+      unitPrice: processedItems[0]?.unitPrice,
+      subtotal: processedItems.reduce((acc: number, cur: any) => acc + (cur.subtotal || 0), 0)
     };
 
     // Optimistic Update

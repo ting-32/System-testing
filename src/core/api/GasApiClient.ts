@@ -64,7 +64,10 @@ export class GasApiClient implements ApiClient {
         json = JSON.parse(rawText) as GASResponse<any>;
       } catch (parseError) {
         if (rawText.trim().startsWith('<')) {
-          throw new Error('伺服器回傳網頁而非 JSON 資料。請檢查 Apps Script 網址與部署權限是否正確。');
+          if (rawText.includes('accounts.google.com') || rawText.includes('Service Login')) {
+            throw new Error('伺服器回傳登入頁面。這通常是因為使用了 /dev 網址，但在當前瀏覽器環境中無法自動登入。請改用 /exec 結尾的正式部署網址，並將存取權限設為「所有人」。');
+          }
+          throw new Error('伺服器回傳網頁而非 JSON 資料。請確保 Apps Script 網址是以 /exec 結尾，且「誰可以存取」設為「所有人」。\n如果您剛更新了 GAS 代碼，請務必重新部署 Apps Script。');
         }
         throw new Error(`回傳格式錯誤: ${rawText.substring(0, 50)}`);
       }
@@ -148,7 +151,10 @@ export class GasApiClient implements ApiClient {
         json = JSON.parse(rawText) as GASResponse<any>;
       } catch (parseError) {
         if (rawText.trim().startsWith('<')) {
-          throw new Error('伺服器回傳網頁而非 JSON 資料。請檢查 Apps Script 網址與部署權限是否正確。');
+          if (rawText.includes('accounts.google.com') || rawText.includes('Service Login')) {
+            throw new Error('伺服器回傳登入頁面。這通常是因為使用了 /dev 網址，但在當前瀏覽器環境中無法自動登入。請改用 /exec 結尾的正式部署網址，並將存取權限設為「所有人」。');
+          }
+          throw new Error('伺服器回傳網頁而非 JSON 資料。請確保 Apps Script 網址是以 /exec 結尾，且「誰可以存取」設為「所有人」。\n如果您剛更新了 GAS 代碼，請務必重新部署 Apps Script。');
         }
         throw new Error(`回傳格式錯誤: ${rawText.substring(0, 50)}`);
       }

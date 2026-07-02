@@ -89,6 +89,12 @@ export const useOrderCalculations = ({
 
   // 1. Helper: Calculate Total Amount for a single Order
   const calculateOrderTotalAmount = (order: Order) => {
+    // 1. 如果訂單身上已經有小計快照，直接相信它！
+    if (typeof order.subtotal === 'number') {
+      return order.subtotal;
+    }
+
+    // 2. 容錯處理：如果沒有小計(舊訂單)，退回到以前的動態查詢方法
     const customer = customers.find(c => c.name === order.customerName);
     let total = 0;
     (Array.isArray(order.items) ? order.items : []).forEach(item => {

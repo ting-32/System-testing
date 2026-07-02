@@ -36,6 +36,8 @@ export interface DefaultItem {
   quantity: number;
   unit?: string; // 支援自訂單位
   price?: number; // 支援自訂單價 (用於預設列表)
+  deliveryTime?: string; // 新增：若有值，代表這項商品要獨立拆單配送
+  trip?: string; // 新增：(選配) 如果連車趟都要跟著變，可加此欄位
 }
 
 export interface CustomerPrice {
@@ -53,6 +55,7 @@ export interface Customer {
   defaultTrip?: string; // 新增：預設趟數
   address?: string; // 新增：客戶地址
   coordinates?: string; // 新增：座標位置 (緯度, 經度)
+  isPaused?: boolean; // 新增：暫停供貨 (無限期休假) 標記
   // 注意：我們沿用 paymentTerm 欄位來儲存「預定習慣」，以保持後端兼容性
   // 值可能是: 'regular' (預訂), 'occasional' (非每日), 'adhoc' (非預訂), 或舊資料 'daily'/'weekly' 等
   paymentTerm?: string; 
@@ -73,6 +76,8 @@ export interface OrderItem {
   productName?: string;
   quantity: number;
   unit?: string; // 支援自訂單位
+  unitPrice?: number;
+  subtotal?: number;
 }
 
 export interface Order {
@@ -85,6 +90,8 @@ export interface Order {
   note: string;
   status: OrderStatus;
   source?: string; // 新增：資料來源 (例如："🤖 自動建單")
+  unitPrice?: number; // 新增：下單當下的快照單價
+  subtotal?: number;  // 新增：下單當下的小計 (單價 * 數量)
   deliveryMethod?: string; // 新增：訂單的配送方式
   trip?: string; // 新增：趟次標籤
   sortOrder?: number; // 排序順序

@@ -100,9 +100,9 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
       order.items.forEach(item => {
         const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
         const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
-        const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+        const unitPrice = item.unitPrice !== undefined ? item.unitPrice : (priceItem ? priceItem.price : (p?.price || 0));
         
-        const subtotal = item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice);
+        const subtotal = item.subtotal !== undefined ? item.subtotal : (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
         orderTotal += subtotal;
         
         if (item.unit !== '元') {

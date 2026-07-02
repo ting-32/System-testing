@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X } from 'lucide-react';
+import { X, Info } from 'lucide-react';
 import { Product } from '../../types';
 import { PRODUCT_CATEGORIES } from '../../constants';
 import { buttonTap } from '../animations';
@@ -60,6 +60,12 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
          <div className="space-y-2">
            <label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">預設單價</label>
            <input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-morandi-charcoal outline-none focus:ring-2 focus:ring-morandi-blue transition-all" placeholder="例如：35" value={productForm.price === 0 ? '' : productForm.price} onChange={(e) => { const val = parseFloat(e.target.value); setProductForm({...productForm, price: isNaN(val) ? 0 : Math.max(0, val)}); }} />
+           <div className="flex items-start gap-1.5 text-slate-400 bg-slate-50 p-3 rounded-2xl mx-1 mt-2">
+             <Info className="w-4 h-4 mt-0.5 shrink-0" />
+             <p className="text-xs font-medium leading-relaxed tracking-wide">
+               註：修改價格僅會套用於未來建立的新訂單，不影響歷史對帳單與已成立之訂單。
+             </p>
+           </div>
          </div>
       </div>
       </motion.div>

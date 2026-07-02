@@ -53,11 +53,19 @@ function getSheets() {
 }
 
 function doGet(e) {
-  const startDateStr = e.parameter.startDate;
-  const since = Number(e.parameter.since) || 0;
-  const data = getData(startDateStr, since);
-  return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
-    .setMimeType(ContentService.MimeType.JSON);
+  try {
+    const startDateStr = e.parameter.startDate;
+    const since = Number(e.parameter.since) || 0;
+    const data = getData(startDateStr, since);
+    return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: error.message || String(error),
+      stack: error.stack
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 function doPost(e) {
@@ -538,6 +546,7 @@ function getData(startDateStr, since = 0) {
           paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
           defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
           autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+          isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
           lastUpdated: parseLastUpdated(c.LastUpdated)
         }));
 
@@ -574,6 +583,7 @@ function getData(startDateStr, since = 0) {
         paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
         defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
         autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+        isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
         lastUpdated: parseLastUpdated(c.LastUpdated)
       }));
 
@@ -636,6 +646,8 @@ function getData(startDateStr, since = 0) {
       status: String(o.Status || o.status || o.狀態 || '').trim(),
       deliveryMethod: o.DeliveryMethod || o.deliveryMethod || o.配送方式,
       source: o.Source || o.source || o.資料來源 || '',
+      unitPrice: Number(o.UnitPrice || o.unitPrice || o.單價) || undefined,
+      subtotal: Number(o.Subtotal || o.subtotal || o.小計) || undefined,
       lastUpdated: parseLastUpdated(o.LastUpdated),
       trip: o.Trip || o.trip || o.趟次 || ''
     };
@@ -989,13 +1001,15 @@ function createOrder(orderData) {
     const sheet = getSheets().ORDERS;
     
     // Ensure we have enough columns and headers
-    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Trip", "資料來源", "Version"]);
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Trip", "資料來源", "Version", "單價", "小計"]);
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const tripColIdx = headerMap["Trip"];
     const sourceColIdx = headerMap["資料來源"];
     const versionColIdx = headerMap["Version"];
+    const unitPriceColIdx = headerMap["單價"];
+    const subtotalColIdx = headerMap["小計"];
     
-    const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx) + 1;
+    const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, versionColIdx, unitPriceColIdx, subtotalColIdx) + 1;
     if (sheet.getMaxColumns() < maxCol) {
       sheet.insertColumnsAfter(sheet.getMaxColumns(), maxCol - sheet.getMaxColumns());
     }
@@ -1020,6 +1034,8 @@ function createOrder(orderData) {
       row[tripColIdx] = orderData.trip || "";
       row[sourceColIdx] = orderData.source || "";
       row[versionColIdx] = 1; // 首次建立 version 為 1
+      row[unitPriceColIdx] = item.unitPrice !== undefined ? item.unitPrice : (orderData.unitPrice !== undefined ? orderData.unitPrice : "");
+      row[subtotalColIdx] = item.subtotal !== undefined ? item.subtotal : (orderData.subtotal !== undefined ? orderData.subtotal : "");
       return row;
     });
     
@@ -1046,7 +1062,7 @@ function updateOrderContent(orderData) {
     headers.forEach((h, i) => { if (h) headerMap[String(h).trim()] = i; });
     
     // 確保必備欄位存在
-    const requiredHeaders = ["LastUpdated", "Trip", "資料來源", "Version"];
+    const requiredHeaders = ["LastUpdated", "Trip", "資料來源", "Version", "單價", "小計"];
     let needsInsert = false;
     requiredHeaders.forEach(req => {
       if (headerMap[req] === undefined) {
@@ -1100,6 +1116,8 @@ function updateOrderContent(orderData) {
                else if (key === 'trip') colIndex = headerMap['Trip'] || headerMap['趟次'];
                else if (key === 'status') colIndex = headerMap['Status'] || headerMap['狀態'];
                else if (key === 'deliveryDate') colIndex = headerMap['Date'] || headerMap['日期'];
+               else if (key === 'unitPrice') colIndex = headerMap['單價'];
+               else if (key === 'subtotal') colIndex = headerMap['小計'];
             }
             if (colIndex !== undefined) {
               values[i][colIndex] = newValue;
@@ -1175,6 +1193,8 @@ function updateOrderContent(orderData) {
         row[lastUpdatedColIdx] = newLastUpdatedTs;
         if (headerMap["Trip"]) row[headerMap["Trip"]] = orderData.trip || "";
         if (headerMap["資料來源"]) row[headerMap["資料來源"]] = orderData.source || "";
+        if (headerMap["單價"]) row[headerMap["單價"]] = item.unitPrice !== undefined ? item.unitPrice : (orderData.unitPrice !== undefined ? orderData.unitPrice : "");
+        if (headerMap["小計"]) row[headerMap["小計"]] = item.subtotal !== undefined ? item.subtotal : (orderData.subtotal !== undefined ? orderData.subtotal : "");
         row[versionColIdx] = currentVersion + 1; 
         
         newRows.push(row);
@@ -1474,6 +1494,7 @@ function updateCustomer(data) {
   const colHol = getColIndex(["HolidayDates", "holidayDates", "特定公休日JSON", "特定公休日"], "HolidayDates");
   const colTerm = getColIndex(["PaymentTerm", "paymentTerm", "付款週期"], "PaymentTerm");
   const colTrip = getColIndex(["DefaultTrip", "defaultTrip", "預設趟數"], "DefaultTrip");
+  const colPaused = getColIndex(["isPaused", "暫停供貨", "Paused"], "暫停供貨");
   const colAuto = getColIndex(["自動建單開關", "autoOrderEnabled"], "自動建單開關");
   const colLast = getColIndex(["LastUpdated"], "LastUpdated");
 
@@ -1518,6 +1539,7 @@ function updateCustomer(data) {
   if(data.holidayDates !== undefined) newRow[colHol] = JSON.stringify(data.holidayDates || []);
   if(data.paymentTerm !== undefined) newRow[colTerm] = data.paymentTerm;
   if(data.defaultTrip !== undefined) newRow[colTrip] = data.defaultTrip || '';
+  if(data.isPaused !== undefined) newRow[colPaused] = data.isPaused;
   if(data.autoOrderEnabled !== undefined) newRow[colAuto] = data.autoOrderEnabled;
   newRow[colLast] = newLastUpdatedTs;
   
@@ -1627,10 +1649,12 @@ function generateTomorrowDefaultOrders() {
     const sheets = getSheets();
     const orderSheet = sheets.ORDERS;
   
-  const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip", "Status", "狀態"]);
+  const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip", "Status", "狀態", "單價", "小計"]);
   const sourceColIdx = headerMap["資料來源"];
   const lastUpdatedColIdx = headerMap["LastUpdated"];
   const tripColIdx = headerMap["Trip"];
+  const unitPriceColIdx = headerMap["單價"];
+  const subtotalColIdx = headerMap["小計"];
   
   // 取得狀態欄位位置 (自動適配英中文標題，預設降級為 Index 8)
   const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : 
@@ -1683,12 +1707,15 @@ function generateTomorrowDefaultOrders() {
     deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
     deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
     defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
-    autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true
+    autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+    isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
+    priceList: c.PriceList || c.priceList || c.客製化價格JSON || c.客製化價格
   }));
 
   const products = getSheetData(sheets.PRODUCTS).map(p => ({
     id: p.ID || p.id,
-    name: p.Name || p.name || p.品項
+    name: p.Name || p.name || p.品項,
+    price: Number(p.Price || p.price || p.預設單價 || p.單價) || 0
   }));
   
   const productMap = {};
@@ -1699,12 +1726,15 @@ function generateTomorrowDefaultOrders() {
   const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
   const lastUpdatedTs = String(new Date().getTime());
 
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
+  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, unitPriceColIdx, subtotalColIdx) + 1;
   if (orderSheet.getMaxColumns() < maxCol) {
     orderSheet.insertColumnsAfter(orderSheet.getMaxColumns(), maxCol - orderSheet.getMaxColumns());
   }
 
   customers.forEach(c => {
+    // 檢查是否暫停供貨，若是則不建立訂單
+    if (c.isPaused) return;
+
     const isAutoEnabled = c.autoOrderEnabled;
     if (!isAutoEnabled) return; 
 
@@ -1727,26 +1757,65 @@ function generateTomorrowDefaultOrders() {
     const holidayDates = typeof c.holidayDates === 'string' ? safeJsonArray(c.holidayDates) : (c.holidayDates || []);
     if (holidayDates.includes(targetDateStr)) return;
 
-    const orderId = "AUTO-" + Utilities.formatDate(tomorrow, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
-
+    // 將預設品項按時間與車趟分群
+    const itemsByTimeAndTrip = {};
     defaultItems.forEach(item => {
-      const row = new Array(maxCol).fill("");
-      row[0] = timestamp;
-      row[1] = orderId;
-      row[2] = c.name;
-      row[3] = targetDateStr;
-      row[4] = c.deliveryTime || "08:00";
-      row[5] = productMap[item.productId] || item.productName || item.productId;
-      row[6] = item.quantity || 1;
-      row[7] = ""; // 備註先留空
-      row[8] = "PENDING";
-      row[9] = c.deliveryMethod || "";
-      row[10] = item.unit || "斤";
-      row[lastUpdatedColIdx] = lastUpdatedTs;
-      row[tripColIdx] = c.defaultTrip || "";
-      row[sourceColIdx] = "🤖 自動建單";
+      const timeKey = item.deliveryTime || c.deliveryTime || "08:00";
+      const tripKey = item.trip || c.defaultTrip || "";
+      const groupKey = timeKey + "||" + tripKey;
       
-      newOrderRows.push(row);
+      if (!itemsByTimeAndTrip[groupKey]) {
+        itemsByTimeAndTrip[groupKey] = [];
+      }
+      itemsByTimeAndTrip[groupKey].push({
+        ...item,
+        _time: timeKey,
+        _trip: tripKey
+      });
+    });
+
+    Object.keys(itemsByTimeAndTrip).forEach(groupKey => {
+      const groupItems = itemsByTimeAndTrip[groupKey];
+      const timeKey = groupItems[0]._time;
+      const tripKey = groupItems[0]._trip;
+      
+      const orderId = "AUTO-" + Utilities.formatDate(tomorrow, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
+
+      groupItems.forEach(item => {
+        let currentPrice = 0;
+        const priceList = (typeof c.priceList === 'string' ? safeJsonArray(c.priceList) : (c.priceList || []));
+        const customPriceObj = priceList.find(pl => pl.productId === item.productId);
+        
+        if (customPriceObj && typeof customPriceObj.price === 'number') {
+          currentPrice = customPriceObj.price;
+        } else {
+          const globalProduct = products.find(p => p.id === item.productId);
+          if (globalProduct && typeof globalProduct.price === 'number') {
+            currentPrice = globalProduct.price;
+          }
+        }
+        const subtotal = currentPrice * (item.quantity || 1);
+
+        const row = new Array(maxCol).fill("");
+        row[0] = timestamp;
+        row[1] = orderId;
+        row[2] = c.name;
+        row[3] = targetDateStr;
+        row[4] = timeKey;
+        row[5] = productMap[item.productId] || item.productName || item.productId;
+        row[6] = item.quantity || 1;
+        row[7] = ""; // 備註先留空
+        row[8] = "PENDING";
+        row[9] = c.deliveryMethod || "";
+        row[10] = item.unit || "斤";
+        row[lastUpdatedColIdx] = lastUpdatedTs;
+        row[tripColIdx] = tripKey;
+        row[sourceColIdx] = "🤖 自動建單";
+        row[unitPriceColIdx] = currentPrice;
+        row[subtotalColIdx] = subtotal;
+        
+        newOrderRows.push(row);
+      });
     });
   });
 
