@@ -19,7 +19,7 @@ export const CustomerPicker: React.FC<{ isOpen: boolean; onClose: () => void; on
   }, [orders, selectedDate]);
 
   const filteredList = useMemo(() => {
-    let list = customers.map(c => {
+    let list = customers.filter(c => !c.isArchived).map(c => {
       const habit = c.paymentTerm || 'daily';
       let isOccasional = habit === 'occasional' || habit === 'weekly';
       let isAdhoc = habit === 'adhoc' || habit === 'monthly';

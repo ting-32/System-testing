@@ -56,6 +56,7 @@ export interface Customer {
   address?: string; // 新增：客戶地址
   coordinates?: string; // 新增：座標位置 (緯度, 經度)
   isPaused?: boolean; // 新增：暫停供貨 (無限期休假) 標記
+  isArchived?: boolean; // 新增：封存 (永久停業) 標記，從列表隱藏
   // 注意：我們沿用 paymentTerm 欄位來儲存「預定習慣」，以保持後端兼容性
   // 值可能是: 'regular' (預訂), 'occasional' (非每日), 'adhoc' (非預訂), 或舊資料 'daily'/'weekly' 等
   paymentTerm?: string; 

@@ -375,7 +375,15 @@ export const NotificationCenterModal: React.FC<Props> = ({
               </div>
             </div>
             <button
-              onClick={onClose}
+              onClick={() => {
+                // 如果正在編輯或新增規則中，點擊叉叉時「返回列表」
+                if (editingRule) {
+                  setEditingRule(null);
+                } else {
+                  // 若在列表層級，則正常關閉整個通知中心
+                  onClose();
+                }
+              }}
               className="p-2 bg-slate-50 text-slate-400 rounded-full hover:bg-slate-100 hover:text-slate-600 transition-colors"
             >
               <X className="w-5 h-5" />

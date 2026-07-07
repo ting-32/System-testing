@@ -58,4 +58,15 @@ export class OrderService {
 
     return { ...order, version: newVersion };
   }
+
+  async batchSaveOrders(orders: Order[], products: Product[]): Promise<Order[]> {
+    const doBatchSave = async (): Promise<Order[]> => {
+       const payloads = orders.map(order => this.mapOrderToDto(order, products));
+       return await this.orderRepo.batchUpdateOrders(payloads);
+    };
+
+    // We use a single batch key in the queue to ensure batches don't overlap.
+    const updatedOrders = await this.queue.enqueue<Order[]>('BATCH_SAVE', undefined, () => doBatchSave());
+    return updatedOrders;
+  }
 }

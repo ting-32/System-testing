@@ -6,6 +6,7 @@ import { GAS_URL as DEFAULT_GAS_URL, APP_VERSION } from '../constants';
 import { formatDateStr, normalizeDate, safeNumber } from '../utils';
 import { container } from '../core/di/AppContainer';
 import { DataMapper } from '../core/mappers/DataMapper';
+import { isValidOrder, isValidCustomer, isValidProduct, validateCache } from '../utils/validators';
 import { listenToDataChange, broadcastDataChange } from '../services/firebaseSync';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useLogStore } from '../store/useLogStore';
@@ -100,32 +101,113 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
   const [orders, setOrders] = useState<Order[]>([]);
   const [trips, setTrips] = useState<string[]>(['第一趟', '第二趟', '未分配']);
   
+  type QueueItem = { actionName: string, order: Order, originalVersion?: number, onSuccess?: (updatedOrder?: Order) => void, onError?: (msg: string) => void };
+
+  // === Batch Sync Queue ===
+  const pendingSyncQueue = useRef(new Map<string, QueueItem>());
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const flushSyncQueue = async () => {
+    if (pendingSyncQueue.current.size === 0) return;
+
+    // 將所有掛在隊列中的訂單抽出來
+    const queueValues = Array.from(pendingSyncQueue.current.values()) as QueueItem[];
+    const ordersToSync = queueValues.map(item => item.order);
+    
+    // We can just iterate the map itself to preserve typings
+    const queueMapSnapshot = new Map<string, QueueItem>();
+    pendingSyncQueue.current.forEach((val, key) => queueMapSnapshot.set(key, val));
+    
+    pendingSyncQueue.current.clear();
+
+    try {
+      // 呼叫新的批量 API
+      // @ts-ignore
+      const updatedOrders = await container.orderService.batchSaveOrders(ordersToSync, products);
+      
+      // 成功後：更新這些訂單為 'synced' 並更新 version
+      setOrders(prev => prev.map(o => {
+         const syncedOrder = updatedOrders.find(ro => ro.id === o.id);
+         if (syncedOrder) {
+            return { ...o, _syncStatus: 'synced', version: syncedOrder.version };
+         }
+         return o;
+      }));
+
+      // 觸發各自的 onSuccess
+      queueMapSnapshot.forEach((item, id) => {
+        const syncedOrder = updatedOrders.find(ro => ro.id === id);
+        if (item.onSuccess) item.onSuccess(syncedOrder);
+      });
+      broadcastDataChange();
+
+    } catch (e: any) {
+      console.error("Batch Sync Failed:", e);
+      // 失敗時可以把這些訂單標記為 error
+      setOrders(prev => prev.map(o => {
+         if (queueMapSnapshot.has(o.id)) {
+            return { ...o, _syncStatus: 'error' };
+         }
+         return o;
+      }));
+      queueMapSnapshot.forEach(item => {
+         if (item.onError) item.onError(e.message || String(e));
+      });
+    }
+  };
+  // === End Batch Sync Queue ===
+
   // 2. 利用組件掛載 (Mount) 時觸發的 useEffect，建立非同步提取快取的方法
   useEffect(() => {
     const loadInitialCacheFromDB = async () => {
       try {
-        const pCustomers = localforage.getItem<Customer[]>('nm_cache_customers');
-        const pProducts = localforage.getItem<Product[]>('nm_cache_products');
-        const pOrders = localforage.getItem<Order[]>('nm_cache_orders');
+        const pCustomers = localforage.getItem<any[]>('nm_cache_customers');
+        const pProducts = localforage.getItem<any[]>('nm_cache_products');
+        const pOrders = localforage.getItem<any[]>('nm_cache_orders');
         const pTrips = localforage.getItem<string[]>('availableTrips');
 
         // 為了畫面順暢，推薦用 Promise.all 平行一次把所有資料拉回來
-        const [cachedCust, cachedProd, cachedOrd, cachedTrips] = await Promise.all([pCustomers, pProducts, pOrders, pTrips]);
+        const [cachedCustRaw, cachedProdRaw, cachedOrdRaw, cachedTrips] = await Promise.all([pCustomers, pProducts, pOrders, pTrips]);
 
         let hasAnyCache = false;
 
-        if (cachedCust) { setCustomers(cachedCust); hasAnyCache = true; }
-        if (cachedProd) { setProducts(cachedProd); hasAnyCache = true; }
-        if (cachedOrd) { 
+        // 🛡️ 執行防禦性驗證
+        const safeCustomers = validateCache(cachedCustRaw, isValidCustomer);
+        if (safeCustomers) {
+           setCustomers(safeCustomers);
+           hasAnyCache = true;
+        } else if (cachedCustRaw) {
+           console.warn("🚨 偵測到客戶快取嚴重損毀或格式異常，正在拋棄本地快取...");
+           await localforage.removeItem('nm_cache_customers');
+           localStorage.removeItem('nm_last_sync_ts'); 
+        }
+
+        const safeProducts = validateCache(cachedProdRaw, isValidProduct);
+        if (safeProducts) {
+           setProducts(safeProducts);
+           hasAnyCache = true;
+        } else if (cachedProdRaw) {
+           console.warn("🚨 偵測到產品快取嚴重損毀或格式異常，正在拋棄本地快取...");
+           await localforage.removeItem('nm_cache_products');
+           localStorage.removeItem('nm_last_sync_ts');
+        }
+
+        const safeOrders = validateCache(cachedOrdRaw, isValidOrder);
+        if (safeOrders) { 
            // 偵測並清理「幽靈狀態」，將上次意外中斷而遺留的 pending 轉為 error
-           const cleanedOrders = cachedOrd.map(o => 
+           const cleanedOrders = safeOrders.map(o => 
              o.syncStatus === 'pending' 
                ? { ...o, syncStatus: 'error' as const, errorMessage: '應用程式意外關閉或網路超時，請點擊重試' } 
                : o
            );
            setOrders(cleanedOrders); 
            hasAnyCache = true; 
+        } else if (cachedOrdRaw) {
+           console.warn("🚨 偵測到訂單快取嚴重損毀或格式異常，正在拋棄本地快取...");
+           await localforage.removeItem('nm_cache_orders');
+           localStorage.removeItem('nm_last_sync_ts'); 
         }
+
         if (cachedTrips) { setTrips(cachedTrips); hasAnyCache = true; }
         
         if (hasAnyCache) {
@@ -133,6 +215,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         }
       } catch (error) {
         console.error('從資料庫還原快取崩潰:', error);
+        // 若 IndexedDB 崩潰，最保險的做法是直接清空
+        await localforage.clear();
+        localStorage.removeItem('nm_last_sync_ts');
       }
     };
 
@@ -194,7 +279,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
   } | null>(null);
 
   // Sync Data Logic
-  const syncData = useCallback(async (isSilent = false) => { 
+  const syncData = useCallback(async (isSilent = false, forceRefresh = false) => { 
     if (isSavingRef.current) {
       console.log("UX Block: Bypassing sync while user is saving data.");
       return;
@@ -235,7 +320,14 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
       startDate.setDate(startDate.getDate() - 90); 
       const startDateStr = formatDateStr(startDate); 
       
-      let lastSyncStr = localStorage.getItem('nm_last_sync_ts');
+      let lastSyncStr = forceRefresh ? null : localStorage.getItem('nm_last_sync_ts');
+      
+      // 💡 清空本地死鎖的龐大業務資料
+      if (forceRefresh) {
+        console.log('Force Refresh triggered: Purging local IndexedDB data...');
+        await localforage.clear();
+        localStorage.removeItem('nm_last_sync_ts'); // 確保防呆
+      }
       
       // 強制執行一次全量同步，確保近期人工新增但沒有 LastUpdated 的資料能被抓下來
       if (localStorage.getItem('nm_force_full_sync_7') !== 'done') {
@@ -260,8 +352,12 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
            lastGlobalUpdateRef.current = result.serverGlobalTs;
         }
 
-        const mappedCustomers: Customer[] = DataMapper.mapCustomers(result.customers || []);
-        const mappedProducts: Product[] = DataMapper.mapProducts(result.products || []);
+        let mappedCustomers: Customer[] = DataMapper.mapCustomers(result.customers || []);
+        let mappedProducts: Product[] = DataMapper.mapProducts(result.products || []);
+        
+        // 寫入前再濾一次，確保進去的都是完美無瑕的資料
+        mappedCustomers = mappedCustomers.filter(isValidCustomer);
+        mappedProducts = mappedProducts.filter(isValidProduct);
         
         const rawOrders = result.orders || []; 
         const orderMap: { [key: string]: Order } = {}; 
@@ -305,7 +401,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
           orderMap[oid].items.push({ productId: prod ? prod.id : prodName, quantity: safeNumber(o.數量 || o.quantity, 0, `Order ${oid} item ${prodName} quantity`), unit: o.unit || prod?.unit || '斤' }); 
         }); 
         
-        const newOrders = Object.values(orderMap);
+        let newOrders = Object.values(orderMap);
+        newOrders = newOrders.filter(isValidOrder);
+        
         const fetchedTrips = result.trips || [];
         
         // === 將通知中心的設定存更新至 Store ===
@@ -585,7 +683,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         setTimeout(() => syncData(true), 100);
         return false;
       }
-
+      
       // Real network error
       addToast('連線失敗，請檢查網路狀態', 'error');
       return false;
@@ -618,29 +716,32 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
     onSuccess: (updatedOrder?: Order) => void,
     onError: (msg: string) => void
   ) => {
-    if (actionName === 'updateOrderContent' && getAddSyncTask) {
-      const addSyncTask = getAddSyncTask();
-      if (addSyncTask) {
-        addSyncTask({
-          taskId: `UPDATE_CONTENT_${newOrder.id}_${Date.now()}`,
-          type: 'UPDATE_CONTENT',
-          payload: { ...newOrder, version: originalVersion },
-          retryCount: 0,
-          timestamp: Date.now()
-        });
+    // 樂觀更新：立刻更新畫面，不等待後端
+    setOrders(prev => {
+       const exists = prev.some(o => o.id === newOrder.id);
+       if (exists) {
+          return prev.map(o => o.id === newOrder.id ? { ...newOrder, _syncStatus: 'pending' } : o);
+       } else {
+          return [...prev, { ...newOrder, _syncStatus: 'pending' }];
+       }
+    });
 
-        // 樂觀讓畫面直接更新，剩下的讓 Queue 背景處理
-        setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, _syncStatus: 'pending' } : o));
-        onSuccess(newOrder);
-        broadcastDataChange();
-        return;
-      }
+    if (actionName === 'updateOrderContent' || actionName === 'updateOrderStatus') {
+       // 加入佇列
+       pendingSyncQueue.current.set(newOrder.id, { actionName, order: newOrder, originalVersion, onSuccess, onError });
+       
+       // 防抖機制：2 秒內無動作才整包打出去
+       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+       syncTimeoutRef.current = setTimeout(() => {
+         flushSyncQueue();
+       }, 2000);
+       return;
     }
 
     try {
       // @ts-ignore
       const savedOrder = await container.orderService.saveOrder(actionName, newOrder, products, originalVersion);
-      setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, version: savedOrder.version } : o));
+      setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, version: savedOrder.version, _syncStatus: 'synced' } : o));
       onSuccess(savedOrder);
       broadcastDataChange();
     } catch (e: any) {
@@ -663,8 +764,6 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
       let errMsg = e instanceof Error ? e.message : String(e);
       
       // === 自動修復機制 (幽靈訂單 UPSERT) ===
-      // 如果後端說找不到訂單 (發生於本地建立失敗，但被使用者改了狀態後重試)
-      // 我們直接將它當作新的內容強制覆寫(UPSERT)回去！
       if (errMsg.includes('Order not found')) {
         try {
           console.log("Order not found on backend. Falling back to upsert (updateOrderContent)...");
@@ -672,7 +771,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
           const fallbackSavedOrder = await container.orderService.saveOrder('updateOrderContent', newOrder, products, undefined);
           setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, version: fallbackSavedOrder.version } : o));
           onSuccess(fallbackSavedOrder);
-          return; // 成功的話就結束，不要走到 onerror
+          return;
         } catch (fallbackErr: any) {
           console.error("Fallback UPSERT Failed:", fallbackErr);
           errMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
@@ -688,64 +787,23 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
     }
   };
 
-  // Initial Sync
-  useEffect(() => { 
-    if (isAuthenticated) { 
-      Promise.all([
-        localforage.getItem('nm_cache_customers'),
-        localforage.getItem('nm_cache_products'),
-        localforage.getItem('nm_cache_orders')
-      ]).then(([c, p, o]) => {
-        const hasCache = !!(c || p || o);
-        syncData(hasCache); 
-      });
-    } 
-  }, [isAuthenticated, syncData]);
-
-  // 🔔 Firebase Realtime Database 門鈴監聽器
-  useEffect(() => {
-    // 只有在登入成功後才開啟監聽
-    if (!isAuthenticated) return;
-
-    let unsubscribe = () => {};
-
-    try {
-      unsubscribe = listenToDataChange(() => {
-        if (isEditingRef && isEditingRef.current) {
-          console.log(`收到 Firebase 門鈴訊號，但使用者編輯中，暫緩同步...`);
-          return;
-        }
-        console.log(`🔔 收到 Firebase 門鈴訊號！準備背景同步...`);
-        syncData(true);
-      });
-    } catch (err) {
-      console.warn('門鈴連線中斷', err);
-    }
-
-    // 當使用者關閉網頁或登出時，拔除監聽器以節省資源
-    return () => {
-      unsubscribe();
-    };
-  }, [isAuthenticated, syncData]);
-
   return {
-    isAuthenticated, setIsAuthenticated,
-    apiEndpoint, setApiEndpoint,
+    isAuthenticated,
+    apiEndpoint,
     customers, setCustomers,
     products, setProducts,
     orders, setOrders,
     trips, setTrips,
-    isInitialLoading, setIsInitialLoading,
-    isBackgroundSyncing, setIsBackgroundSyncing,
-    isSaving, setIsSaving,
     conflictData, setConflictData,
-    syncData,
+    isInitialLoading,
+    isBackgroundSyncing,
+    isSaving, setIsSaving,
     handleLogin,
-    handleLogout,
     handleChangePassword,
     handleSaveApiUrl,
     handleForceRetry,
-    saveOrderToCloud,
-    saveTripsToCloud
+    syncData,
+    saveTripsToCloud,
+    saveOrderToCloud
   };
 };

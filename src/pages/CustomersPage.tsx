@@ -102,7 +102,7 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
   }, [orders, todayDate]);
 
   const filteredCustomers = useMemo(() => {
-    let result = customers;
+    let result = customers.filter(c => !c.isArchived);
     if (customerSearch) {
       const q = customerSearch.toLowerCase();
       result = result.filter(c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q)));

@@ -7,6 +7,7 @@ export interface IOrderRepository {
   updateOrderContent(order: Partial<Order>, version?: number): Promise<Order>;
   updateOrderStatus(order: Partial<Order>, version?: number): Promise<Order>;
   deleteOrder(id: string, version?: number): Promise<boolean>;
+  batchUpdateOrders(orders: Partial<Order>[]): Promise<Order[]>;
 }
 
 export class OrderRepository implements IOrderRepository {
@@ -34,5 +35,11 @@ export class OrderRepository implements IOrderRepository {
     const payload = { id, version };
     await this.apiClient.post<any, any>('deleteOrder', payload);
     return true;
+  }
+
+  async batchUpdateOrders(orders: Partial<Order>[]): Promise<Order[]> {
+    const payload = { orders };
+    const response = await this.apiClient.post<{ orders: Partial<Order>[] }, { updatedOrders: Order[] }>('batchSaveOrders', payload);
+    return response.updatedOrders;
   }
 }

@@ -47,7 +47,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setCustomerForm(initialData || {
-        name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular', autoOrderEnabled: false, isPaused: false
+        name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular', autoOrderEnabled: false, isPaused: false, isArchived: false
       });
       setTempPriceProdId('');
       setTempPriceValue('');
@@ -256,6 +256,24 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                       className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${customerForm.isPaused ? 'bg-rose-500' : 'bg-slate-200'}`}
                     >
                       <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${customerForm.isPaused ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-100 p-4 rounded-2xl flex items-center justify-between border border-slate-200 mb-3">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-slate-700 tracking-tight flex items-center gap-2">
+                        🗑️ 永久停業 (封存)
+                      </h3>
+                      <p className="text-xs text-slate-500 font-bold mt-1">
+                        開啟後，該客戶將從客戶列表與建單選單中徹底隱藏。歷史帳單與紀錄仍會保留。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerForm({ ...customerForm, isArchived: !customerForm.isArchived })}
+                      className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${customerForm.isArchived ? 'bg-slate-700' : 'bg-slate-300'}`}
+                    >
+                      <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${customerForm.isArchived ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
                   </div>
 
