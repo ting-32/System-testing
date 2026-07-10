@@ -46,7 +46,7 @@ interface GlobalModalsProps {
   setLayoutMode?: (mode: 'auto' | 'standard' | 'compact') => void;
   apiEndpoint?: string;
   layoutMode?: 'auto' | 'standard' | 'compact';
-  syncData?: (isSilent?: boolean, forceRefresh?: boolean) => void;
+  syncData?: () => void;
   handleChangePassword?: (a: string, b: string) => void;
   handleSaveApiUrl?: (url: string) => void;
   handleForceRetry?: () => void;
@@ -164,7 +164,7 @@ export function GlobalModals(props: GlobalModalsProps) {
     }, 1000);
   };
 
-  const syncData = props.syncData || ((isSilent?: boolean, forceRefresh?: boolean) => { /* TODO: Hook to useDataSync */ });
+  const syncData = props.syncData || (() => { /* TODO: Hook to useDataSync */ });
   const handleChangePassword = props.handleChangePassword || ((oldP, newP) => { /* TODO */ });
   const handleSaveApiUrl = props.handleSaveApiUrl || ((url) => { /* TODO */ });
   const handleForceRetry = props.handleForceRetry || (() => { /* TODO */ });

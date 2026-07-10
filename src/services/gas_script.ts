@@ -126,10 +126,6 @@ function doPost(e) {
       case "updateOrderStatus":
         result = updateOrderStatus(params.data);
         break;
-      case "batchSaveOrders":
-        result = batchSaveOrders(params.data);
-        writeSystemLog("BATCH_SAVE_ORDERS", "批次更新訂單", JSON.stringify({ updatedCount: (params.data.orders || []).length }));
-        break;
       case "batchUpdateOrders":
         result = batchUpdateOrders(params.data);
         break;
@@ -157,32 +153,17 @@ function doPost(e) {
         if (!custSheet) {
           return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到工作表" })).setMimeType(ContentService.MimeType.JSON);
         }
-        var targetId = String(params.data.id).trim();
-        var values = custSheet.getDataRange().getValues();
-        var lastRow = values.length;
-        var totalCols = values[0] ? values[0].length : 0;
-        
+        var targetId = params.data.id;
+        var sheetData = custSheet.getDataRange().getValues();
         var deleted = false;
-        var newRows = [];
-        
-        if (lastRow > 1) {
-          for (var i = 1; i < values.length; i++) {
-            if (String(values[i][0]).trim() === targetId || String(values[i][1]).trim() === targetId) {
-              deleted = true; // In-memory deletion (skip pushing to newRows)
-            } else {
-              newRows.push(values[i].slice(0, totalCols));
-            }
+        for (var i = 1; i < sheetData.length; i++) {
+          if (String(sheetData[i][0]) === String(targetId)) {
+            custSheet.deleteRow(i + 1);
+            deleted = true;
+            break;
           }
         }
-        
         if (deleted) {
-          if (lastRow > 1) {
-            custSheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-          }
-          if (newRows.length > 0) {
-            safeSetValues(custSheet, 2, 1, newRows);
-          }
-          
           try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
           writeSystemLog("DELETE_CUSTOMER", "Customer ID: " + (targetId || "未知"), JSON.stringify({
             deletedId: targetId,
@@ -456,32 +437,9 @@ function getSheetData(sheet) {
   return data;
 }
 
-// 尋找「真正有資料」的最後一列，過濾掉純空白、零寬字元或不可見字元的幽靈列
-function getTrueLastRow(sheet, requiredColIndex) {
-  const maxRows = sheet.getLastRow(); 
-  if (maxRows <= 1) return maxRows;
-  
-  // 一次性讀取該必填欄位的所有資料
-  const colData = sheet.getRange(1, requiredColIndex, maxRows, 1).getValues();
-  
-  // 從陣列最底部往回找，只要找到有值的，就是真實的 bottom
-  for (let i = colData.length - 1; i >= 0; i--) {
-    let val = String(colData[i][0]).replace(/[\s\uFEFF\xA0\u200B\r\n\t]/g, '');
-    if (val !== "") {
-      return i + 1; // 陣列 index 轉回 Google Sheets 列號 (1-based)
-    }
-  }
-  return 1; // 找不到任何資料，代表只有標題列
-}
-
 // 新增這個局部讀取函式
 function getRecentSheetData(sheet, limit) {
-  // 自動判斷必填欄位：ORDERS 表的 ID 在第 2 欄，其他表預設看第 1 欄
-  const sheetName = sheet.getName();
-  const checkColIdx = (sheetName === "ORDERS" || sheetName === "Orders") ? 2 : 1;
-  
-  // 攔截幽靈列！
-  const lastRow = getTrueLastRow(sheet, checkColIdx);
+  const lastRow = sheet.getLastRow();
   const lastColumn = sheet.getLastColumn();
   
   if (lastRow <= 1) return []; // 只有標題或空表
@@ -664,16 +622,7 @@ function getData(startDateStr, since = 0) {
   if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || 'Asia/Taipei';
   
   let orders = ordersRaw.map(o => {
-    // 建立一個忽略大小寫與空白的輔助函式來抓取欄位值 (防禦試算表欄位被誤加空白)
-    const getV = (keys) => {
-      for (let k in o) {
-        let cleanK = k.replace(/[\s\r\n]/g, '').toLowerCase();
-        if (keys.includes(cleanK)) return o[k];
-      }
-      return undefined;
-    };
-
-    let rawDate = getV(["deliverydate", "配送日期"]);
+    let rawDate = o.DeliveryDate || o.deliveryDate || o.配送日期;
     let finalDateStr = '';
     
     if (rawDate instanceof Date) {
@@ -687,22 +636,22 @@ function getData(startDateStr, since = 0) {
     }
 
     return {
-      id: getV(["id", "orderid", "訂單id", "訂單編號"]),
-      createdAt: getV(["createdat", "建立時間", "timestamp"]),
-      customerName: getV(["customername", "客戶名", "客戶名稱", "客戶"]),
+      id: o.ID || o.id || o["Order ID"] || o.訂單ID,
+      createdAt: o.CreatedAt || o.createdAt || o.建立時間,
+      customerName: o.CustomerName || o.customerName || o.客戶名,
       deliveryDate: finalDateStr,
-      deliveryTime: getV(["deliverytime", "配送時間"]),
-      productName: getV(["productname", "品項", "品項名", "產品"]),
-      quantity: getV(["quantity", "數量"]),
-      unit: getV(["unit", "單位"]),
-      note: getV(["note", "備註"]),
-      status: String(getV(["status", "狀態"]) || '').trim(),
-      deliveryMethod: getV(["deliverymethod", "配送方式"]),
-      source: getV(["source", "資料來源"]) || '',
-      unitPrice: Number(getV(["unitprice", "單價"])) || undefined,
-      subtotal: Number(getV(["subtotal", "小計"])) || undefined,
-      lastUpdated: parseLastUpdated(getV(["lastupdated", "更新時間"])),
-      trip: getV(["trip", "趟次"]) || ''
+      deliveryTime: o.DeliveryTime || o.deliveryTime || o.配送時間,
+      productName: o.ProductName || o.productName || o.品項,
+      quantity: o.Quantity || o.quantity || o.數量,
+      unit: o.Unit || o.unit || o.單位,
+      note: o.Note || o.note || o.備註,
+      status: String(o.Status || o.status || o.狀態 || '').trim(),
+      deliveryMethod: o.DeliveryMethod || o.deliveryMethod || o.配送方式,
+      source: o.Source || o.source || o.資料來源 || '',
+      unitPrice: Number(o.UnitPrice || o.unitPrice || o.單價) || undefined,
+      subtotal: Number(o.Subtotal || o.subtotal || o.小計) || undefined,
+      lastUpdated: parseLastUpdated(o.LastUpdated),
+      trip: o.Trip || o.trip || o.趟次 || ''
     };
   });
 
@@ -1337,208 +1286,46 @@ function updateOrderStatus(data) {
   }
 }
 
-function batchSaveOrders(data) {
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(15000);
-    const sheet = getSheets().ORDERS;
-    
-    const headers = sheet.getRange(1, 1, 1, sheet.getMaxColumns()).getValues()[0];
-    const headerMap = {};
-    headers.forEach((h, i) => { if (h) headerMap[String(h).trim()] = i; });
-    
-    const requiredHeaders = ["LastUpdated", "Version", "Trip", "資料來源", "單價", "小計"];
-    let needsInsert = false;
-    requiredHeaders.forEach(req => {
-      if (headerMap[req] === undefined) {
-         headerMap[req] = headers.length;
-         headers.push(req);
-         needsInsert = true;
-      }
-    });
-
-    if (needsInsert) {
-      if (sheet.getMaxColumns() < headers.length) {
-         sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
-      }
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    }
-    
-    const lastUpdatedColIdx = headerMap["LastUpdated"];
-    const versionColIdx = headerMap["Version"];
-    const totalCols = headers.length;
-    const values = sheet.getDataRange().getValues();
-    const lastRow = values.length;
-    
-    const ordersBatch = data.orders || [];
-    const orderMap = new Map();
-    ordersBatch.forEach(o => orderMap.set(String(o.id).trim(), o));
-    
-    const originalCreatedAtMap = new Map();
-    const versionMap = new Map();
-    const newLastUpdatedTs = String(new Date().getTime());
-    let cachedTimeZone = null;
-
-    // First pass: extract original creation time and versions for validation
-    if (lastRow > 1) {
-      for (let i = 1; i < values.length; i++) {
-        const rowId = String(values[i][1]).trim();
-        if (orderMap.has(rowId)) {
-          const orderData = orderMap.get(rowId);
-          const sheetVersion = values[i][versionColIdx];
-          
-          if (!versionMap.has(rowId)) {
-            versionMap.set(rowId, Number(sheetVersion || 0));
-            // strict version check
-            if (!orderData.force && orderData.version !== undefined) {
-               checkOrderVersionStrict(sheetVersion, orderData.version);
-            }
-          }
-          
-          if (!originalCreatedAtMap.has(rowId)) {
-             originalCreatedAtMap.set(rowId, values[i][0]);
-          }
-        }
-      }
-    }
-
-    const newRows = [];
-    // Keep rows that are NOT in the batch
-    if (lastRow > 1) {
-      for (let i = 1; i < values.length; i++) {
-        const rowId = String(values[i][1]).trim();
-        if (!orderMap.has(rowId)) {
-          const r = values[i].slice();
-          while (r.length < totalCols) r.push("");
-          newRows.push(r.slice(0, totalCols));
-        }
-      }
-    }
-
-    const updatedOrders = [];
-
-    // Append new rows for all orders in the batch
-    ordersBatch.forEach(orderData => {
-      const rowId = String(orderData.id).trim();
-      let originalCreatedAt = originalCreatedAtMap.get(rowId) || "";
-      let timestamp = originalCreatedAt;
-      if (timestamp instanceof Date) {
-        if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
-        timestamp = Utilities.formatDate(timestamp, cachedTimeZone, "yyyy/MM/dd HH:mm:ss");
-      }
-      if (!timestamp) {
-        if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
-        timestamp = Utilities.formatDate(new Date(), cachedTimeZone, "yyyy/MM/dd HH:mm:ss");
-      }
-
-      const currentVersion = versionMap.get(rowId) || 0;
-      const newVersion = currentVersion + 1;
-
-      if (orderData.items && Array.isArray(orderData.items)) {
-        orderData.items.forEach(item => {
-          const row = new Array(totalCols).fill("");
-          row[0] = timestamp;
-          row[1] = orderData.id;
-          row[2] = orderData.customerName;
-          row[3] = orderData.deliveryDate;
-          row[4] = orderData.deliveryTime || "";
-          row[5] = item.productName || item.productId;
-          row[6] = item.quantity;
-          row[7] = orderData.note || "";
-          row[8] = orderData.status || "PENDING";
-          row[9] = orderData.deliveryMethod || "";
-          row[10] = item.unit || "斤";
-          
-          row[lastUpdatedColIdx] = newLastUpdatedTs;
-          if (headerMap["Trip"]) row[headerMap["Trip"]] = orderData.trip || "";
-          if (headerMap["資料來源"]) row[headerMap["資料來源"]] = orderData.source || "";
-          if (headerMap["單價"]) row[headerMap["單價"]] = item.unitPrice !== undefined ? item.unitPrice : (orderData.unitPrice !== undefined ? orderData.unitPrice : "");
-          if (headerMap["小計"]) row[headerMap["小計"]] = item.subtotal !== undefined ? item.subtotal : (orderData.subtotal !== undefined ? orderData.subtotal : "");
-          row[versionColIdx] = newVersion;
-          
-          newRows.push(row);
-        });
-      }
-
-      // Return light-weight result for this order to frontend
-      updatedOrders.push({
-        id: orderData.id,
-        version: newVersion,
-        lastUpdated: newLastUpdatedTs
-      });
-    });
-
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-    }
-    
-    if (newRows.length > 0) {
-      safeSetValues(sheet, 2, 1, newRows);
-    }
-    
-    return { updatedOrders };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
 function batchUpdateOrders(data) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
     const sheet = getSheets().ORDERS;
-    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version", "Status"]);
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version"]);
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
-    const statusColIdx = headerMap["Status"];
-    const totalCols = sheet.getMaxColumns();
     const values = sheet.getDataRange().getValues();
-    const lastRow = values.length;
-    
-    const updates = data.updates || []; // Array of { id: string, status: string, version: number }
+    const updates = data.updates; // Array of { id: string, status: string, version: number }
     const newLastUpdatedTs = String(new Date().getTime());
     let updatedCount = 0;
     
-    // 步驟 2：利用 Map 建立高速查找表
+    // Create a map for fast lookup
     const updateMap = new Map();
     updates.forEach(u => updateMap.set(String(u.id).trim(), u));
 
-    // 步驟 3 & 4：在記憶體中過濾舊資料並套用更新
-    const newRows = [];
-    if (lastRow > 1) {
-      for (let i = 1; i < values.length; i++) {
-        const rowId = String(values[i][1]).trim();
-        const r = values[i].slice();
-        while (r.length < totalCols) r.push("");
+    let rowsToUpdate = [];
 
-        if (!updateMap.has(rowId)) {
-          // 沒被修改的舊訂單，原封不動保留
-          newRows.push(r.slice(0, totalCols));
-        } else {
-          // 需要更新的資料，在記憶體中直接修改後 push
-          const updateData = updateMap.get(rowId);
-          const currentVersion = r[versionColIdx];
-          
-          if (!updateData.force && updateData.version !== undefined) {
-             checkOrderVersionStrict(currentVersion, updateData.version);
-          }
-          
-          r[statusColIdx !== undefined ? statusColIdx : 8] = updateData.status;
-          r[lastUpdatedColIdx] = newLastUpdatedTs;
-          r[versionColIdx] = Number(currentVersion || 0) + 1;
-          
-          newRows.push(r.slice(0, totalCols));
-          updatedCount++;
+    for (let i = 1; i < values.length; i++) {
+      const rowId = String(values[i][1]).trim();
+      if (updateMap.has(rowId)) {
+        const updateData = updateMap.get(rowId);
+        const currentVersion = values[i][versionColIdx];
+        
+        if (!updateData.force && updateData.version !== undefined) {
+           checkOrderVersionStrict(currentVersion, updateData.version);
         }
+        
+        const newVersion = Number(currentVersion || 0) + 1;
+        values[i][8] = updateData.status; // Status column (index 8 is col 9)
+        values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+        values[i][versionColIdx] = newVersion;
+        rowsToUpdate.push(i + 1);
+        updatedCount++;
       }
     }
-
-    // 步驟 5：一次性寫回整張表
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-    }
-    if (newRows.length > 0) {
-      safeSetValues(sheet, 2, 1, newRows);
+    
+    if (rowsToUpdate.length > 0) {
+      safeSetValues(sheet, 2, 1, values.slice(1));
     }
     
     return { updatedCount, newLastUpdatedTs };
@@ -1548,52 +1335,27 @@ function batchUpdateOrders(data) {
 }
 
 function batchUpdatePaymentStatus(data) {
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(15000);
-    const sheet = getSheets().ORDERS;
-    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Status"]);
-    const lastUpdatedColIdx = headerMap["LastUpdated"];
-    const statusColIdx = headerMap["Status"];
-    const totalCols = sheet.getMaxColumns();
-    const values = sheet.getDataRange().getValues();
-    const lastRow = values.length;
-    
-    const orderIds = new Set((data.orderIds || []).map(id => String(id).trim()));
-    const newLastUpdatedTs = String(new Date().getTime());
-    
-    const newRows = [];
-    let modified = false;
-
-    if (lastRow > 1) {
-      for (let i = 1; i < values.length; i++) {
-        const rowId = String(values[i][1]).trim();
-        const r = values[i].slice();
-        while (r.length < totalCols) r.push("");
-
-        if (!orderIds.has(rowId)) {
-          newRows.push(r.slice(0, totalCols));
-        } else {
-          r[statusColIdx !== undefined ? statusColIdx : 8] = data.newStatus;
-          r[lastUpdatedColIdx] = newLastUpdatedTs;
-          newRows.push(r.slice(0, totalCols));
-          modified = true;
-        }
-      }
+  const sheet = getSheets().ORDERS;
+  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
+  const lastUpdatedColIdx = headerMap["LastUpdated"];
+  const values = sheet.getDataRange().getValues();
+  const orderIds = new Set(data.orderIds.map(id => String(id).trim()));
+  const newLastUpdatedTs = String(new Date().getTime());
+  
+  let modified = false;
+  for (let i = 1; i < values.length; i++) {
+    const id = String(values[i][1]).trim();
+    if (orderIds.has(id)) {
+      values[i][8] = data.newStatus; // Status column (index 8 is col 9)
+      values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+      modified = true;
     }
-
-    if (modified) {
-      if (lastRow > 1) {
-        sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-      }
-      if (newRows.length > 0) {
-        safeSetValues(sheet, 2, 1, newRows);
-      }
-    }
-    return true;
-  } finally {
-    lock.releaseLock();
   }
+
+  if (modified && values.length > 1) {
+    safeSetValues(sheet, 2, 1, values.slice(1));
+  }
+  return true;
 }
 
 function deleteOrder(data) {
@@ -1856,39 +1618,20 @@ function deleteProduct(data) {
   const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
   const lastUpdatedColIdx = headerMap["LastUpdated"];
   const values = sheet.getDataRange().getValues();
-  const lastRow = values.length;
-  const totalCols = sheet.getMaxColumns();
   const targetId = String(data.id).trim();
   
-  let deleted = false;
-  const newRows = [];
-  
-  if (lastRow > 1) {
-    for (let i = 1; i < values.length; i++) {
-      if (String(values[i][0]).trim() === targetId) {
-        if (data.originalLastUpdated !== undefined && !data.force) {
-           checkVersionConflict(values[i][lastUpdatedColIdx], data.originalLastUpdated);
-        }
-        deleted = true; // Skip pushing to newRows (In-memory deletion)
-      } else {
-        const r = values[i].slice();
-        while (r.length < totalCols) r.push("");
-        newRows.push(r.slice(0, totalCols));
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][0]).trim() === targetId) {
+      if (data.originalLastUpdated !== undefined && !data.force) {
+         checkVersionConflict(values[i][lastUpdatedColIdx], data.originalLastUpdated);
       }
+      sheet.deleteRow(i + 1);
+      return true;
     }
-  }
-  
-  if (deleted) {
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, totalCols).clearContent();
-    }
-    if (newRows.length > 0) {
-      safeSetValues(sheet, 2, 1, newRows);
-    }
-    return true;
   }
   return false;
 }
+
 function safeJsonArray(val) {
   if (!val) return [];
   if (typeof val === 'string') {

@@ -107,28 +107,25 @@ export class DataMapper {
     const orderMap: { [key: string]: Order } = {}; 
     rawOrders.forEach((o: any, index: number) => { 
       let oid = o.訂單ID || o.id; 
-      const rawDate = o.配送日期 || o.deliveryDate; 
-      const normalizedDate = normalizeDate(rawDate); 
-
       if (!oid || String(oid).trim() === '') {
         const custName = String(o.客戶名 || o.customerName || '未知客戶').trim().replace(/[\r\n]/g, '');
+        const date = o.配送日期 || o.deliveryDate || 'nodate';
         const time = o.配送時間 || o.deliveryTime || 'notime';
-        oid = `fallback_${custName}_${normalizedDate}_${time}`;
+        oid = `fallback_${custName}_${date}_${time}`;
       } else {
-        oid = String(oid).trim();
+        oid = String(oid);
       }
 
-      // 用 ID + 日期 作為唯一鍵，避免不同天的同 ID 訂單被錯誤合併
-      const uniqueOrderKey = `${oid}_${normalizedDate}`;
-
-      if (!orderMap[uniqueOrderKey]) { 
+      if (!orderMap[oid]) { 
+        const rawDate = o.配送日期 || o.deliveryDate; 
+        const normalizedDate = normalizeDate(rawDate); 
         const statusRaw = String(o.狀態 || o.status || '').trim().toUpperCase();
         let mappedStatus = OrderStatus.PENDING;
         if (['SHIPPED', '已出貨'].includes(statusRaw)) mappedStatus = OrderStatus.SHIPPED;
         else if (['PAID', '已收款'].includes(statusRaw)) mappedStatus = OrderStatus.PAID;
         else if (['CANCELLED', '已取消', '取消', 'DELETED'].includes(statusRaw)) mappedStatus = OrderStatus.CANCELLED;
 
-        orderMap[uniqueOrderKey] = { 
+        orderMap[oid] = { 
           id: oid, 
           createdAt: o.建立時間 || o.createdAt, 
           customerName: String(o.客戶名 || o.customerName || '未知客戶').trim().replace(/[\r\n]/g, ''), 
@@ -147,7 +144,7 @@ export class DataMapper {
       } 
       
       if (o.品項名 || o.productName || o.productId) { 
-        orderMap[uniqueOrderKey].items.push({ 
+        orderMap[oid].items.push({ 
           productId: String(o.產品ID || o.productId || o.品項名 || o.productName || '').trim().replace(/[\r\n]/g, ''), 
           productName: String(o.品項名 || o.productName || '').trim().replace(/[\r\n]/g, ''), 
           quantity: safeNumber(o.數量 || o.quantity, 0, `Order ${oid} item ${o.productName} quantity`), 

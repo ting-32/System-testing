@@ -46,7 +46,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { Customer, Product, Order, OrderItem, CustomerPrice, Toast, ToastType, OrderStatus } from './types';
-import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES, APP_VERSION, DATA_SCHEMA_VERSION } from './constants';
+import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, PRODUCT_CATEGORIES, APP_VERSION } from './constants';
 import localforage from 'localforage';
 import { ToastNotification } from './components/ToastNotification';
 import { NavItem } from './components/NavItem';
@@ -96,31 +96,23 @@ import { buttonTap, buttonHover, triggerHaptic, containerVariants, itemVariants 
 
 // --- 主要 App 組件 ---
 const App: React.FC = () => {
-  // Version & Schema Cache Busting
+  // Version Cache Busting
   useEffect(() => {
     const checkVersion = async () => {
-      // 1. 純 UI/功能更新檢查 (純記錄，不強制清快取)
       const localVersion = localStorage.getItem('nm_app_version');
       if (localVersion !== APP_VERSION) {
-        console.log(`App version updated from ${localVersion} to ${APP_VERSION}.`);
-        localStorage.setItem('nm_app_version', APP_VERSION);
-      }
-
-      // 2. 資料結構版本檢查 (如果有變動，執行精準清理)
-      const localSchema = localStorage.getItem('nm_schema_version');
-      if (localSchema !== DATA_SCHEMA_VERSION) {
-        console.log(`Schema changed from ${localSchema} to ${DATA_SCHEMA_VERSION}. Purging old data...`);
+        console.log(`Version changed from ${localVersion} to ${APP_VERSION}. Clearing cache...`);
         
-        // 1. 清空 IndexedDB 的龐大業務資料 (訂單、客戶等)
+        // 保留重要的連線設定，清空其餘狀態
+        const gasUrl = localStorage.getItem('nm_gas_url');
         await localforage.clear();
+        localStorage.clear();
         
-        // 2. 精準移除「同步時間戳」，讓稍後系統初始化時認為是「第一次開啟」，強制去 GAS 抓全量最新資料
-        localStorage.removeItem('nm_last_sync_ts');
-        localStorage.removeItem('nm_force_full_sync_7');
-        // ❌ 絕對不要清掉 APP_SESSION_TOKEN、nm_auth_status 或 LINE ID、nm_gas_url
+        // 把重要的存回去
+        if (gasUrl) localStorage.setItem('nm_gas_url', gasUrl);
+        localStorage.setItem('nm_app_version', APP_VERSION);
         
-        // 3. 更新版號，重整畫面
-        localStorage.setItem('nm_schema_version', DATA_SCHEMA_VERSION);
+        // 強制重整畫面，確保載入全新狀態
         window.location.reload();
       }
     };

@@ -22,7 +22,7 @@ const SettingsRow: React.FC<{ icon: any, label: string, onClick: () => void }> =
 
 export const SettingsModal: React.FC<{ 
   onClose: () => void; 
-  onSync: (isSilent?: boolean, forceRefresh?: boolean) => void; 
+  onSync: () => void; 
   onSavePassword: (oldPwd: string, newPwd: string) => Promise<boolean>; 
   currentUrl: string; 
   onSaveUrl: (newUrl: string) => void;
@@ -147,23 +147,8 @@ export const SettingsModal: React.FC<{
 
                 {/* Single-action buttons */}
                 <div className="space-y-3 pt-4 border-t border-slate-100">
-                  <motion.button 
-                    whileTap={buttonTap} 
-                    onClick={(e) => {
-                      e.preventDefault();
-                      onSync(false, false); 
-                      onClose(); 
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      if (window.confirm('是否要執行【全量強制同步】？\n這會清除本地快取並重新下載所有資料。')) {
-                         onSync(false, true);
-                         onClose();
-                      }
-                    }}
-                    className="w-full py-4 rounded-[16px] bg-slate-600 text-white font-bold flex items-center justify-center gap-2 shadow-lg tracking-wide select-none"
-                  >
-                    <RefreshCw className="w-5 h-5" /> 強制同步雲端資料 (長按重置)
+                  <motion.button whileTap={buttonTap} onClick={() => { onSync(); onClose(); }} className="w-full py-4 rounded-[16px] bg-slate-600 text-white font-bold flex items-center justify-center gap-2 shadow-lg tracking-wide">
+                    <RefreshCw className="w-5 h-5" /> 強制同步雲端資料
                   </motion.button>
                   
                   <button

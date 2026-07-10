@@ -1,7 +1,6 @@
 
 // App Version Configuration
-export const APP_VERSION = '1.1.1'; // 僅 UI/功能更新，不會清快取，純顯示用
-export const DATA_SCHEMA_VERSION = 'v2'; // 🚨 只有當修改 Mapper、資料庫欄位、或修復重大資料 Bug 時才去推進它
+export const APP_VERSION = '1.1.0';
 
 export const COLORS = {
   bg: '#F2F0E9',       // Oatmeal (bg-main)
