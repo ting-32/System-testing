@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Calendar, FileText, Building2, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Printer, Calendar, FileText, Building2 } from 'lucide-react';
 import { Customer, Order, Product, OrderStatus } from '../types';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -33,8 +33,11 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
     return new Date().getFullYear().toString();
   });
 
-  const [isDailyRulesOpen, setIsDailyRulesOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'invoice' | 'analytics'>('invoice');
+
+  const [activeDate, setActiveDate] = useState<string>('');
+  const dateDOMRefs = useRef(new Map<string, HTMLDivElement>());
+  const isScrollingRef = useRef(false);
 
   const customer = customers.find(c => c.name === customerName);
 
@@ -48,6 +51,97 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
       o.status !== 'CANCELLED' && o.status !== OrderStatus.CANCELLED
     ).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
   }, [orders, customerName, reportMonth, reportYear, reportType]);
+
+  const ordersByDate = useMemo(() => {
+    const map: Record<string, Order[]> = {};
+    reportOrders.forEach(o => {
+      const d = o.deliveryDate;
+      if(!map[d]) map[d] = [];
+      map[d].push(o);
+    });
+    return map;
+  }, [reportOrders]);
+
+  const daysInReport = useMemo(() => {
+    if (reportType === 'month') {
+      const [yearStr, monthStr] = reportMonth.split('-');
+      const days = new Date(parseInt(yearStr), parseInt(monthStr), 0).getDate();
+      const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
+      return Array.from({ length: days }, (_, i) => {
+        const date = new Date(parseInt(yearStr), parseInt(monthStr) - 1, i + 1);
+        const dateString = `${yearStr}-${monthStr}-${String(i + 1).padStart(2, '0')}`;
+        return {
+          dateString,
+          dayNum: i + 1,
+          weekDay: shortDays[date.getDay()],
+          month: parseInt(monthStr)
+        };
+      });
+    } else {
+      const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
+      return Object.keys(ordersByDate).sort().map(dateString => {
+        const date = new Date(dateString);
+        return {
+          dateString,
+          dayNum: date.getDate(),
+          weekDay: shortDays[date.getDay()],
+          month: date.getMonth() + 1
+        };
+      });
+    }
+  }, [reportType, reportMonth, ordersByDate]);
+
+  const scrollToDate = (dateStr: string) => {
+    setActiveDate(dateStr);
+    isScrollingRef.current = true;
+    
+    const element = dateDOMRefs.current.get(dateStr);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    const btn = document.getElementById(`cal-btn-${dateStr}`);
+    if (btn) {
+        btn.scrollIntoView({ inline: 'center', behavior: 'smooth', block: 'nearest' });
+    }
+
+    setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 800); 
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'invoice' || Object.keys(ordersByDate).length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && !isScrollingRef.current) {
+            const dateStr = entry.target.id.replace('date-', '');
+            setActiveDate(dateStr);
+            
+            const btn = document.getElementById(`cal-btn-${dateStr}`);
+            if (btn) {
+               btn.scrollIntoView({ inline: 'center', behavior: 'smooth', block: 'nearest' });
+            }
+          }
+        });
+      },
+      { 
+        root: null,
+        rootMargin: '-20% 0px -70% 0px', 
+        threshold: 0 
+      }
+    );
+
+    dateDOMRefs.current.forEach((el) => {
+        if (el) observer.observe(el);
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [reportOrders, activeTab, ordersByDate]);
 
   const aggregatedItems = useMemo(() => {
     const itemMap = new Map<string, any>();
@@ -635,80 +729,134 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
                      {/* 1. 插入匯總表 */}
                      <ReportAggregatedTable items={aggregatedItems} />
 
-                 {/* 2. 每日出貨流水帳 (折疊設計) */}
-                 <div className="mt-4 border border-slate-100 rounded-2xl overflow-hidden bg-white shadow-sm print:border-none print:shadow-none print:mt-8">
-                    <button 
-                      onClick={() => setIsDailyRulesOpen(!isDailyRulesOpen)}
-                      className="w-full flex justify-between items-center bg-slate-50 p-4 hover:bg-slate-100 transition-colors print:hidden"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full"></span>
-                        <span className="font-bold text-slate-700">查閱每日出貨流水帳</span>
-                      </div>
-                      {isDailyRulesOpen ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-                    </button>
-                    
-                    <div className={`print:block ${isDailyRulesOpen ? 'block' : 'hidden print:block'}`}>
-                      <div className="overflow-x-auto print:overflow-visible">
-                          <table className="w-full text-left text-sm">
-                            <thead className="bg-gray-50 text-gray-500 font-bold text-[11px] uppercase tracking-wider print:bg-transparent print:border-b-2 print:border-gray-800 print:text-gray-800">
-                              <tr>
-                                <th className="px-4 py-3">日期 / 時間</th>
-                                <th className="px-4 py-3">品項明細</th>
-                                <th className="px-4 py-3">配送</th>
-                                <th className="px-4 py-3 text-right">訂單總價</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-50 print:divide-gray-200">
-                              {reportOrders.map(order => {
-                                const orderTotal = order.items.reduce((sum, item) => {
-                                  const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
-                                  const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
-                                  const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
-                                  return sum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
-                                }, 0);
+                 {/* 2. 每日出貨流水帳 (瀑布流 + 迷你月曆) */}
+                 <div className="mt-8 border-t border-slate-100 pt-8 print:border-none print:mt-8">
+                   <h3 className="text-xl font-black text-slate-800 mb-6 print:hidden">每日出貨流水帳</h3>
+                   
+                   {/* Mini Calendar Header */}
+                   <div className="sticky top-[60px] z-30 bg-white/95 backdrop-blur-md border-y border-slate-100 py-3 mb-8 overflow-x-auto snap-x print:hidden -mx-4 sm:-mx-8 px-4 sm:px-8 shadow-sm [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                     <div className="flex gap-2 min-w-max">
+                       {daysInReport.map((day) => {
+                         const dateStr = day.dateString;
+                         const hasOrder = !!ordersByDate[dateStr];
+                         const isActive = activeDate === dateStr;
 
-                                return (
-                                  <tr key={order.id} className="hover:bg-slate-50/50 transition-colors print:hover:bg-transparent">
-                                    <td className="px-4 py-3 align-top">
-                                      <div className="font-bold text-slate-700">{order.deliveryDate.substring(5).replace('-', '/')}</div>
-                                      <div className="text-[10px] text-gray-400 mt-0.5 print:hidden">{formatTimeDisplay(order.deliveryTime)}</div>
-                                    </td>
-                                    <td className="px-4 py-3 align-top min-w-[200px]">
-                                      {order.items.map((item, idx) => {
-                                        const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
-                                        const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
-                                        const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
-                                        const itemTotal = Math.round(item.quantity * unitPrice);
-                                        return (
-                                          <div key={idx} className="flex justify-between items-center text-xs mb-1">
-                                            <span className="font-bold text-slate-700">{item.productName || p?.name || '未知品項'}</span>
-                                            <div className="flex gap-4">
-                                              <span className="text-morandi-blue w-16 text-right font-medium print:text-slate-800">{item.quantity} {item.unit || p?.unit || '斤'}</span>
-                                              {item.unit !== '元' && (
-                                                <span className="text-gray-400 w-12 text-right">${itemTotal.toLocaleString()}</span>
-                                              )}
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                      {order.note && <div className="text-[10px] text-gray-400 mt-1 italic break-words line-clamp-2">{order.note}</div>}
-                                    </td>
-                                    <td className="px-4 py-3 align-top">
-                                      <span className="inline-block px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold">
-                                        {order.trip || customer?.defaultTrip || '未分配'}
-                                      </span>
-                                    </td>
-                                    <td className="px-4 py-3 align-top text-right font-black text-slate-800">
-                                      ${orderTotal.toLocaleString()}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                      </div>
-                    </div>
+                         return (
+                           <button
+                             key={dateStr}
+                             id={`cal-btn-${dateStr}`}
+                             onClick={() => scrollToDate(dateStr)}
+                             className={`relative flex flex-col items-center justify-center w-14 h-16 rounded-xl snap-center transition-all ${
+                               isActive ? 'text-white' : 'text-slate-600 hover:bg-slate-50'
+                             }`}
+                           >
+                             {isActive && (
+                                <motion.div layoutId="activeDate" className="absolute inset-0 bg-slate-800 rounded-xl -z-10" />
+                             )}
+                             
+                             <span className="text-[10px] opacity-80 font-medium">
+                               {reportType === 'year' ? `${day.month}/${day.dayNum}` : day.weekDay}
+                             </span>
+                             <span className="text-lg font-bold">{reportType === 'year' ? day.weekDay : day.dayNum}</span>
+                             
+                             {hasOrder && (
+                                <div className={`absolute bottom-1.5 w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-rose-500'}`} />
+                             )}
+                           </button>
+                         );
+                       })}
+                     </div>
+                   </div>
+
+                   {/* Waterfall List */}
+                   <div className="space-y-12 print:space-y-8">
+                     {Object.entries(ordersByDate).sort(([a], [b]) => a.localeCompare(b)).map(([dateStr, orders]) => {
+                       const dayOrders = orders as any[];
+                       const dayTotal = dayOrders.reduce((sum, order) => {
+                         return sum + order.items.reduce((itemSum, item) => {
+                           const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+                           const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
+                           const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+                           return itemSum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
+                         }, 0);
+                       }, 0);
+
+                       return (
+                         <div 
+                           key={dateStr}
+                           id={`date-${dateStr}`}
+                           ref={(el) => { if (el) dateDOMRefs.current.set(dateStr, el); }}
+                           className="scroll-mt-[160px] relative" 
+                         >
+                           {/* Date Header */}
+                           <div className="flex items-end justify-between border-b-2 border-slate-800 pb-2 mb-4">
+                             <h4 className="text-2xl font-black text-slate-800">{dateStr.replace(/-/g, '/')}</h4>
+                             <span className="text-sm font-bold text-slate-500">單日總計：<span className="text-lg text-slate-800 ml-1">${dayTotal.toLocaleString()}</span></span>
+                           </div>
+                           
+                           {/* Orders in this day */}
+                           <div className="space-y-4">
+                             {dayOrders.map((order: any) => {
+                               const orderTotal = order.items.reduce((sum, item) => {
+                                 const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+                                 const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
+                                 const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+                                 return sum + (item.unit === '元' ? item.quantity : Math.round(item.quantity * unitPrice));
+                               }, 0);
+
+                               return (
+                                 <div key={order.id} className="bg-slate-50 rounded-2xl p-4 sm:p-5 print:bg-transparent print:p-0 print:border-none print:rounded-none">
+                                   <div className="flex justify-between items-start mb-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-block px-2.5 py-1 bg-white border border-slate-200 text-slate-600 rounded-md text-[11px] font-black print:border-none print:px-0">
+                                          {order.trip || customer?.defaultTrip || '未分配'}
+                                        </span>
+                                        <span className="text-xs text-slate-400 font-medium print:hidden">
+                                          {formatTimeDisplay(order.deliveryTime)}
+                                        </span>
+                                      </div>
+                                      <div className="font-black text-slate-800 print:hidden">
+                                        ${orderTotal.toLocaleString()}
+                                      </div>
+                                   </div>
+                                   
+                                   <div className="space-y-2">
+                                     {order.items.map((item, idx) => {
+                                       const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
+                                       const priceItem = customer?.priceList?.find(pl => pl.productId === (p?.id || item.productId));
+                                       const unitPrice = priceItem ? priceItem.price : (p?.price || 0);
+                                       const itemTotal = Math.round(item.quantity * unitPrice);
+                                       return (
+                                         <div key={idx} className="flex justify-between items-center text-sm">
+                                           <span className="font-bold text-slate-700">{item.productName || p?.name || '未知品項'}</span>
+                                           <div className="flex gap-6 items-center">
+                                             <span className="text-morandi-blue font-bold print:text-slate-800 text-right w-20">
+                                               {item.quantity} {item.unit || p?.unit || '斤'}
+                                             </span>
+                                             {item.unit !== '元' && (
+                                               <span className="text-gray-400 font-medium text-right w-16">
+                                                 ${itemTotal.toLocaleString()}
+                                               </span>
+                                             )}
+                                           </div>
+                                         </div>
+                                       );
+                                     })}
+                                   </div>
+                                   
+                                   {order.note && (
+                                     <div className="mt-3 text-xs text-gray-500 bg-white p-2.5 rounded-lg border border-gray-100 italic print:bg-transparent print:border-none print:p-0 print:mt-1">
+                                       備註：{order.note}
+                                     </div>
+                                   )}
+                                 </div>
+                               );
+                             })}
+                           </div>
+                         </div>
+                       );
+                     })}
+                   </div>
                  </div>
                </div>
                </div>

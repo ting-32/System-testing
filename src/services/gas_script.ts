@@ -5,6 +5,17 @@ const SS = SpreadsheetApp.getActiveSpreadsheet();
 
 let cachedTimeZone = null;
 
+function safeFormatDate(sheetValue, format = "yyyy-MM-dd HH:mm:ss") {
+  if (!sheetValue) return '';
+  
+  if (sheetValue instanceof Date) {
+    const tz = (typeof SS !== 'undefined' && SS) ? SS.getSpreadsheetTimeZone() : "Asia/Taipei";
+    return Utilities.formatDate(sheetValue, tz, format);
+  }
+  
+  return String(sheetValue).trim();
+}
+
 // 👇 新增這個輔助函數：用來將試算表的 Date 物件格式化為乾淨的字串
 // Helper to ensure Config sheet exists and return it
 function getConfigSheet() {
@@ -846,8 +857,8 @@ function saveSettings(data) {
 }
 
 function testLineMessage(data) {
-  const channelToken = data.lineChannelToken;
-  const userIdStr = data.lineUserId;
+  const channelToken = String(data.lineChannelToken || '').trim();
+  const userIdStr = String(data.lineUserId || '').trim();
   
   if (!channelToken || !userIdStr) {
     throw new Error("Missing credentials for LINE API");
@@ -867,8 +878,8 @@ function testLineMessage(data) {
   try {
     const res = UrlFetchApp.fetch(endpoint, {
       method: "post",
+      contentType: "application/json",
       headers: { 
-        "Content-Type": "application/json",
         "Authorization": "Bearer " + channelToken 
       },
       payload: JSON.stringify({
@@ -922,7 +933,7 @@ function ensureHeadersBatch(sheet, requiredHeaders) {
 
   // 2. Memory Build：建立現有標題的 Hash Map，查詢複雜度 O(1)
   existingHeaders.forEach((header, index) => {
-    headerMap[header] = index;
+    if (header) headerMap[String(header).trim()] = index;
   });
 
   // 3. Memory Check：過濾出需要補上的標題
@@ -1246,7 +1257,7 @@ function updateOrderStatus(data) {
 
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
-    const statusColIdx = headerMap["Status"] || headerMap["狀態"] || 8; 
+    const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8); 
     
     const values = sheet.getDataRange().getValues();
     const targetId = String(data.id).trim();
@@ -1294,6 +1305,7 @@ function batchUpdateOrders(data) {
     const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version"]);
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
+    const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
     const values = sheet.getDataRange().getValues();
     const updates = data.updates; // Array of { id: string, status: string, version: number }
     const newLastUpdatedTs = String(new Date().getTime());
@@ -1316,7 +1328,7 @@ function batchUpdateOrders(data) {
         }
         
         const newVersion = Number(currentVersion || 0) + 1;
-        values[i][8] = updateData.status; // Status column (index 8 is col 9)
+        values[i][statusColIdx] = updateData.status;
         values[i][lastUpdatedColIdx] = newLastUpdatedTs;
         values[i][versionColIdx] = newVersion;
         rowsToUpdate.push(i + 1);
@@ -1338,6 +1350,7 @@ function batchUpdatePaymentStatus(data) {
   const sheet = getSheets().ORDERS;
   const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
   const lastUpdatedColIdx = headerMap["LastUpdated"];
+  const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
   const values = sheet.getDataRange().getValues();
   const orderIds = new Set(data.orderIds.map(id => String(id).trim()));
   const newLastUpdatedTs = String(new Date().getTime());
@@ -1346,7 +1359,7 @@ function batchUpdatePaymentStatus(data) {
   for (let i = 1; i < values.length; i++) {
     const id = String(values[i][1]).trim();
     if (orderIds.has(id)) {
-      values[i][8] = data.newStatus; // Status column (index 8 is col 9)
+      values[i][statusColIdx] = data.newStatus;
       values[i][lastUpdatedColIdx] = newLastUpdatedTs;
       modified = true;
     }
@@ -1370,7 +1383,7 @@ function deleteOrder(data) {
     const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version", "Status"]);
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
-    const statusColIdx = headerMap["Status"];
+    const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
     const totalCols = sheet.getMaxColumns();
     const values = sheet.getDataRange().getValues();
     const targetId = String(data.id).trim();
@@ -1641,11 +1654,17 @@ function safeJsonArray(val) {
 }
 
 function generateTomorrowDefaultOrders() {
+  const functionName = 'generateTomorrowDefaultOrders';
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(28000);
   } catch (err) {
-    console.error("排程伺服器忙碌中，放棄執行自動建單");
+    console.error("排程伺服器忙碌中，設定 15 分鐘後重試");
+    // 動態建立一個單次觸發器，15分鐘後再試一次
+    ScriptApp.newTrigger(functionName)
+      .timeBased()
+      .after(15 * 60 * 1000) 
+      .create();
     return;
   }
   
@@ -1676,26 +1695,58 @@ function generateTomorrowDefaultOrders() {
   // ==========================================
   // 👇 新增的第 1 段：建立防呆檢查名單 👇
   // ==========================================
-  const existingOrders = orderSheet.getDataRange().getValues();
+  const lastRow = orderSheet.getLastRow();
+  // 只抓最後 2000 筆，避免歷史資料拖垮效能
+  const checkRows = Math.max(0, Math.min(lastRow - 1, 2000)); 
+  const existingOrders = checkRows > 0 
+    ? orderSheet.getRange(lastRow - checkRows + 1, 1, checkRows, orderSheet.getMaxColumns()).getDisplayValues()
+    : [];
   const alreadyGeneratedCustomers = new Set();
   
-  // 從第 2 列開始迴圈 (跳過標題列)
-  for (let i = 1; i < existingOrders.length; i++) {
+  // Helper function to normalize time to HH:mm
+  const normalizeTimeStr = (t) => {
+    if (!t) return "00:00";
+    const s = String(t).trim();
+    const parts = s.split(":");
+    const h = parts[0] ? parts[0].padStart(2, "0") : "00";
+    const m = parts[1] ? parts[1].padStart(2, "0") : "00";
+    return `${h}:${m}`;
+  };
+
+  // 從第 1 列開始迴圈 (因為 getRange 已經跳過標題列，所以從 0 開始)
+  for (let i = 0; i < existingOrders.length; i++) {
     let rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
-    const rowCustomer = existingOrders[i][2]; // 第 3 欄 (Index 2) 是客戶名稱
+    const rowCustomer = String(existingOrders[i][2] || '').trim(); // 第 3 欄 (Index 2) 是客戶名稱
     
-    // 👇 新增這行：抓取該筆訂單的狀態
-    const rowStatus = String(existingOrders[i][statusColIdx] || '').trim().toUpperCase();
-    
-    // 【修改 1：統一型別】避免 Google Sheets 欄位為純 Date 物件，導致嚴格等於(===)比對失敗
-    if (rowDate instanceof Date) {
-      rowDate = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
+    // 抓出配送時間 (第 5 欄, Index 4)
+    let rowTime = existingOrders[i][4];
+    if (rowTime instanceof Date) {
+      rowTime = Utilities.formatDate(rowTime, timeZone, "HH:mm");
+    } else {
+      rowTime = normalizeTimeStr(rowTime);
     }
     
-    // 【修改 2：邏輯加強】只要明天 (targetDateStr) 已經有該客戶的訂單 (不論是手動建好的還是自動的)，
-    // 而且該訂單的狀態不是 DELETED，就將他記到「已建單名單」，接下來就不會再幫這間店新增訂單了。
-    if (rowDate === targetDateStr && rowStatus !== 'DELETED') {
-      alreadyGeneratedCustomers.add(rowCustomer); 
+    // 抓取該筆訂單的狀態
+    const rowStatus = String(existingOrders[i][statusColIdx] || '').trim().toUpperCase();
+    
+    // 避免 Google Sheets 欄位為純 Date 物件，並處理 getDisplayValues 帶來的非補零格式 (如 2024/8/5)
+    let rowDateStr = "";
+    if (rowDate instanceof Date) {
+      rowDateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
+    } else {
+      rowDateStr = String(rowDate || '').trim().replace(/\//g, "-");
+      const dateParts = rowDateStr.split('-');
+      if (dateParts.length === 3) {
+        rowDateStr = `${dateParts[0]}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`;
+      }
+    }
+    
+    // 只要明天 (targetDateStr) 已經有該客戶的訂單，而且狀態不是 DELETED
+    // 將「客戶名稱_時間」記到「已建單名單」，實現更精準的時段攔截
+    if (rowDateStr === targetDateStr && rowStatus !== 'DELETED') {
+      alreadyGeneratedCustomers.add(`${rowCustomer}_${rowTime}`); 
+      // 👇 新增這行：記錄該客戶當天已經有任何訂單 (全域標記)
+      alreadyGeneratedCustomers.add(`${rowCustomer}_ANY`); 
     }
   }
   // ==========================================
@@ -1723,9 +1774,10 @@ function generateTomorrowDefaultOrders() {
     price: Number(p.Price || p.price || p.預設單價 || p.單價) || 0
   }));
   
-  const productMap = {};
+  const globalProductMap = new Map();
   products.forEach(p => {
-    productMap[p.id] = p.name;
+    // 預先將商品名稱與預設價格打包存入，後續 O(1) 取出
+    globalProductMap.set(p.id, { name: p.name, price: p.price });
   });
   const newOrderRows = [];
   const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
@@ -1743,15 +1795,7 @@ function generateTomorrowDefaultOrders() {
     const isAutoEnabled = c.autoOrderEnabled;
     if (!isAutoEnabled) return; 
 
-    // ==========================================
-    // 👇 新增的第 2 段：攔截重複建單 👇
-    // ==========================================
-    if (alreadyGeneratedCustomers.has(c.name)) {
-      return; // 如果這間店今天已經有自動訂單了，就直接跳過，不往下執行
-    }
-    // ==========================================
-    // 👆 第 2 段結束 👆
-    // ==========================================
+
 
     const defaultItems = typeof c.defaultItems === 'string' ? safeJsonArray(c.defaultItems) : (c.defaultItems || []);
     if (!defaultItems || defaultItems.length === 0) return;
@@ -1761,6 +1805,11 @@ function generateTomorrowDefaultOrders() {
     
     const holidayDates = typeof c.holidayDates === 'string' ? safeJsonArray(c.holidayDates) : (c.holidayDates || []);
     if (holidayDates.includes(targetDateStr)) return;
+
+    // 建立客製化價格 Map O(1)
+    const priceList = (typeof c.priceList === 'string' ? safeJsonArray(c.priceList) : (c.priceList || []));
+    const customPriceMap = new Map();
+    priceList.forEach(pl => customPriceMap.set(pl.productId, pl.price));
 
     // 將預設品項按時間與車趟分群
     const itemsByTimeAndTrip = {};
@@ -1775,39 +1824,65 @@ function generateTomorrowDefaultOrders() {
       itemsByTimeAndTrip[groupKey].push({
         ...item,
         _time: timeKey,
-        _trip: tripKey
+        _trip: tripKey,
+        _hasIndependentTime: !!item.deliveryTime
       });
     });
 
     Object.keys(itemsByTimeAndTrip).forEach(groupKey => {
       const groupItems = itemsByTimeAndTrip[groupKey];
-      const timeKey = groupItems[0]._time;
+      const timeKey = normalizeTimeStr(groupItems[0]._time);
       const tripKey = groupItems[0]._trip;
+      const cName = String(c.name || '').trim();
+      
+      // 檢查這個群組內是否含有明確指定「獨立時間」的品項
+      const hasIndependentTime = groupItems.some(i => i._hasIndependentTime);
+      
+      if (!hasIndependentTime) {
+        // 情境 A：沒有設定獨立時間 (依靠預設時間)
+        // 邏輯：只要當天系統裡有該客戶的「任何一筆訂單」，就不重複建單
+        if (alreadyGeneratedCustomers.has(`${cName}_ANY`)) {
+          return;
+        }
+      } else {
+        // 情境 B：有設定獨立時間 (例如早班、晚班拆單)
+        // 邏輯：精準比對該「獨立時段」是否已經有訂單，避免擋掉其他時段的加單
+        if (alreadyGeneratedCustomers.has(`${cName}_${timeKey}`)) {
+          return;
+        }
+      }
+      
       
       const orderId = "AUTO-" + Utilities.formatDate(tomorrow, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
 
       groupItems.forEach(item => {
         let currentPrice = 0;
-        const priceList = (typeof c.priceList === 'string' ? safeJsonArray(c.priceList) : (c.priceList || []));
-        const customPriceObj = priceList.find(pl => pl.productId === item.productId);
+        let productName = item.productName || item.productId; // Fallback
         
-        if (customPriceObj && typeof customPriceObj.price === 'number') {
-          currentPrice = customPriceObj.price;
-        } else {
-          const globalProduct = products.find(p => p.id === item.productId);
-          if (globalProduct && typeof globalProduct.price === 'number') {
+        // 1. O(1) 從全域商品字典抓預設資料
+        const globalProduct = globalProductMap.get(item.productId);
+        if (globalProduct) {
+          productName = globalProduct.name;
+          if (typeof globalProduct.price === 'number') {
             currentPrice = globalProduct.price;
           }
         }
-        const subtotal = currentPrice * (item.quantity || 1);
 
+        // 2. O(1) 從客戶客製化字典抓資料 (若有客製價，直接無腦覆蓋預設價)
+        const customPrice = customPriceMap.get(item.productId);
+        if (typeof customPrice === 'number') {
+          currentPrice = customPrice;
+        }
+
+        const subtotal = currentPrice * (item.quantity || 1);
+        
         const row = new Array(maxCol).fill("");
         row[0] = timestamp;
         row[1] = orderId;
         row[2] = c.name;
         row[3] = targetDateStr;
         row[4] = timeKey;
-        row[5] = productMap[item.productId] || item.productName || item.productId;
+        row[5] = productName;
         row[6] = item.quantity || 1;
         row[7] = ""; // 備註先留空
         row[8] = "PENDING";
@@ -1978,8 +2053,8 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
   }
   
   const rules = getRemindRulesFromSheet();
-  const channelToken = settings.lineChannelToken;
-  const userId = settings.lineUserId;
+  const channelToken = String(settings.lineChannelToken || '').trim();
+  const userId = String(settings.lineUserId || '').trim();
   if (!rules.length || !channelToken || !userId) return;
 
   const now = new Date();
@@ -2068,7 +2143,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     if (forceRuleId === rule.id) {
       isTimeMatched = true; // Bypass time check when forcing a test
     } else if (Array.isArray(rule.schedule)) {
-      isTimeMatched = rule.schedule.includes(currentDayStr) && rule.timeToNotify.startsWith(currentHour);
+      isTimeMatched = (rule.schedule.includes(currentDayStr) || rule.schedule.includes('每天')) && rule.timeToNotify.startsWith(currentHour);
     } else {
       if (rule.schedule === '每天') {
         isTimeMatched = rule.timeToNotify.startsWith(currentHour); // rough match
@@ -2262,8 +2337,8 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
            requests.push({
              url: endpoint,
              method: "post",
+             contentType: "application/json",
              headers: { 
-               "Content-Type": "application/json",
                "Authorization": "Bearer " + channelToken 
              },
              payload: JSON.stringify({
@@ -2330,7 +2405,7 @@ function handleLineWebhook(payload) {
   if (settingsStr) {
     try {
       const settings = JSON.parse(settingsStr);
-      channelToken = settings.lineChannelToken;
+      channelToken = String(settings.lineChannelToken || '').trim();
     } catch (e) {}
   }
   
@@ -2354,8 +2429,8 @@ function handleLineWebhook(payload) {
       try {
         UrlFetchApp.fetch("https://api.line.me/v2/bot/message/reply", {
           method: "post",
+          contentType: "application/json",
           headers: { 
-            "Content-Type": "application/json",
             "Authorization": "Bearer " + channelToken
           },
           payload: JSON.stringify({
@@ -2424,7 +2499,7 @@ function getNotificationLogs() {
   const rawValues = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
   // 將陣列反轉 (顯示最新的在最上面)，並限制回傳筆數以防 Payload 過大
   const logs = rawValues.reverse().slice(0, 50).map(row => ({
-    timestamp: row[0],
+    timestamp: safeFormatDate(row[0]),
     source: row[1],
     ruleId: String(row[2]),
     ruleName: String(row[3]),
@@ -2566,186 +2641,26 @@ function verifyTokenAndGetPayload(token, dbPassword) {
 }
 
 // ==========================================
-// 系統維護模組：資料庫瘦身與效能優化
+// 系統排程設定
 // ==========================================
-// 定期封存舊訂單的專用腳本
-function archiveOldOrders() {
-  const lock = LockService.getScriptLock();
-  try {
-    // 允許等比較久，因為這是大範圍的背景資料轉移
-    lock.waitLock(30000); 
-    
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const orderSheet = ss.getSheetByName("ORDERS") || ss.getSheetByName("Orders");
-    
-    // 【修正 1】正確對應 History_Orders 分頁，若不存在則自動幫你建一個
-    let archiveSheet = ss.getSheetByName("History_Orders"); 
-    if (!archiveSheet) {
-      archiveSheet = ss.insertSheet("History_Orders");
+function setupDailyTriggers() {
+  const functionName = 'generateTomorrowDefaultOrders';
+  
+  // 1. 清除所有舊的自動建單觸發器，確保不會重複觸發 (也一併清掉因為重試產生的 after 觸發器)
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === functionName) {
+      ScriptApp.deleteTrigger(trigger);
     }
-    
-    if (!orderSheet) return;
-    
-    // 這裡我們用 getValues 來保留原始 Date 型別，因為後續我們需要做精準日期轉換
-    const values = orderSheet.getDataRange().getValues();
-    if (values.length <= 1) return; // 只有標題列
-    
-    const headers = values[0];
-    const headerMap = {};
-    headers.forEach((h, idx) => { headerMap[String(h).trim()] = idx; });
-    
-    // 【修正 2】加上中英文與大小寫的容錯尋找機制，確保能精準捕捉到欄位
-    const getColIdx = (aliases) => {
-       for (let i = 0; i < headers.length; i++) {
-           if (aliases.includes(String(headers[i]).trim())) return i;
-       }
-       return -1;
-    };
+  });
 
-    const statusColIdx = getColIdx(["Status", "狀態", "status"]);
-    const dateColIdx = getColIdx(["DeliveryDate", "deliveryDate", "配送日期", "日期"]);
-    
-    if (statusColIdx === -1 || dateColIdx === -1) {
-       console.error("無法封存：找不到 狀態 或 配送日期 表頭");
-       return;
-    }
+  // 2. 寫死冷門時段：設定每天凌晨 03:00 左右執行
+  ScriptApp.newTrigger(functionName)
+    .timeBased()
+    .everyDays(1)
+    .inTimezone(SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || "Asia/Taipei")
+    .atHour(3) // 代表 03:00 ~ 04:00 之間
+    .create();
 
-    // 計算 90 天前的時間截點 (精準算到午夜 00:00:00)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const cutoffDate = new Date(today);
-    cutoffDate.setDate(cutoffDate.getDate() - 90);
-    
-    const timeZone = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
-    const cutoffString = Utilities.formatDate(cutoffDate, timeZone, "yyyy-MM-dd");
-
-    const activeOrders = [headers]; // 準備存回大表的資料
-    const ordersToArchive = [];     // 準備搬去封存表的資料
-    
-    // 同步封存表的表頭
-    if (archiveSheet.getLastRow() === 0 || archiveSheet.getLastColumn() === 0) {
-      archiveSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    }
-    
-    // 取得實際的 History_Orders 標題陣列，供後續準確對應欄位
-    const archiveHeadersCol = archiveSheet.getLastColumn() > 0 ? archiveSheet.getLastColumn() : headers.length;
-    const archiveHeaders = archiveSheet.getRange(1, 1, 1, archiveHeadersCol).getValues()[0];
-    
-    // 從第 2 行開始掃描
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      // 確保將狀態轉大寫並去除空白，防止手動編輯時打錯如 " deleted "
-      const status = String(row[statusColIdx] || '').trim().toUpperCase(); 
-      let deliveryDate = row[dateColIdx]; 
-      
-      // 【修正 3】嚴格將日期轉化為標準的 "YYYY-MM-DD" 格式進行字串比對，杜絕格式導致的誤判
-      let isOver90Days = false;
-      let dDate = null;
-      
-      if (deliveryDate instanceof Date) {
-        dDate = deliveryDate;
-      } else if (typeof deliveryDate === 'number') {
-        // 處理試算表純數字格式的日期 (將 Excel/Sheets 的 Serial 轉換為正確 JS Date)
-        dDate = new Date(Math.round((deliveryDate - 25569) * 86400 * 1000));
-      } else if (deliveryDate) {
-        // 嘗試解析字串日期
-        const safeDateStr = String(deliveryDate).replace(/-/g, '/').substring(0, 10);
-        dDate = new Date(safeDateStr);
-      }
-
-      // 【核心防呆機制】
-      // 如果解析出來的年份小於 2020，代表這絕對是異常資料 (純時間 1899 或 數字解析錯誤 1970)
-      // 將其強制重置為 null，避免被誤判為「很久以前的舊訂單」而誤封存
-      if (dDate && (isNaN(dDate.getTime()) || dDate.getFullYear() < 2020)) {
-        dDate = null;
-      }
-
-      if (dDate) {
-         // 直接以毫秒級的數值進行絕對大小比對，完全沒有誤差
-         isOver90Days = dDate.getTime() < cutoffDate.getTime();
-      }
-      
-      // 【關鍵決策點】：現在要求作廢與結清訂單都必須滿 90 天才會封存
-      if (isOver90Days && (status === 'PAID' || status === 'DELETED')) {
-        // ★ 在推進陣列前，對這一列的所有儲存格進行「防禦性清洗」
-        const cleanRow = archiveHeaders.map((header) => {
-           const headerName = String(header).trim();
-           let cell = row[headerMap[headerName]];
-           
-           if (cell instanceof Date) {
-              // 捕捉 Google 專屬的時間地雷 (純時間都會被判定為 1899 年)
-              if (cell.getFullYear() <= 1900) {
-                 cell = Utilities.formatDate(cell, timeZone, "HH:mm");
-              } else if (headerName === 'Timestamp' || headerName === '建立時間' || headerName === 'LastUpdated') {
-                 // 👉 針對需要時間戳記的欄位，保留完整的 年/月/日 時:分:秒
-                 cell = Utilities.formatDate(cell, timeZone, "yyyy/MM/dd HH:mm:ss");
-              } else {
-                 // 如果是正常的出貨日期，則轉為乾淨的 YYYY-MM-DD
-                 cell = Utilities.formatDate(cell, timeZone, "yyyy-MM-dd");
-              }
-           }
-           
-           // 時間欄位強制補上單引號，避免試算表假會解析成 1899 年
-           if (headerName === '配送時間' || headerName === 'DeliveryTime') {
-              return cell ? `'${cell}` : ''; 
-           }
-           
-           // LastUpdated 強制轉字串，避免奇怪的 1970 日期格式
-           if (headerName === 'LastUpdated') {
-              return String(cell || ''); 
-           }
-           
-           return cell === undefined ? '' : cell;
-        });
-
-        // 寫入清洗後的乾淨資料
-        ordersToArchive.push(cleanRow);
-      } else {
-        // 同理，寫回 Orders 大表的活躍訂單也要保持乾淨
-        const cleanRow = headers.map((header, index) => {
-           let cell = row[index];
-           const headerName = String(header).trim();
-           
-           if (cell instanceof Date) {
-              if (cell.getFullYear() <= 1900) {
-                 cell = Utilities.formatDate(cell, timeZone, "HH:mm");
-              } else if (headerName === 'Timestamp' || headerName === '建立時間' || headerName === 'LastUpdated') {
-                 // 👉 針對需要時間戳記的欄位，保留完整的 年/月/日 時:分:秒
-                 cell = Utilities.formatDate(cell, timeZone, "yyyy/MM/dd HH:mm:ss");
-              } else {
-                 cell = Utilities.formatDate(cell, timeZone, "yyyy-MM-dd");
-              }
-           }
-           
-           if (headerName === '配送時間' || headerName === 'DeliveryTime') {
-              return cell ? `'${cell}` : ''; 
-           }
-           
-           if (headerName === 'LastUpdated') {
-              return String(cell || ''); 
-           }
-           
-           return cell === undefined ? '' : cell;
-        });
-        
-        activeOrders.push(cleanRow);
-      }
-    }
-    
-    // 如果沒有資料需要封存，提早結束
-    if (ordersToArchive.length === 0) return;
-    
-    // 1. 將過期與刪除的資料寫入 History_Orders 封存表 (Append，加在最後面)
-    const archiveLastRow = Math.max(1, archiveSheet.getLastRow());
-    safeSetValues(archiveSheet, archiveLastRow + 1, 1, ordersToArchive);
-    
-    // 2. 清除原始訂單大表，並將保留下來的活躍訂單回寫
-    orderSheet.clearContents();
-    safeSetValues(orderSheet, 1, 1, activeOrders);
-    
-  } catch (err) {
-    console.error("封存腳本發生錯誤: " + err.toString());
-  } finally {
-    lock.releaseLock();
-  }
+  console.log("✅ 觸發器已更新：每天凌晨 03:00 - 04:00 執行");
 }

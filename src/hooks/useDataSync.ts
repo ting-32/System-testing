@@ -472,6 +472,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
       if (pwd === '8888') { 
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
+        sessionStorage.setItem('temp_unlock_key', btoa(pwd));
         return true; 
       } 
       return false; 
@@ -489,6 +490,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         }
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
+        sessionStorage.setItem('temp_unlock_key', btoa(pwd));
         return true; 
       } 
       return false; 
@@ -507,6 +509,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
     
     // 2. 清除所有 LocalStorage 與 IndexedDB
     localStorage.clear();
+    sessionStorage.removeItem('temp_unlock_key');
     await localforage.clear();
     
     // 3. 把 API 網址跟版本號救回來
@@ -538,6 +541,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
       const userAgent = navigator.userAgent;
       
       const isOk = await container.authRepo.changePassword(oldPwd, newPwd, deviceId, userAgent);
+      if (isOk) {
+        await handleLogin(newPwd);
+      }
       return isOk;
     } catch (e) { 
       console.error("Change Password Error:", e); 

@@ -303,11 +303,23 @@ export function useSyncQueue(
       }
     };
 
+    // ==========================================
+    // UI/UX 防呆：前端的「離峰靜默期 (Maintenance Window)」
+    // ==========================================
+    const currentHour = new Date().getHours();
+    const isMaintenanceWindow = currentHour >= 3 && currentHour < 4;
+
     // 實作短暫防抖 (Debounce / Throttle) 延遲出列
-    // 給予大約 1000ms 的聚合時間，讓前端可以整併多個連續動作
+    // 如果在凌晨 3 點到 4 點之間，將間隔拉長到 15 分鐘，避免與背景自動建單腳本產生 Lock 競爭
+    const timeout = isMaintenanceWindow ? 15 * 60 * 1000 : 1000;
+    
+    if (isMaintenanceWindow && syncQueue.length > 0 && !isSyncingQueue) {
+       console.log(`[SyncQueue] 進入凌晨維護期，延遲同步操作 ${timeout/60000} 分鐘`);
+    }
+
     const timerId = setTimeout(() => {
       processQueue();
-    }, 1000);
+    }, timeout);
 
     return () => clearTimeout(timerId);
 

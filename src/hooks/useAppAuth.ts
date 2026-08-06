@@ -48,9 +48,30 @@ export function useAppAuth({ handleLogin, addToast }: UseAppAuthProps) {
     
     setIsUnlocking(true);
     try {
-      const success = await handleLogin(unlockPassword);
+      const cachedKey = sessionStorage.getItem('temp_unlock_key');
+      let isSuccess = false;
       
-      if (success) {
+      if (cachedKey) {
+        try {
+          isSuccess = atob(cachedKey) === unlockPassword;
+        } catch (e) {
+          console.error("Failed to decode cached key", e);
+        }
+        // 為了視覺上的流暢度，可以稍微加個極短的延遲，讓使用者感覺有在「處理中」
+        await new Promise(resolve => setTimeout(resolve, 150)); 
+      } else {
+        // 如果 sessionStorage 沒有快取（例如重整網頁後，由 localStorage 自動恢復登入狀態），則 fallback 到原本的登入邏輯
+        isSuccess = await handleLogin(unlockPassword);
+        if (isSuccess) {
+          try {
+            sessionStorage.setItem('temp_unlock_key', btoa(unlockPassword));
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+      
+      if (isSuccess) {
         setIsUnlocked(true);
         setUnlockTimeout(Date.now() + 30 * 60 * 1000);
         setShowUnlockModal(false);

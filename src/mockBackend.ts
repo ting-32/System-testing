@@ -23,7 +23,7 @@ export function setupMockBackend() {
     
     // Check if it's our mock endpoint
     if (url.includes('mock-api.local')) {
-      if (url.includes('type=init')) {
+      if (url.includes('type=init') || url.includes('type=sync_delta') || (!init || init.method === 'GET')) {
         return new Response(JSON.stringify({
           success: true,
           data: {
