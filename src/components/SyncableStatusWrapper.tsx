@@ -20,12 +20,12 @@ export const SyncableStatusWrapper: React.FC<SyncableStatusWrapperProps> = ({
   const isError = syncStatus === 'error';
 
   return (
-    <div className={`relative ${className} ${isPending ? 'opacity-70 pointer-events-none' : ''}`}>
+    <div className={`relative ${className} ${isPending ? 'opacity-70 transition-opacity duration-300' : 'transition-opacity duration-300'}`}>
       {children}
       
       {isPending && (
-        <div className={`absolute top-0 right-0 bg-blue-100/90 backdrop-blur-sm text-blue-600 text-[10px] font-bold px-3 py-1.5 rounded-bl-xl z-20 flex items-center gap-1.5 pointer-events-none border-b border-l border-blue-200/50`}>
-          <RefreshCw className="w-3 h-3 animate-spin"/> 同步中...
+        <div className={`absolute top-0 right-0 bg-yellow-50 text-yellow-600 text-[10px] font-bold px-3 py-1.5 rounded-bl-xl z-20 flex items-center gap-1.5 pointer-events-none border-b border-l border-yellow-200/50`}>
+          <RefreshCw className="w-3 h-3 animate-spin"/> 同步中
         </div>
       )}
       
@@ -45,7 +45,7 @@ export const SyncableStatusWrapper: React.FC<SyncableStatusWrapperProps> = ({
       
       {/* 視覺框線覆蓋，獨立拉出以避免影響內部元件 */}
       {(isError || isPending) && (
-        <div className={`absolute inset-0 border-2 pointer-events-none z-10 ${roundedClass} ${isError ? 'border-rose-400' : 'border-blue-200'}`} />
+        <div className={`absolute inset-0 pointer-events-none z-10 ${roundedClass} ${isError ? 'border-2 border-rose-400' : 'border-2 border-dashed border-yellow-300'}`} />
       )}
     </div>
   );

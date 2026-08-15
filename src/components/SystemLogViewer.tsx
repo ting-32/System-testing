@@ -24,11 +24,14 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
   const fetchLogs = async () => {
     setIsLoadingLogs(true);
     try {
-      container.updateApiEndpoint(apiEndpoint);
+      if (apiEndpoint) {
+        container.updateApiEndpoint(apiEndpoint);
+      }
       const fetchedLogs = await container.logRepo.getSystemLogs(200);
-      setSystemLogs(fetchedLogs, Date.now());
+      setSystemLogs(Array.isArray(fetchedLogs) ? fetchedLogs : [], Date.now());
     } catch (e) {
       console.error("Failed to fetch logs", e);
+      setSystemLogs([], Date.now());
     } finally {
       setIsLoadingLogs(false);
     }

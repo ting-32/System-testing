@@ -36,12 +36,14 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
   const fetchLogs = async () => {
     setIsLoadingLogs(true);
     try {
-      container.updateApiEndpoint(apiEndpoint);
-      // You can add pagination/limit logic here if LogRepository supports it
+      if (apiEndpoint) {
+        container.updateApiEndpoint(apiEndpoint);
+      }
       const fetchedLogs = await container.logRepo.getNotificationLogs(100);
-      setNotifyLogs(fetchedLogs, Date.now());
+      setNotifyLogs(Array.isArray(fetchedLogs) ? fetchedLogs : [], Date.now());
     } catch (e) {
       console.error("Failed to fetch logs", e);
+      setNotifyLogs([], Date.now());
     } finally {
       setIsLoadingLogs(false);
     }

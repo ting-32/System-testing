@@ -12,13 +12,23 @@ export class LogRepository implements ILogRepository {
   constructor(private apiClient: ApiClient) {}
 
   async getNotificationLogs(limit: number = 100): Promise<NotificationLog[]> {
-    const rawData = await this.apiClient.post<{ limit: number }, any[]>('getNotificationLogs', { limit });
-    return DataMapper.mapNotificationLogs(rawData || []);
+    try {
+      const rawData = await this.apiClient.post<{ limit: number }, any>('getNotificationLogs', { limit });
+      return DataMapper.mapNotificationLogs(rawData);
+    } catch (e) {
+      console.warn('Failed to fetch notification logs:', e);
+      return [];
+    }
   }
 
   async getSystemLogs(limit: number = 200): Promise<SystemLog[]> {
-    const rawData = await this.apiClient.post<{ limit: number }, any[]>('getSystemLogs', { limit });
-    return DataMapper.mapSystemLogs(rawData || []);
+    try {
+      const rawData = await this.apiClient.post<{ limit: number }, any>('getSystemLogs', { limit });
+      return DataMapper.mapSystemLogs(rawData);
+    } catch (e) {
+      console.warn('Failed to fetch system logs:', e);
+      return [];
+    }
   }
 
   async runDryRun(ruleId: string): Promise<any> {

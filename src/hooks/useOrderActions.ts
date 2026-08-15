@@ -225,7 +225,7 @@ export const useOrderActions = ({
     setOrders((prev: Order[]) => [newOrder, ...prev]);
     setIsSaving(false);
     setQuickAddData(null);
-    addToast('追加訂單登錄成功 (背景同步中...)', 'success');
+    addToast('追加訂單登錄成功', 'success');
 
     // 2. 交給統一的雲端佇列接手
     await saveOrderToCloud(
@@ -688,7 +688,7 @@ export const useOrderActions = ({
       addToast(editingOrderId ? `訂單已更新至 ${orderForm.date}` : `訂單已建立至 ${orderForm.date}`, 'success');
       setSelectedDate(orderForm.date);
     } else {
-      addToast(editingOrderId ? '訂單已更新 (同步中...)' : '訂單已建立 (同步中...)', 'success');
+      addToast(editingOrderId ? '訂單已更新' : '訂單已建立', 'success');
     }
 
     // Background Sync
@@ -699,7 +699,6 @@ export const useOrderActions = ({
       () => {
          if (!editingOrderId) {
            setOrders((prev: Order[]) => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o));
-           addToast('同步成功', 'success');
          }
       },
       (errMsg: string) => {

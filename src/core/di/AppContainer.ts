@@ -5,6 +5,7 @@ import { SyncRepository } from '../repositories/SyncRepository';
 import { TripsRepository } from '../repositories/TripsRepository';
 import { LogRepository } from '../repositories/LogRepository';
 import { OrderService } from '../services/OrderService';
+import { GAS_URL } from '../../constants';
 
 export class AppContainer {
   private static instance: AppContainer;
@@ -18,8 +19,8 @@ export class AppContainer {
   public orderService: OrderService;
 
   private constructor() {
-    // We start with an empty or default URL. It gets updated via setEndpoint dynamically.
-    const initialUrl = localStorage.getItem('nm_gas_url') || '';
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('nm_gas_url') : null;
+    const initialUrl = (saved && saved !== 'undefined' && saved !== 'null' && saved.trim() !== '') ? saved.trim() : GAS_URL;
     this.apiClient = new GasApiClient(initialUrl);
 
     this.authRepo = new AuthRepository(this.apiClient);
@@ -38,7 +39,8 @@ export class AppContainer {
   }
 
   public updateApiEndpoint(url: string) {
-    this.apiClient.setEndpoint(url);
+    const validUrl = (url && url.trim() !== '' && url !== 'undefined' && url !== 'null') ? url.trim() : GAS_URL;
+    this.apiClient.setEndpoint(validUrl);
   }
 }
 

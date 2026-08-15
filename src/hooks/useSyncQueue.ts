@@ -328,11 +328,10 @@ export function useSyncQueue(
   // 5. 攔截關閉事件 (BeforeUnload)
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (syncQueue.length > 0) {
+      if (syncQueue.length > 0 || isSyncingQueue) {
         e.preventDefault();
-        // 觸發瀏覽器原生的警告
-        e.returnValue = '您尚有變更未同步至伺服器，確定要離開嗎？';
-        return e.returnValue;
+        // 現代瀏覽器會忽略自訂文字，只顯示原生的「您有未儲存的變更」警告
+        e.returnValue = '';
       }
     };
 
@@ -340,7 +339,7 @@ export function useSyncQueue(
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [syncQueue]);
+  }, [syncQueue.length, isSyncingQueue]);
 
   const removeTaskByPayloadId = useCallback(async (payloadId: string) => {
     // 找出符合的 task

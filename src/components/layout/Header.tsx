@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Unlock, Lock, BellRing, Settings, Loader2 } from 'lucide-react';
+import { Unlock, Lock, BellRing, Settings, Loader2, RefreshCw, CloudCheck, CloudAlert } from 'lucide-react';
 import { buttonTap } from '../animations';
 import { useUIStore } from '../../store/useUIStore';
 import { useLogStore } from '../../store/useLogStore';
@@ -35,37 +35,30 @@ export function Header({
       </div>
       <div className="flex gap-2 items-center">
         <AnimatePresence>
-          {syncQueue.length > 0 && (
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              className="flex items-center text-[10px] text-gray-400 font-medium"
-            >
-              <Loader2 className="w-3 h-3 animate-spin mr-1" />
-              <span>同步中 ({syncQueue.length})</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        {/* 狀態指示燈 */}
-        <AnimatePresence>
           {!isInitialLoading && (
             <motion.div 
               key="background-sync-indicator"
-              initial={{ opacity: 0, scale: 0.5 }} 
+              initial={{ opacity: 0, scale: 0.95 }} 
               animate={{ opacity: 1, scale: 1 }} 
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-100 bg-slate-50 shadow-sm text-[10px] font-bold tracking-widest"
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-100 bg-slate-50 shadow-sm font-bold tracking-widest"
             >
               {!isOnline ? (
-                <><span className="w-2 h-2 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.5)]"></span><span className="text-slate-500 hidden sm:inline">離線模式</span></>
-              ) : isBackgroundSyncing ? (
-                <><Loader2 className="w-3 h-3 text-blue-400 animate-spin" /><span className="text-slate-500 hidden sm:inline">同步中</span></>
+                <div className="flex items-center text-xs text-rose-500">
+                  <CloudAlert className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">離線模式</span>
+                </div>
+              ) : (syncQueue.length > 0 || isSyncingQueue || isBackgroundSyncing) ? (
+                <div className="flex items-center text-xs text-yellow-600">
+                  <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
+                  <span className="hidden sm:inline">正在儲存</span>
+                  {syncQueue.length > 0 && <span className="ml-1">({syncQueue.length})</span>}
+                </div>
               ) : (
-                <><span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)] relative">
-                  <span className="absolute inset-0 rounded-full bg-emerald-400 animate-ping opacity-50"></span>
-                </span>
-                <span className="text-slate-500 hidden sm:inline">已同步</span></>
+                <div className="flex items-center text-xs text-emerald-500/80">
+                  <CloudCheck className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">已儲存至雲端</span>
+                </div>
               )}
             </motion.div>
           )}

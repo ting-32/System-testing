@@ -1,27 +1,33 @@
 import { ApiClient, ApiClientConfig } from './ApiClient';
 import { GASResponse } from '../../types';
 import { fetchWithRetry } from '../../utils/fetchUtils';
+import { GAS_URL } from '../../constants';
 
 export class GasApiClient implements ApiClient {
   private baseConfig: ApiClientConfig;
 
   constructor(endpoint: string) {
+    const validEndpoint = (endpoint && endpoint.trim() !== '' && endpoint !== 'undefined' && endpoint !== 'null') ? endpoint.trim() : GAS_URL;
     this.baseConfig = {
-      endpoint,
+      endpoint: validEndpoint,
       redirect: 'follow',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }
     };
   }
 
   setEndpoint(endpoint: string) {
-    this.baseConfig.endpoint = endpoint;
+    const validEndpoint = (endpoint && endpoint.trim() !== '' && endpoint !== 'undefined' && endpoint !== 'null') ? endpoint.trim() : GAS_URL;
+    this.baseConfig.endpoint = validEndpoint;
   }
 
   getEndpoint(): string {
-    return this.baseConfig.endpoint;
+    return this.baseConfig.endpoint || GAS_URL;
   }
 
   async post<T, R>(action: string, data: T, config?: Partial<ApiClientConfig>): Promise<R> {
+    if (!this.baseConfig.endpoint) {
+      this.baseConfig.endpoint = GAS_URL;
+    }
     if (!this.baseConfig.endpoint) {
       throw new Error('API Endpoint is not configured');
     }
@@ -105,6 +111,9 @@ export class GasApiClient implements ApiClient {
   }
 
   async get<R>(_: string, params?: Record<string, string>, config?: Partial<ApiClientConfig>): Promise<R> {
+    if (!this.baseConfig.endpoint) {
+      this.baseConfig.endpoint = GAS_URL;
+    }
     if (!this.baseConfig.endpoint) {
       throw new Error('API Endpoint is not configured');
     }

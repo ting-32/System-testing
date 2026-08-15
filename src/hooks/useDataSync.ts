@@ -90,10 +90,14 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
   const [apiEndpoint, setApiEndpoint] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('nm_gas_url');
-      if (saved && saved !== 'undefined' && saved !== 'null') return saved.trim();
+      if (saved && saved !== 'undefined' && saved !== 'null' && saved.trim() !== '') return saved.trim();
     }
     return DEFAULT_GAS_URL;
   });
+
+  useEffect(() => {
+    container.updateApiEndpoint(apiEndpoint);
+  }, [apiEndpoint]);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);

@@ -2,11 +2,33 @@ import { Customer, Order, Product, OrderStatus, NotificationLog, LogStatus, Syst
 import { safeJsonArray, normalizeDate, safeNumber } from '../../utils';
 
 export class DataMapper {
-  static mapSystemLogs(rawLogs: any[]): SystemLog[] {
-    return rawLogs.map((log: any, idx: number) => {
+  private static extractArray(input: any): any[] {
+    if (Array.isArray(input)) return input;
+    if (input && typeof input === 'object') {
+      if (Array.isArray(input.logs)) return input.logs;
+      if (Array.isArray(input.data)) return input.data;
+      if (Array.isArray(input.items)) return input.items;
+      if (Array.isArray(input.result)) return input.result;
+    }
+    return [];
+  }
+
+  static mapSystemLogs(rawLogs: any): SystemLog[] {
+    const list = this.extractArray(rawLogs);
+    return list.map((log: any, idx: number) => {
+      if (!log || typeof log !== 'object') {
+        return {
+          id: `invalid_${idx}`,
+          timestampStr: '',
+          timestamp: Date.now(),
+          actionType: 'UNKNOWN',
+          target: '',
+          details: String(log || '')
+        };
+      }
       let ts = Date.now();
       if (log.timestampStr) {
-        const d = new Date(log.timestampStr.replace(/-/g, '/'));
+        const d = new Date(String(log.timestampStr).replace(/-/g, '/'));
         if (!isNaN(d.getTime())) ts = d.getTime();
       }
       return {
@@ -15,25 +37,35 @@ export class DataMapper {
         timestamp: ts,
         actionType: log.actionType || 'UNKNOWN',
         target: log.target || '',
-        details: log.details || ''
+        details: typeof log.details === 'object' ? JSON.stringify(log.details) : (log.details || '')
       };
     });
   }
 
-  static mapNotificationLogs(rawLogs: any[]): NotificationLog[] {
-    return rawLogs.map((log: any, idx: number) => {
+  static mapNotificationLogs(rawLogs: any): NotificationLog[] {
+    const list = this.extractArray(rawLogs);
+    return list.map((log: any, idx: number) => {
+      if (!log || typeof log !== 'object') {
+        return {
+          id: `invalid_${idx}`,
+          timestamp: Date.now(),
+          triggerSource: 'UNKNOWN',
+          ruleId: '',
+          ruleName: '',
+          status: 'ERROR' as LogStatus,
+          details: {}
+        };
+      }
       let parsedDetails = {};
       try {
-        parsedDetails = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+        parsedDetails = typeof log.details === 'string' ? JSON.parse(log.details) : (log.details || {});
       } catch (e) {
         console.warn('Failed to parse log details:', log.details);
       }
       
-      // Attempt to convert string timestamp to numeric epoch or keep it as-is if parsing fails
-      // Assuming log.timestamp comes back as "YYYY-MM-DD HH:mm:ss"
       let ts = Date.now();
       if (log.timestamp) {
-        const d = new Date(log.timestamp.replace(/-/g, '/')); // simple cross-browser compatible string date parsing
+        const d = new Date(String(log.timestamp).replace(/-/g, '/'));
         if (!isNaN(d.getTime())) ts = d.getTime();
       }
 
@@ -67,11 +99,12 @@ export class DataMapper {
     return true;
   }
 
-  static mapCustomers(rawCustomers: any[]): Customer[] {
-    return rawCustomers
+  static mapCustomers(rawCustomers: any): Customer[] {
+    const list = this.extractArray(rawCustomers);
+    return list
       .filter(this.isValidRawCustomer)
       .map((c: any) => {
-        const priceListKey = Object.keys(c).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
+        const priceListKey = Object.keys(c || {}).find(k => k.includes('價目表') || k.includes('Price') || k.includes('priceList')) || '價目表JSON'; 
         return { 
         id: String(c.ID || c.id || ''), 
         name: String(c.客戶名稱 || c.name || '').trim().replace(/[\r\n]/g, ''), 
@@ -92,8 +125,9 @@ export class DataMapper {
     });
   }
 
-  static mapProducts(rawProducts: any[]): Product[] {
-    return rawProducts.map((p: any) => ({ 
+  static mapProducts(rawProducts: any): Product[] {
+    const list = this.extractArray(rawProducts);
+    return list.map((p: any) => ({ 
       id: String(p.ID || p.id), 
       name: String(p.品項 || p.name || '').trim().replace(/[\r\n]/g, ''), 
       unit: p.單位 || p.unit, 
@@ -103,9 +137,10 @@ export class DataMapper {
     }));
   }
 
-  static mapOrders(rawOrders: any[]): Order[] {
+  static mapOrders(rawOrders: any): Order[] {
+    const list = this.extractArray(rawOrders);
     const orderMap: { [key: string]: Order } = {}; 
-    rawOrders.forEach((o: any, index: number) => { 
+    list.forEach((o: any, index: number) => { 
       let oid = o.訂單ID || o.id; 
       if (!oid || String(oid).trim() === '') {
         const custName = String(o.客戶名 || o.customerName || '未知客戶').trim().replace(/[\r\n]/g, '');
