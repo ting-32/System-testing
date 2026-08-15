@@ -120,6 +120,8 @@ export class DataMapper {
         offDays: safeJsonArray(c.公休日週期JSON || c.公休日週期 || c.offDays), 
         holidayDates: safeJsonArray(c.特定公休日JSON || c.特定公休日 || c.holidayDates).map((d: any) => normalizeDate(d)),
         autoOrderEnabled: c.autoOrderEnabled === true || String(c.autoOrderEnabled).trim().toLowerCase() === 'true' || String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+        isPaused: c.isPaused === true || String(c.isPaused).trim().toLowerCase() === 'true' || String(c.暫停供貨).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
+        isArchived: c.isArchived === true || String(c.isArchived).trim().toLowerCase() === 'true' || String(c.封存).trim().toLowerCase() === 'true' || c.封存 === true,
         lastUpdated: safeNumber(c.lastUpdated, 0, `Customer ${c.name} lastUpdated`)
       };
     });

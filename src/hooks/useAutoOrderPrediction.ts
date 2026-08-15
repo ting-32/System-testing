@@ -25,13 +25,18 @@ export const useAutoOrderPrediction = (customers: Customer[]) => {
     const grayZone: (Customer & { skipReason: string })[] = [];
 
     customers.forEach(customer => {
+      // 已封存 (永久停業) 的客戶完全排除於未來自動建單與預覽
+      if (customer.isArchived) return;
+
+      const isPaused = customer.isPaused;
       const isAutoDisabled = !customer.autoOrderEnabled;
       const isWeeklyOff = isDateInOffDays(targetDateStr, customer.offDays || []);
       const isSpecificHoliday = (customer.holidayDates || []).includes(targetDateStr);
 
-      if (isAutoDisabled || isWeeklyOff || isSpecificHoliday) {
+      if (isPaused || isAutoDisabled || isWeeklyOff || isSpecificHoliday) {
         let reason = '';
-        if (isSpecificHoliday) reason = '特定公休';
+        if (isPaused) reason = '暫停供貨';
+        else if (isSpecificHoliday) reason = '特定公休';
         else if (isWeeklyOff) reason = '每週公休';
         else if (isAutoDisabled) reason = '手動暫停';
 

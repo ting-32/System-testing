@@ -1789,8 +1789,8 @@ function generateTomorrowDefaultOrders() {
   }
 
   customers.forEach(c => {
-    // 檢查是否暫停供貨，若是則不建立訂單
-    if (c.isPaused) return;
+    // 檢查是否已封存 (永久停業) 或暫停供貨，若是則不建立訂單
+    if (c.isArchived || c.isPaused) return;
 
     const isAutoEnabled = c.autoOrderEnabled;
     if (!isAutoEnabled) return; 
@@ -2211,8 +2211,9 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       ordersByCustomer[cName].push(order);
     }
     
-    // 過濾客戶 (如果客戶在"所有"勾選的目標日期都是休息或特休，才略過他)
+    // 過濾客戶 (如果客戶已封存、暫停供貨，或在"所有"勾選的目標日期都是休息或特休，才略過他)
     const activeCustomers = customers.filter(c => {
+      if (c.isArchived || c.isPaused) return false;
       const hasWorkingDay = targetDatesInfo.some(d => {
         const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const isOff = (c.offDays && c.offDays.includes(d.getDay())) || (c.holidayDates && c.holidayDates.includes(dStr));
