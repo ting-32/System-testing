@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo, animate } from 'framer-motion';
-import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot, MessageCircle } from 'lucide-react';
+import { CheckCircle2, Trash2, Clock, ChevronDown, Share2, MapPin, Edit2, AlertCircle, RefreshCw, RotateCcw, Truck, Banknote, Bot, MessageCircle, Sparkles, AlertTriangle } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
-import { ORDERING_HABITS } from '../constants';
+import { ORDERING_HABITS, isWalkInCustomer } from '../constants';
 import { getStatusStyles, formatTimeDisplay } from '../utils';
 import { buttonTap, triggerHaptic } from './animations';
 import { SyncableStatusWrapper } from './SyncableStatusWrapper';
@@ -34,7 +34,7 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   
   useEffect(() => { x.set(0); }, [order.status, x]);
   
-  // 👇 新增這段：確保元件被卸載時，強制清除 body 上的 pointer-events 鎖定
+  // 確保元件被卸載時，強制清除 body 上的 pointer-events 鎖定
   useEffect(() => {
     return () => {
       document.body.style.pointerEvents = '';
@@ -43,8 +43,14 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
   
   const statusConfig = getStatusStyles(order.status || OrderStatus.PENDING);
   
+  const customer = customerMap[order.customerName];
+  const isWalkIn = isWalkInCustomer(order.paymentTerm || customer?.paymentTerm);
+  const effectiveDeliveryTime = (order.deliveryTime && order.deliveryTime.trim() !== '') 
+    ? order.deliveryTime.trim() 
+    : (customer?.deliveryTime && customer.deliveryTime.trim() !== '' ? customer.deliveryTime.trim() : '');
+  const isTimeAuto = order.isTimeAutoFilled || (!order.deliveryTime && !!customer?.deliveryTime);
+
   const totalAmount = useMemo(() => { 
-    const customer = customerMap[order.customerName]; 
     let total = 0; 
     order.items.forEach(item => { 
       const product = productMap[item.productId]; 
@@ -57,9 +63,8 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
       } 
     }); 
     return total; 
-  }, [order.items, order.customerName, customerMap, productMap]);
+  }, [order.items, customer, productMap]);
   
-  const customer = customerMap[order.customerName];
   const habitLabel = ORDERING_HABITS.find(h => h.value === customer?.paymentTerm)?.label;
   const DRAG_THRESHOLD = 80;
   const isSyncError = order.syncStatus === 'error' || order._syncStatus === 'error';
@@ -160,10 +165,45 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
 
         <div className={`p-5 transition-all ${isSelectionMode ? 'pl-14' : ''}`}> 
           <div className="flex justify-between items-center mb-4"> 
-            <div className="flex items-center gap-3"> 
-              <div className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors duration-300`} style={{ backgroundColor: statusConfig.tagBg, color: statusConfig.tagText }}> 
-                <Clock className="w-3.5 h-3.5" />{formatTimeDisplay(order.deliveryTime)} 
-              </div> 
+            <div className="flex items-center gap-2"> 
+              <div className="flex items-center gap-1.5">
+                {/* CHANGED: 依據 isWalkIn 顯示 📦 散客 徽章或配送時間 */}
+                {isWalkIn ? (
+                  <div className="px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-200">
+                    <span className="text-xs">📦</span>
+                    <span>散客</span>
+                    {effectiveDeliveryTime && (
+                      <span className="text-[11px] text-slate-500 font-mono">({formatTimeDisplay(effectiveDeliveryTime)})</span>
+                    )}
+                  </div>
+                ) : (
+                  <div 
+                    className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors duration-300 ${
+                      !effectiveDeliveryTime ? 'bg-amber-50 text-amber-700 border border-amber-200' : ''
+                    }`} 
+                    style={effectiveDeliveryTime ? { backgroundColor: statusConfig.tagBg, color: statusConfig.tagText } : {}}
+                  > 
+                    <Clock className="w-3.5 h-3.5" /> 
+                    {effectiveDeliveryTime ? (
+                      <span>{formatTimeDisplay(effectiveDeliveryTime)}</span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-amber-800">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                        未指定時間
+                      </span>
+                    )}
+                  </div>
+                )}
+                {isTimeAuto && effectiveDeliveryTime && (
+                  <span 
+                    title="此時間為系統自動依【店家預設】填入，點擊卡片可手動調整。" 
+                    className="inline-flex items-center gap-0.5 text-[10px] font-extrabold bg-morandi-blue/10 text-morandi-blue border border-morandi-blue/20 px-1.5 py-0.5 rounded-md cursor-help select-none tracking-wide hover:bg-morandi-blue/20 transition-colors"
+                  >
+                    <Sparkles className="w-2.5 h-2.5" />
+                    預設
+                  </span>
+                )}
+              </div>
               {order.deliveryMethod && (<span className="text-[10px] font-bold text-gray-400 bg-white/60 px-2 py-1 rounded-lg border border-black/5">{order.deliveryMethod}</span>)} 
               {habitLabel && (<span className="text-[10px] font-bold text-morandi-blue bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">{habitLabel}</span>)} 
             </div> 
@@ -280,4 +320,3 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
     </div> 
   ); 
 };
-

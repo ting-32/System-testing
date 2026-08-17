@@ -99,6 +99,7 @@ export interface Order {
   lastUpdated?: number; // 版本控制時間戳
   version?: number; // 樂觀鎖版本號 (整數)
   syncStatus?: 'synced' | 'pending' | 'error'; // 同步狀態
+  isTimeAutoFilled?: boolean; // 新增：標記是否為系統依據店家預設自動補齊
   errorMessage?: string; // 錯誤訊息
   pendingAction?: 'create' | 'update' | 'delete' | 'statusUpdate'; // 待處理動作
   // --- 暫態屬性 (僅限前端使用) ---

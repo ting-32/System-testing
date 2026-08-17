@@ -139,7 +139,7 @@ export class DataMapper {
     }));
   }
 
-  static mapOrders(rawOrders: any): Order[] {
+  static mapOrders(rawOrders: any, customers?: Customer[]): Order[] {
     const list = this.extractArray(rawOrders);
     const orderMap: { [key: string]: Order } = {}; 
     list.forEach((o: any, index: number) => { 
@@ -162,18 +162,32 @@ export class DataMapper {
         else if (['PAID', '已收款'].includes(statusRaw)) mappedStatus = OrderStatus.PAID;
         else if (['CANCELLED', '已取消', '取消', 'DELETED'].includes(statusRaw)) mappedStatus = OrderStatus.CANCELLED;
 
+        const customerName = String(o.客戶名 || o.customerName || '未知客戶').trim().replace(/[\r\n]/g, '');
+        let deliveryTime = String(o.配送時間 || o.deliveryTime || '').trim();
+        let isTimeAutoFilled = o.isTimeAutoFilled === true || o.自動補齊時間 === true || String(o.isTimeAutoFilled).toLowerCase() === 'true';
+
+        // 雙重防護：如果歷史資料或外部來源 (如 LINE) 無配送時間，且存在店家預設時間，則自動補齊並標記
+        if (!deliveryTime && customers && customers.length > 0) {
+          const matchedCust = customers.find(c => c.name === customerName);
+          if (matchedCust && matchedCust.deliveryTime && matchedCust.deliveryTime.trim() !== '') {
+            deliveryTime = matchedCust.deliveryTime.trim();
+            isTimeAutoFilled = true;
+          }
+        }
+
         orderMap[oid] = { 
           id: oid, 
           createdAt: o.建立時間 || o.createdAt, 
-          customerName: String(o.客戶名 || o.customerName || '未知客戶').trim().replace(/[\r\n]/g, ''), 
+          customerName, 
           deliveryDate: normalizedDate, 
-          deliveryTime: o.配送時間 || o.deliveryTime, 
+          deliveryTime, 
           items: [], 
           note: o.備註 || o.note || '', 
           status: mappedStatus,
           source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
           deliveryMethod: o.配送方式 || o.deliveryMethod || '',
           trip: o.趟次 || o.trip || '',
+          isTimeAutoFilled,
           lastUpdated: safeNumber(o.lastUpdated, 0, `Order ${oid} lastUpdated`),
           version: safeNumber(o.version || o.Version, 1, `Order ${oid} version`),
           syncStatus: 'synced' 

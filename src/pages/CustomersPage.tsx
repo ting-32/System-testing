@@ -2,8 +2,12 @@ import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Customer, Product, Order, ToastType } from '../types';
-import { Users, Plus, Search, MapPin, History, Edit2, Trash2, X, ChevronDown, Info, RefreshCw } from 'lucide-react';
-import { COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS } from '../constants';
+import { Users, Plus, Search, MapPin, History, Edit2, Trash2, X, ChevronDown, Info, RefreshCw, Clock } from 'lucide-react';
+// CHANGED: 匯入 getOrderingHabitLabel 與 isWalkInCustomer 工具函式
+import { 
+  COLORS, WEEKDAYS, UNITS, DELIVERY_METHODS, ORDERING_HABITS, 
+  getOrderingHabitLabel, isWalkInCustomer 
+} from '../constants';
 import { CustomerProfileDrawer } from '../components/CustomerProfileDrawer';
 import { CustomerReportModal } from '../components/CustomerReportModal';
 import { HolidayCalendar } from '../components/HolidayCalendar';
@@ -182,7 +186,75 @@ return (
 </div>
 );
 })()}</div></div><div className="flex flex-col items-end gap-1 mt-2"><div className="flex gap-1">{WEEKDAYS.map(d => (<div key={d.value} className={`w-4 h-4 rounded-full text-[8px] flex items-center justify-center font-bold ${c.offDays?.includes(d.value) ? 'bg-rose-100 text-rose-400' : 'bg-gray-50 text-gray-300'}`}>{d.label}</div>))}</div>{c.holidayDates && c.holidayDates.length > 0 && <span className="text-[8px] font-bold text-rose-300">+{c.holidayDates.length} 特定休</span>}{c.priceList && c.priceList.length > 0 && <span className="text-[8px] font-bold text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded mt-1">已設 {c.priceList.length} 種單價</span>}</div></div>
-                <div className="space-y-3 mb-4 bg-gray-50/60 p-4 rounded-[24px] border border-gray-100"><div className="flex justify-between"><div className="text-[11px] font-bold text-slate-700 tracking-wide">配送時間:{formatTimeDisplay(c.deliveryTime)}</div><div className="flex gap-1">{c.defaultTrip && <div className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">{c.defaultTrip}</div>}{c.deliveryMethod && <div className="text-[11px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-lg border border-gray-100">{c.deliveryMethod}</div>}{c.paymentTerm && (<div className="text-[11px] font-bold text-morandi-blue bg-white px-2 py-0.5 rounded-lg border border-gray-100">{ORDERING_HABITS.find(t => t.value === c.paymentTerm)?.label}</div>)}</div></div>{c.defaultItems && c.defaultItems.length > 0 ? (<div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-200/50">{c.defaultItems.map((di, idx) => { const p = products.find(prod => prod.id === di.productId); return (<div key={idx} className="bg-white px-2 py-1 rounded-xl text-[10px] border border-gray-200 flex items-center gap-1 shadow-sm"><span className="font-bold text-slate-700">{p?.name || '未知品項'}</span><span className="font-extrabold text-morandi-blue">{di.quantity}{di.unit || p?.unit || '斤'}</span></div>); })}</div>) : (<div className="text-[10px] text-gray-400 font-medium italic pt-2 border-t border-gray-200/50 tracking-wide">尚未設定預設品項</div>)}</div>
+                
+                {/* CHANGED: 卡片內部渲染：時間/標籤/預設品項區塊 - 依據散客與固定店家動態分流 */}
+                <div className="space-y-3 mb-4 bg-gray-50/60 p-4 rounded-[24px] border border-gray-100">
+                  <div className="flex justify-between items-center">
+                    
+                    {/* CHANGED: 左側：根據 isWalkInCustomer 動態分流 */}
+                    {isWalkInCustomer(c.paymentTerm) ? (
+                      <div className="text-[11px] font-bold text-slate-500 tracking-wide flex items-center gap-1.5">
+                        <span className="text-sm">📦</span>
+                        <span>散客</span>
+                      </div>
+                    ) : (
+                      c.deliveryTime ? (
+                        <div className="text-[11px] font-bold text-slate-700 tracking-wide flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          配送時間: <span className="font-mono">{formatTimeDisplay(c.deliveryTime)}</span>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-amber-500" />
+                          未設時間
+                        </div>
+                      )
+                    )}
+
+                    {/* CHANGED: 右側：屬性標籤群組 */}
+                    <div className="flex items-center gap-1">
+                      {c.defaultTrip && (
+                        <div className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
+                          {c.defaultTrip}
+                        </div>
+                      )}
+                      {c.deliveryMethod && (
+                        <div className="text-[11px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-lg border border-gray-100">
+                          {c.deliveryMethod}
+                        </div>
+                      )}
+                      {c.paymentTerm && (
+                        <div className={`text-[11px] font-bold px-2 py-0.5 rounded-lg border ${
+                          isWalkInCustomer(c.paymentTerm) 
+                            ? 'bg-slate-100 text-slate-600 border-slate-200' 
+                            : 'text-morandi-blue bg-white border-gray-100'
+                        }`}>
+                          {getOrderingHabitLabel(c.paymentTerm)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* CHANGED: 預設品項說明提示 */}
+                  {c.defaultItems && c.defaultItems.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-200/50">
+                      {c.defaultItems.map((di, idx) => { 
+                        const p = products.find(prod => prod.id === di.productId); 
+                        return (
+                          <div key={idx} className="bg-white px-2 py-1 rounded-xl text-[10px] border border-gray-200 flex items-center gap-1 shadow-sm">
+                            <span className="font-bold text-slate-700">{p?.name || '未知品項'}</span>
+                            <span className="font-extrabold text-morandi-blue">{di.quantity}{di.unit || p?.unit || '斤'}</span>
+                          </div>
+                        ); 
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-gray-400 font-medium italic pt-2 border-t border-gray-200/50 tracking-wide">
+                      {isWalkInCustomer(c.paymentTerm) ? '散客無預設固定品項 (叫貨時即時輸入)' : '尚未設定預設品項'}
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex gap-2">
                    <motion.button whileTap={buttonTap} onClick={() => setViewingCustomerProfile(c.name)} className="flex-1 py-3 bg-slate-800 rounded-2xl text-white font-bold text-xs flex items-center justify-center gap-2 hover:bg-slate-700 transition-colors shadow-md shadow-slate-200"><History className="w-3.5 h-3.5" /> 歷史/報表</motion.button>
                    <motion.button whileTap={buttonTap} onClick={() => requireAuth(() => { setCustomerForm({ ...c, address: c.address || '', coordinates: c.coordinates || '', deliveryTime: formatTimeForInput(c.deliveryTime), paymentTerm: c.paymentTerm || 'regular', defaultTrip: c.defaultTrip || '' }); setIsEditingCustomer(c.id); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); editingVersionRef.current = c.lastUpdated; })} className="flex-1 py-3 bg-gray-50 rounded-2xl text-slate-700 font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"><Edit2 className="w-3.5 h-3.5" /></motion.button>

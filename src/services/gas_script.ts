@@ -1977,6 +1977,25 @@ function onSpreadsheetChange(e) {
     const currentTs = new Date().getTime();
     let isUpdated = false;
 
+    // 建立客戶預設配送時間查詢表 (Customer Time Map)
+    let customerTimeMap = {};
+    const custSheet = sheets.find(s => ["CUSTOMERS", "Customers"].includes(s.getName()));
+    if (custSheet && custSheet.getLastRow() > 1 && custSheet.getLastColumn() > 0) {
+      const cHeaders = custSheet.getRange(1, 1, 1, custSheet.getLastColumn()).getValues()[0];
+      const cNameIdx = cHeaders.findIndex(h => ["Name", "name", "客戶名", "客戶名稱"].includes(String(h).trim()));
+      const cTimeIdx = cHeaders.findIndex(h => ["DeliveryTime", "deliveryTime", "配送時間"].includes(String(h).trim()));
+      if (cNameIdx !== -1 && cTimeIdx !== -1) {
+        const custData = custSheet.getRange(2, 1, custSheet.getLastRow() - 1, custSheet.getLastColumn()).getValues();
+        custData.forEach(row => {
+          const cName = String(row[cNameIdx] || '').trim();
+          const cTime = String(row[cTimeIdx] || '').trim();
+          if (cName && cTime) {
+            customerTimeMap[cName] = cTime;
+          }
+        });
+      }
+    }
+
     // 巡視這三個需要同步的表單
     ["ORDERS", "CUSTOMERS", "PRODUCTS"].forEach(sheetName => {
       const sheet = sheets.find(s => s.getName() === sheetName);
@@ -1989,6 +2008,29 @@ function onSpreadsheetChange(e) {
       const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
       const lastUpdatedColIdx = headers.indexOf("LastUpdated");
       
+      // 若為 ORDERS 表，檢查是否有空缺配送時間 (例如由 LINE 搬入或外部 API 寫入)
+      if (sheetName === "ORDERS") {
+        const custColIdx = headers.findIndex(h => ["客戶名", "customerName", "CustomerName"].includes(String(h).trim()));
+        const timeColIdx = headers.findIndex(h => ["配送時間", "deliveryTime", "DeliveryTime"].includes(String(h).trim()));
+        
+        if (custColIdx !== -1 && timeColIdx !== -1) {
+          const timeValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+          let timeModified = false;
+          timeValues.forEach((row, rIdx) => {
+            const rowCust = String(row[custColIdx] || '').trim();
+            const rowTime = String(row[timeColIdx] || '').trim();
+            if (!rowTime && customerTimeMap[rowCust]) {
+              row[timeColIdx] = customerTimeMap[rowCust];
+              timeModified = true;
+            }
+          });
+          if (timeModified) {
+            sheet.getRange(2, 1, timeValues.length, lastCol).setValues(timeValues);
+            isUpdated = true;
+          }
+        }
+      }
+
       if (lastUpdatedColIdx !== -1) {
         // 抓取整個 LastUpdated 欄道的值
         const lastUpdatedValues = sheet.getRange(2, lastUpdatedColIdx + 1, lastRow - 1, 1).getValues();
@@ -2017,6 +2059,118 @@ function onSpreadsheetChange(e) {
     }
   } catch (err) {
     console.error("自動檢查空白 LastUpdated 發生錯誤:", err);
+  }
+}
+
+/**
+ * 搬移並同步 LINE 訂單至主訂單表 (ORDERS)
+ * 智能判定配送時間：
+ * 情況 A: LINE 訂單有指定時間 -> 保留指定時間
+ * 情況 B: LINE 訂單無時間，但該店家有預設時間 -> 自動帶入店家預設時間 (如 08:00)
+ * 情況 C: 皆無時間 -> 保留空白
+ */
+function syncLineOrders() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const lineSheet = ss.getSheetByName("LINE_ORDERS") || ss.getSheetByName("LineOrders");
+    if (!lineSheet || lineSheet.getLastRow() <= 1) {
+      return { success: true, count: 0, message: "無待處理的 LINE 訂單" };
+    }
+
+    const orderSheet = ss.getSheetByName("ORDERS") || ss.getSheetByName("Orders");
+    const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+
+    // 建立客戶預設配送時間與配送方式對照表
+    const custMap = {};
+    if (custSheet && custSheet.getLastRow() > 1) {
+      const cHeaders = custSheet.getRange(1, 1, 1, custSheet.getLastColumn()).getValues()[0];
+      const cNameIdx = cHeaders.findIndex(h => ["Name", "name", "客戶名", "客戶名稱"].includes(String(h).trim()));
+      const cTimeIdx = cHeaders.findIndex(h => ["DeliveryTime", "deliveryTime", "配送時間"].includes(String(h).trim()));
+      const cMethodIdx = cHeaders.findIndex(h => ["DeliveryMethod", "deliveryMethod", "配送方式"].includes(String(h).trim()));
+      
+      const cRows = custSheet.getRange(2, 1, custSheet.getLastRow() - 1, custSheet.getLastColumn()).getValues();
+      cRows.forEach(r => {
+        const name = String(r[cNameIdx] || '').trim();
+        if (name) {
+          custMap[name] = {
+            deliveryTime: cTimeIdx !== -1 ? String(r[cTimeIdx] || '').trim() : '',
+            deliveryMethod: cMethodIdx !== -1 ? String(r[cMethodIdx] || '').trim() : ''
+          };
+        }
+      });
+    }
+
+    // 讀取 LINE 訂單資料
+    const lineHeaders = lineSheet.getRange(1, 1, 1, lineSheet.getLastColumn()).getValues()[0];
+    const getLCol = (names, fallback = -1) => {
+      const idx = lineHeaders.findIndex(h => names.includes(String(h).trim()));
+      return idx !== -1 ? idx : fallback;
+    };
+
+    const lCustIdx = getLCol(["客戶名", "客戶名稱", "customerName", "CustomerName"]);
+    const lDateIdx = getLCol(["配送日期", "deliveryDate", "DeliveryDate"]);
+    const lTimeIdx = getLCol(["配送時間", "deliveryTime", "DeliveryTime"]);
+    const lProdIdx = getLCol(["品項", "產品名", "productName", "ProductName"]);
+    const lQtyIdx = getLCol(["數量", "quantity", "Quantity"]);
+    const lUnitIdx = getLCol(["單位", "unit", "Unit"]);
+    const lNoteIdx = getLCol(["備註", "note", "Note"]);
+
+    const lineRows = lineSheet.getRange(2, 1, lineSheet.getLastRow() - 1, lineSheet.getLastColumn()).getValues();
+    if (lineRows.length === 0) return { success: true, count: 0 };
+
+    const headerMap = ensureHeadersBatch(orderSheet, ["LastUpdated", "Trip", "資料來源", "Version", "單價", "小計"]);
+    const maxCol = Math.max(...Object.values(headerMap)) + 1;
+    const currentTs = String(Date.now());
+    const timestamp = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), "yyyy/MM/dd HH:mm:ss");
+
+    const newOrderRows = [];
+    lineRows.forEach(lRow => {
+      const custName = String(lRow[lCustIdx] || '').trim();
+      if (!custName) return;
+
+      const rawDate = lDateIdx !== -1 ? lRow[lDateIdx] : '';
+      let deliveryDate = rawDate;
+      if (rawDate instanceof Date) {
+        deliveryDate = Utilities.formatDate(rawDate, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
+      }
+
+      // 智能判定配送時間：優先使用 LINE 指定時間，若無則套用店家預設時間
+      let lineDeliveryTime = lTimeIdx !== -1 ? String(lRow[lTimeIdx] || '').trim() : '';
+      if (!lineDeliveryTime && custMap[custName]?.deliveryTime) {
+        lineDeliveryTime = custMap[custName].deliveryTime;
+      }
+
+      const row = new Array(maxCol).fill("");
+      row[0] = timestamp;
+      row[1] = "LINE-" + Utilities.getUuid().slice(0, 8);
+      row[2] = custName;
+      row[3] = deliveryDate;
+      row[4] = lineDeliveryTime;
+      row[5] = lProdIdx !== -1 ? String(lRow[lProdIdx] || '').trim() : '';
+      row[6] = lQtyIdx !== -1 ? Number(lRow[lQtyIdx]) || 1 : 1;
+      row[7] = lNoteIdx !== -1 ? String(lRow[lNoteIdx] || '').trim() : '';
+      row[8] = "PENDING";
+      row[9] = custMap[custName]?.deliveryMethod || "";
+      row[10] = lUnitIdx !== -1 ? (String(lRow[lUnitIdx] || '').trim() || "斤") : "斤";
+      row[headerMap["LastUpdated"]] = currentTs;
+      row[headerMap["資料來源"]] = "💬 LINE 訂單";
+      row[headerMap["Version"]] = 1;
+
+      newOrderRows.push(row);
+    });
+
+    if (newOrderRows.length > 0) {
+      safeSetValues(orderSheet, orderSheet.getLastRow() + 1, 1, newOrderRows);
+      // 清空已搬移的 LINE_ORDERS
+      lineSheet.deleteRows(2, lineRows.length);
+      notifyFirebase();
+    }
+
+    return { success: true, count: newOrderRows.length };
+  } finally {
+    lock.releaseLock();
   }
 }
 

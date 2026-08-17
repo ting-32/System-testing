@@ -59,6 +59,34 @@ export const ORDERING_HABITS = [
   { value: 'adhoc', label: '非預訂 (散客)', color: '#6B7280', bgColor: '#F3F4F6' }, // Gray
 ];
 
+// CHANGED: 1. 完整字典對照表（相容所有歷史代碼與別名）
+export const ORDERING_HABITS_LOOKUP: Record<string, string> = {
+  regular: '預訂店家 (固定)',
+  daily: '預訂店家 (固定)',
+  occasional: '預訂店家 (偶爾)',
+  weekly: '預訂店家 (偶爾)',
+  monthly: '預訂店家 (月結)',
+  adhoc: '非預訂 (散客)',
+  walk_in: '非預訂 (散客)',
+  walkin: '非預訂 (散客)',
+  '散客': '非預訂 (散客)',
+  '固定': '預訂店家 (固定)',
+  '偶爾': '預訂店家 (偶爾)'
+};
+
+// CHANGED: 2. 標籤轉換工具函式（防禦式設計：預設回傳固定店家，杜絕未定義英文）
+export const getOrderingHabitLabel = (term?: string): string => {
+  if (!term) return '預訂店家 (固定)';
+  return ORDERING_HABITS_LOOKUP[term.toLowerCase()] || term;
+};
+
+// CHANGED: 3. 散客統一判定函式
+export const isWalkInCustomer = (term?: string): boolean => {
+  if (!term) return false;
+  const lower = term.toLowerCase();
+  return ['adhoc', 'walk_in', 'walkin', '散客'].includes(lower);
+};
+
 // 保留此常數以供舊資料參考，但在UI中主要使用 ORDERING_HABITS
 export const PAYMENT_TERMS = [
   { value: 'daily', label: '現金/日結' },

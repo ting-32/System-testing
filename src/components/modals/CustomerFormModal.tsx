@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, ChevronDown, Plus, Trash2, Info, Settings } from 'lucide-react';
+import { X, ChevronDown, ChevronRight, Plus, Trash2, Info, Settings } from 'lucide-react';
 import { Customer, Product } from '../../types';
-import { WEEKDAYS, DELIVERY_METHODS, ORDERING_HABITS, UNITS } from '../../constants';
+// CHANGED: 匯入 isWalkInCustomer 與 getOrderingHabitLabel 工具函式
+import { WEEKDAYS, DELIVERY_METHODS, ORDERING_HABITS, UNITS, isWalkInCustomer, getOrderingHabitLabel } from '../../constants';
 import { buttonTap } from '../animations';
 import { ProductPicker } from '../ProductPicker';
 import { HolidayCalendar } from '../HolidayCalendar';
@@ -37,18 +38,41 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   const [pickerConfig, setPickerConfig] = useState<{isOpen: boolean, currentProductId?: string, onSelect: (id: string) => void}>({ isOpen: false, onSelect: () => {} });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [expandedItemIdxs, setExpandedItemIdxs] = useState<number[]>([]);
+  // CHANGED: 常用品項預設展開/收合狀態 (散客預設收合)
+  const [isDefaultItemsOpen, setIsDefaultItemsOpen] = useState(true);
+
+  // CHANGED: 切換預定習慣時的處理邏輯（散客清空主時間與細項時間，並收合常用品項）
+  const handlePaymentTermChange = (term: string) => {
+    if (isWalkInCustomer(term)) {
+      setCustomerForm(prev => ({
+        ...prev,
+        paymentTerm: term,
+        deliveryTime: '', // 立即清空主時間
+        defaultItems: (prev.defaultItems || []).map(item => ({ ...item, deliveryTime: '' })) // 清空細項時間
+      }));
+      setIsDefaultItemsOpen(false); // 散客預設收合常用品項
+    } else {
+      setCustomerForm(prev => ({
+        ...prev,
+        paymentTerm: term,
+        deliveryTime: prev.deliveryTime || '08:00'
+      }));
+      setIsDefaultItemsOpen(true);
+    }
+  };
 
   const handleSubmit = () => {
-    // We cannot detect conflicts smoothly without passing customers list or tracking lastUpdated in customers yet.
-    // However, we apply the updated data
     onSubmit(customerForm);
   };
 
   useEffect(() => {
     if (isOpen) {
-      setCustomerForm(initialData || {
+      const initial = initialData || {
         name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular', autoOrderEnabled: false, isPaused: false, isArchived: false
-      });
+      };
+      setCustomerForm(initial);
+      // CHANGED: 根據是否為散客初始化常用品項展開狀態
+      setIsDefaultItemsOpen(!isWalkInCustomer(initial.paymentTerm));
       setTempPriceProdId('');
       setTempPriceValue('');
       setTempPriceUnit('斤');
@@ -93,16 +117,20 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                       {DELIVERY_METHODS.map(method => (<option key={method} value={method}>{method}</option>))}
                     </select>
                   </div>
+                  {/* CHANGED: 預定習慣下拉選單，綁定 handlePaymentTermChange */}
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-gray-400 pl-1">預定習慣</label>
-                    <select value={customerForm.paymentTerm || 'regular'} onChange={(e) => setCustomerForm({...customerForm, paymentTerm: e.target.value as any})} className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all appearance-none">
+                    <select value={customerForm.paymentTerm || 'regular'} onChange={(e) => handlePaymentTermChange(e.target.value)} className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all appearance-none">
                       {ORDERING_HABITS.map(habit => (<option key={habit.value} value={habit.value}>{habit.label}</option>))}
                     </select>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-gray-400 pl-1">配送時間</label>
-                    <input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all" value={customerForm.deliveryTime || '08:00'} onChange={(e) => setCustomerForm({...customerForm, deliveryTime: e.target.value})} />
-                  </div>
+                  {/* CHANGED: 非散客才顯示配送時間輸入框 */}
+                  {!isWalkInCustomer(customerForm.paymentTerm) && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 pl-1">配送時間</label>
+                      <input type="time" className="w-full p-5 bg-white rounded-[24px] shadow-sm border border-slate-200 font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#8e9775] transition-all" value={customerForm.deliveryTime || '08:00'} onChange={(e) => setCustomerForm({...customerForm, deliveryTime: e.target.value})} />
+                    </div>
+                  )}
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-gray-400 pl-1">預設趟數</label>
                     <div className="relative">
@@ -127,38 +155,53 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
           {/* 右欄：品項與價格 */}
           {(editMode === 'full' || editMode === 'itemsOnly') && (
           <div className="space-y-6">
+             {/* CHANGED: 常用預設品項標題手風琴化 */}
              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest px-2">預設品項</label>
-                <div className="space-y-3">
-                   {(customerForm.defaultItems || []).map((item: any, idx: number) => (
-                      <div key={idx} className="flex flex-col gap-2">
-                         <div className="flex gap-2 items-center">
-                            <div onClick={() => setPickerConfig({ isOpen: true, currentProductId: item.productId, onSelect: (pid) => { const newItems = [...(customerForm.defaultItems || [])]; const p = products.find(x => x.id === pid); newItems[idx] = { ...item, productId: pid, unit: p?.unit || '斤' }; setCustomerForm({...customerForm, defaultItems: newItems}); } })} className="flex-1 bg-morandi-oatmeal/50 p-3 rounded-xl font-bold text-sm text-morandi-charcoal border border-slate-200 flex items-center justify-between cursor-pointer hover:border-morandi-blue transition-all">
-                               <span className={item.productId ? 'text-morandi-charcoal' : 'text-gray-400'}>{products.find(p => p.id === item.productId)?.name || '選擇品項...'}</span>
-                               <ChevronDown className="w-4 h-4 text-gray-400" />
-                            </div>
-                            <input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} className="w-16 p-3 bg-white rounded-xl text-center font-bold text-slate-700 outline-none border border-slate-200" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const newItems = [...(customerForm.defaultItems || [])]; const val = parseFloat(e.target.value); newItems[idx].quantity = isNaN(val) ? 0 : Math.max(0, val); setCustomerForm({...customerForm, defaultItems: newItems}); }} />
-                            <select value={item.unit || '斤'} onChange={(e) => { const newItems = [...(customerForm.defaultItems || [])]; newItems[idx].unit = e.target.value; setCustomerForm({...customerForm, defaultItems: newItems}); }} className="w-20 p-3 bg-white rounded-xl font-bold text-slate-700 outline-none border border-slate-200">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select>
-                            <button onClick={() => setExpandedItemIdxs(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx])} className={`p-3 rounded-xl transition-colors ${expandedItemIdxs.includes(idx) || item.deliveryTime ? 'bg-indigo-50 text-indigo-500' : 'bg-slate-50 text-slate-400 hover:text-slate-600'}`}><Settings className="w-4 h-4" /></button>
-                            <button onClick={() => setCustomerForm({...customerForm, defaultItems: customerForm.defaultItems?.filter((_, i) => i !== idx)})} className="p-3 bg-rose-50 text-rose-400 rounded-xl"><Trash2 className="w-4 h-4" /></button>
-                         </div>
-                         
-                         {/* 獨立配送設定 (進階展開) */}
-                         {(expandedItemIdxs.includes(idx) || item.deliveryTime) && (
-                           <div className="pl-4 pr-2 py-2 bg-slate-50 rounded-lg flex items-center justify-between border border-slate-100">
-                              <div className="flex items-center gap-2">
-                                 <label className="text-xs font-bold text-slate-500">獨立時間 (選填)</label>
-                                 <input type="time" className="p-1.5 text-xs bg-white border border-slate-200 rounded font-bold outline-none focus:border-indigo-300" value={item.deliveryTime || ''} onChange={(e) => { const newItems = [...(customerForm.defaultItems || [])]; newItems[idx].deliveryTime = e.target.value; setCustomerForm({...customerForm, defaultItems: newItems}); }} />
+                <button 
+                  type="button" 
+                  onClick={() => setIsDefaultItemsOpen(v => !v)}
+                  className="flex items-center justify-between w-full py-2 px-1 text-xs font-bold text-slate-700 hover:text-morandi-blue transition-colors group"
+                >
+                  <span className="text-[10px] font-bold text-morandi-pebble uppercase tracking-widest text-left group-hover:text-morandi-blue transition-colors">
+                    {isWalkInCustomer(customerForm.paymentTerm) 
+                      ? '📦 常用預設品項（散客建議依每次叫貨即時填寫，點此展開）' 
+                      : '常用預設品項'}
+                  </span>
+                  {isDefaultItemsOpen ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                </button>
+
+                {isDefaultItemsOpen && (
+                  <div className="space-y-3">
+                     {(customerForm.defaultItems || []).map((item: any, idx: number) => (
+                        <div key={idx} className="flex flex-col gap-2">
+                           <div className="flex gap-2 items-center">
+                              <div onClick={() => setPickerConfig({ isOpen: true, currentProductId: item.productId, onSelect: (pid) => { const newItems = [...(customerForm.defaultItems || [])]; const p = products.find(x => x.id === pid); newItems[idx] = { ...item, productId: pid, unit: p?.unit || '斤' }; setCustomerForm({...customerForm, defaultItems: newItems}); } })} className="flex-1 bg-morandi-oatmeal/50 p-3 rounded-xl font-bold text-sm text-morandi-charcoal border border-slate-200 flex items-center justify-between cursor-pointer hover:border-morandi-blue transition-all">
+                                 <span className={item.productId ? 'text-morandi-charcoal' : 'text-gray-400'}>{products.find(p => p.id === item.productId)?.name || '選擇品項...'}</span>
+                                 <ChevronDown className="w-4 h-4 text-gray-400" />
                               </div>
-                              {item.deliveryTime && (
-                                 <span className="text-[10px] text-indigo-400 font-bold bg-indigo-50 px-2 py-0.5 rounded">將被獨立拆單</span>
-                              )}
+                              <input type="number" min="0" onKeyDown={(e) => ["e", "E", "+", "-"].includes(e.key) && e.preventDefault()} className="w-16 p-3 bg-white rounded-xl text-center font-bold text-slate-700 outline-none border border-slate-200" value={item.quantity === 0 ? '' : item.quantity} onChange={(e) => { const newItems = [...(customerForm.defaultItems || [])]; const val = parseFloat(e.target.value); newItems[idx].quantity = isNaN(val) ? 0 : Math.max(0, val); setCustomerForm({...customerForm, defaultItems: newItems}); }} />
+                              <select value={item.unit || '斤'} onChange={(e) => { const newItems = [...(customerForm.defaultItems || [])]; newItems[idx].unit = e.target.value; setCustomerForm({...customerForm, defaultItems: newItems}); }} className="w-20 p-3 bg-white rounded-xl font-bold text-slate-700 outline-none border border-slate-200">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select>
+                              <button onClick={() => setExpandedItemIdxs(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx])} className={`p-3 rounded-xl transition-colors ${expandedItemIdxs.includes(idx) || item.deliveryTime ? 'bg-indigo-50 text-indigo-500' : 'bg-slate-50 text-slate-400 hover:text-slate-600'}`}><Settings className="w-4 h-4" /></button>
+                              <button onClick={() => setCustomerForm({...customerForm, defaultItems: customerForm.defaultItems?.filter((_, i) => i !== idx)})} className="p-3 bg-rose-50 text-rose-400 rounded-xl"><Trash2 className="w-4 h-4" /></button>
                            </div>
-                         )}
-                      </div>
-                   ))}
-                   <button onClick={() => setCustomerForm({...customerForm, defaultItems: [...(customerForm.defaultItems || []), {productId: '', quantity: 10, unit: '斤'}]})} className="w-full py-3 rounded-xl border border-dashed border-gray-300 text-gray-400 font-bold text-xs flex items-center justify-center gap-1 hover:bg-gray-50 tracking-wide"><Plus className="w-4 h-4" /> 新增預設品項</button>
-                </div>
+                           
+                           {/* 獨立配送設定 (進階展開) */}
+                           {(expandedItemIdxs.includes(idx) || item.deliveryTime) && (
+                             <div className="pl-4 pr-2 py-2 bg-slate-50 rounded-lg flex items-center justify-between border border-slate-100">
+                                <div className="flex items-center gap-2">
+                                   <label className="text-xs font-bold text-slate-500">獨立時間 (選填)</label>
+                                   <input type="time" className="p-1.5 text-xs bg-white border border-slate-200 rounded font-bold outline-none focus:border-indigo-300" value={item.deliveryTime || ''} onChange={(e) => { const newItems = [...(customerForm.defaultItems || [])]; newItems[idx].deliveryTime = e.target.value; setCustomerForm({...customerForm, defaultItems: newItems}); }} />
+                                </div>
+                                {item.deliveryTime && (
+                                   <span className="text-[10px] text-indigo-400 font-bold bg-indigo-50 px-2 py-0.5 rounded">將被獨立拆單</span>
+                                )}
+                             </div>
+                           )}
+                        </div>
+                     ))}
+                     <button onClick={() => setCustomerForm({...customerForm, defaultItems: [...(customerForm.defaultItems || []), {productId: '', quantity: 10, unit: '斤'}]})} className="w-full py-3 rounded-xl border border-dashed border-gray-300 text-gray-400 font-bold text-xs flex items-center justify-center gap-1 hover:bg-gray-50 tracking-wide"><Plus className="w-4 h-4" /> 新增預設品項</button>
+                  </div>
+                )}
              </div>
              
              <div className="space-y-2">
@@ -350,7 +393,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
         <HolidayCalendar 
           storeName={customerForm.name || ''} 
           holidays={customerForm.holidayDates || []} 
-          offDays={customerForm.offDays || []}
+          offDays={customerForm.offDays || []} 
           onToggle={(date) => { 
             const current = customerForm.holidayDates || []; 
             const newHolidays = current.includes(date) ? current.filter(d => d !== date) : [...current, date]; 

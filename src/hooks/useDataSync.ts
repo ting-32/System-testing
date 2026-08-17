@@ -121,12 +121,20 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         if (cachedCust) { setCustomers(cachedCust); hasAnyCache = true; }
         if (cachedProd) { setProducts(cachedProd); hasAnyCache = true; }
         if (cachedOrd) { 
+           // 建立客戶時間對照 Map
+           const custTimeMap = new Map((cachedCust || []).map(c => [c.name, c.deliveryTime]));
            // 偵測並清理「幽靈狀態」，將上次意外中斷而遺留的 pending 轉為 error
-           const cleanedOrders = cachedOrd.map(o => 
-             o.syncStatus === 'pending' 
-               ? { ...o, syncStatus: 'error' as const, errorMessage: '應用程式意外關閉或網路超時，請點擊重試' } 
-               : o
-           );
+           const cleanedOrders = cachedOrd.map(o => {
+             let deliveryTime = o.deliveryTime;
+             let isTimeAutoFilled = o.isTimeAutoFilled;
+             if (!deliveryTime && custTimeMap.has(o.customerName) && custTimeMap.get(o.customerName)) {
+               deliveryTime = custTimeMap.get(o.customerName)!;
+               isTimeAutoFilled = true;
+             }
+             return o.syncStatus === 'pending' 
+               ? { ...o, deliveryTime, isTimeAutoFilled, syncStatus: 'error' as const, errorMessage: '應用程式意外關閉或網路超時，請點擊重試' } 
+               : { ...o, deliveryTime, isTimeAutoFilled };
+           });
            setOrders(cleanedOrders); 
            hasAnyCache = true; 
         }
@@ -281,18 +289,32 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
                rawDate = rawDate.replace(/\//g, '-').replace(/-0?/g, '-').replace(/-(\d)(?!\d)/g, '-0$1');
             }
             const normalizedDate = normalizeDate(rawDate); 
+            const customerName = o.客戶名 || o.customerName || '未知客戶';
+            let deliveryTime = String(o.配送時間 || o.deliveryTime || '').trim();
+            let isTimeAutoFilled = o.isTimeAutoFilled === true || o.自動補齊時間 === true || String(o.isTimeAutoFilled).toLowerCase() === 'true';
+
+            // 雙重防護：如果外部來源 (如 LINE) 無配送時間，自動從店家預設時間帶入
+            if (!deliveryTime) {
+              const matchedCust = mappedCustomers.find(c => c.name === customerName);
+              if (matchedCust && matchedCust.deliveryTime && matchedCust.deliveryTime.trim() !== '') {
+                deliveryTime = matchedCust.deliveryTime.trim();
+                isTimeAutoFilled = true;
+              }
+            }
+
             orderMap[oid] = { 
               id: oid, 
               createdAt: o.建立時間 || o.createdAt, 
-              customerName: o.客戶名 || o.customerName || '未知客戶', 
+              customerName, 
               deliveryDate: normalizedDate, 
-              deliveryTime: o.配送時間 || o.deliveryTime, 
+              deliveryTime, 
               items: [], 
               note: o.備註 || o.note || '', 
               status: (o.狀態 || o.status as OrderStatus) || OrderStatus.PENDING, 
               source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
               deliveryMethod: o.配送方式 || o.deliveryMethod || '',
               trip: o.趟次 || o.trip || '',
+              isTimeAutoFilled,
               lastUpdated: safeNumber(o.lastUpdated, 0, `Order ${oid} lastUpdated`),
               syncStatus: 'synced' 
             }; 
@@ -407,6 +429,18 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
                      }
                  }
 
+                 // 3. 補齊既有訂單中缺失的配送時間
+                 const custTimeMap = new Map((mappedCustomers.length > 0 ? mappedCustomers : latestDataRef.current.customers || []).map(c => [c.name, c.deliveryTime]));
+                 for (const [orderId, orderData] of mergedMap.entries()) {
+                   if (!orderData.deliveryTime && custTimeMap.has(orderData.customerName) && custTimeMap.get(orderData.customerName)) {
+                     mergedMap.set(orderId, {
+                       ...orderData,
+                       deliveryTime: custTimeMap.get(orderData.customerName)!,
+                       isTimeAutoFilled: true
+                     });
+                   }
+                 }
+
                  return Array.from(mergedMap.values());
               });
            }
@@ -437,7 +471,15 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
                      }
                  }
              });
-             return mergedOrders;
+
+             // 補齊可能缺少時間的訂單
+             const custTimeMap = new Map(mappedCustomers.map(c => [c.name, c.deliveryTime]));
+             return mergedOrders.map(o => {
+               if (!o.deliveryTime && custTimeMap.has(o.customerName) && custTimeMap.get(o.customerName)) {
+                 return { ...o, deliveryTime: custTimeMap.get(o.customerName)!, isTimeAutoFilled: true };
+               }
+               return o;
+             });
            });
         }
 
