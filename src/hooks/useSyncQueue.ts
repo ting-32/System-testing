@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { SyncTask } from '../types';
 import { fetchWithRetry } from '../utils/fetchUtils';
 import localforage from 'localforage';
@@ -8,6 +8,9 @@ const queueStore = localforage.createInstance({
   name: 'NMR_App_DB',
   storeName: 'nmr_action_queue',
 });
+
+// 方案二：智慧防抖視窗 (400ms 為使用者連環滑動的黃金聚合時間)
+const STATUS_DEBOUNCE_MS = 400;
 
 export function useSyncQueue(
   apiEndpoint: string, 
@@ -19,6 +22,10 @@ export function useSyncQueue(
   const [syncQueue, setSyncQueue] = useState<SyncTask[]>([]);
   const [isSyncingQueue, setIsSyncingQueue] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
+
+  // 智慧防抖：狀態更新專用記憶體緩衝區與計時器
+  const statusBufferRef = useRef<Map<string, any>>(new Map());
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 4. 啟動喚醒 (Hydration)：自動掃描未完成任務並推入 Queue
   useEffect(() => {
@@ -56,9 +63,77 @@ export function useSyncQueue(
     hydrateQueue();
   }, []);
 
-  // 2. 寫入攔截：同時寫入 React State 與 nmr_action_queue
+  // 將狀態緩衝池內的變更 Flush 到真正的 SyncQueue 與 LocalForage
+  const flushStatusBuffer = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+
+    if (statusBufferRef.current.size === 0) return;
+
+    const mergedUpdates = Array.from(statusBufferRef.current.values());
+    statusBufferRef.current.clear();
+
+    const compressedTask: SyncTask = {
+      taskId: crypto.randomUUID(),
+      type: 'BATCH_UPDATE',
+      payload: { updates: mergedUpdates },
+      retryCount: 0,
+      timestamp: Date.now()
+    };
+
+    // 一次性寫入 localForage 與 React State
+    queueStore.setItem(compressedTask.taskId, compressedTask).catch(console.error);
+    setSyncQueue(prev => [...prev, compressedTask]);
+  }, []);
+
+  // 頁面背景切換或視窗即將關閉時，強制 Flush 緩衝區確保不遺漏
+  useEffect(() => {
+    const handleVisibilityOrUnload = () => {
+      if (document.visibilityState === 'hidden') {
+        flushStatusBuffer();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityOrUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrUnload);
+      flushStatusBuffer();
+    };
+  }, [flushStatusBuffer]);
+
+  // 2. 寫入攔截：整合方案二的防抖吸收與方案一的合併機制
   const addSyncTask = useCallback(async (newTask: SyncTask) => {
     try {
+      // 針對「狀態更新 (UPDATE_STATUS / BATCH_UPDATE)」實施智慧防抖壓縮 (Smart Debounce)
+      if (newTask.type === 'UPDATE_STATUS' || newTask.type === 'BATCH_UPDATE') {
+        const newUpdates = newTask.payload?.updates || [];
+        if (newUpdates.length > 0) {
+          // 放入防抖記憶體緩衝區
+          newUpdates.forEach((u: any) => {
+            if (u && u.id) {
+              statusBufferRef.current.set(u.id, u);
+            }
+          });
+
+          // 重設防抖計時器
+          if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+          }
+
+          debounceTimerRef.current = setTimeout(() => {
+            flushStatusBuffer();
+          }, STATUS_DEBOUNCE_MS);
+
+          return; // 已被防抖吸收，等待 400ms 停手後自動打包寫入
+        }
+      }
+
+      // 如果是其他操作（如 delete_order 或 UPDATE_CONTENT），先將現有緩衝區 Flush，維持時序正確
+      if (statusBufferRef.current.size > 0) {
+        flushStatusBuffer();
+      }
+
       setSyncQueue(prevQueue => {
         // 1. 複製一份目前的佇列以便操作
         const activeTasks = [...prevQueue];
@@ -87,7 +162,7 @@ export function useSyncQueue(
           }
         }
         
-        // 3. 針對「刪除訂單」的處理 (選做，但強烈建議)
+        // 3. 針對「刪除訂單」的處理
         if (newTask.type === 'delete_order') {
            const targetOrderId = newTask.payload.id;
            const filteredTasks = activeTasks.filter(t => {
@@ -105,44 +180,6 @@ export function useSyncQueue(
            return filteredTasks;
         }
 
-        // UPDATE_STATUS or BATCH_UPDATE handling
-        if (newTask.type === 'UPDATE_STATUS' || newTask.type === 'BATCH_UPDATE') {
-          const newUpdates = newTask.payload?.updates || [];
-          if (newUpdates.length > 0) {
-            // 飛行中或等冪攔截 (In-Flight Drop)：
-            const hasIdenticalIntent = activeTasks.some(t => {
-              if (t.type !== newTask.type) return false;
-              const pendingUpdates = t.payload?.updates || [];
-              return newUpdates.every((nu: any) => 
-                pendingUpdates.some((pu: any) => pu.id === nu.id && pu.status === nu.status && pu.trip === nu.trip)
-              );
-            });
-            
-            if (hasIdenticalIntent) {
-              console.log('[SyncQueue] Intercepted identical intent. Request dropped.');
-              return activeTasks;
-            }
-
-            // 重複任務覆蓋 (例如同一筆訂單短時間內改成不同狀態，後者覆蓋前者)
-            const existingIdx = activeTasks.findIndex(t => {
-              if (t.type !== newTask.type) return false;
-              const pendingUpdates = t.payload?.updates || [];
-              return newUpdates.some((nu: any) => pendingUpdates.some((pu: any) => pu.id === nu.id));
-            });
-
-            if (existingIdx >= 0) {
-              activeTasks[existingIdx] = { 
-                ...newTask, 
-                taskId: activeTasks[existingIdx].taskId, 
-                timestamp: Date.now(), 
-                retryCount: 0 
-              };
-              queueStore.setItem(activeTasks[existingIdx].taskId, activeTasks[existingIdx]).catch(console.error);
-              return activeTasks;
-            }
-          }
-        }
-
         // 4. 若沒有可合併的對象，就當作全新的一般任務插入
         if (!newTask.taskId) newTask.taskId = crypto.randomUUID();
         activeTasks.push(newTask);
@@ -153,30 +190,61 @@ export function useSyncQueue(
     } catch (err) {
       console.error('[SyncQueue] Failed to persist task:', err);
     }
-  }, []);
+  }, [flushStatusBuffer]);
 
+  // 3. 佇列發送 (Process Queue) - 實施方案一（自動批次合併）+ 方案三（動態零延遲連續出列）
   useEffect(() => {
     if (!isHydrated || syncQueue.length === 0 || isSyncingQueue) return;
 
     const processQueue = async () => {
       setIsSyncingQueue(true);
-      const task = syncQueue[0];
+      const firstTask = syncQueue[0];
+
+      // 檢查是否可批次打包合併 (Auto Batch Merging)
+      const isBatchable = firstTask.type === 'UPDATE_STATUS' || firstTask.type === 'BATCH_UPDATE';
+      let batchTasks: SyncTask[] = [];
+
+      if (isBatchable) {
+        // 撈出前段所有同為 UPDATE_STATUS / BATCH_UPDATE 的任務（最多 40 筆為一個 Chunk）
+        for (const t of syncQueue) {
+          if ((t.type === 'UPDATE_STATUS' || t.type === 'BATCH_UPDATE') && batchTasks.length < 40) {
+            batchTasks.push(t);
+          } else {
+            break;
+          }
+        }
+      } else {
+        batchTasks = [firstTask];
+      }
+
+      const processedTaskIds = batchTasks.map(t => t.taskId);
 
       try {
         if (!apiEndpoint) throw new Error('No API endpoint');
         const token = localStorage.getItem('APP_SESSION_TOKEN');
         let bodyPayload: any;
 
-        if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
-           bodyPayload = {
-             action: 'batchUpdateOrders',
-             token: token || "",
-             data: task.payload
-           };
-        } else if (task.type === 'UPDATE_CONTENT') {
-           bodyPayload = { action: 'updateOrderContent', token: token || "", data: task.payload };
-        } else if (task.type === 'delete_order') {
-           bodyPayload = { action: 'deleteOrder', token: token || "", data: task.payload };
+        if (isBatchable) {
+          // 合併 updates 並以最新狀態去重
+          const updateMap = new Map<string, any>();
+          batchTasks.forEach(t => {
+            (t.payload?.updates || []).forEach((u: any) => {
+              if (u && u.id) {
+                updateMap.set(u.id, u);
+              }
+            });
+          });
+          const mergedUpdates = Array.from(updateMap.values());
+
+          bodyPayload = {
+            action: 'batchUpdateOrders',
+            token: token || "",
+            data: { updates: mergedUpdates }
+          };
+        } else if (firstTask.type === 'UPDATE_CONTENT') {
+          bodyPayload = { action: 'updateOrderContent', token: token || "", data: firstTask.payload };
+        } else if (firstTask.type === 'delete_order') {
+          bodyPayload = { action: 'deleteOrder', token: token || "", data: firstTask.payload };
         }
 
         const res = await fetchWithRetry(
@@ -188,7 +256,7 @@ export function useSyncQueue(
           },
           undefined,
           2, // retries
-          4000, // delay
+          2000, // delay
           true, // silentFail
           30000 // timeout
         );
@@ -196,22 +264,26 @@ export function useSyncQueue(
         if (res.ok) {
            const json = await res.json();
            if (json.success) {
-               // 3. 刪除機制：只有當收到 GAS 回傳 HTTP 200 成功時才刪除
-               await queueStore.removeItem(task.taskId);
-               setSyncQueue(prev => prev.filter(t => t.taskId !== task.taskId));
+               // 成功：平行批次清除 localForage 與 React State
+               await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
+               setSyncQueue(prev => prev.filter(t => !processedTaskIds.includes(t.taskId)));
                
                if (onSyncSuccess) {
-                   onSyncSuccess(task, json.data || {});
+                   batchTasks.forEach(t => onSyncSuccess(t, json.data || {}));
                }
            } else {
                if (json.errorCode === 'VERSION_CONFLICT' || json.errorCode === 'ERR_VERSION_CONFLICT') {
                    console.log('[SyncQueue] Auto recovering from VERSION_CONFLICT...');
                    try {
                        let targets: string[] = [];
-                       if (task.type === 'UPDATE_CONTENT' || task.type === 'delete_order') {
-                           targets.push(task.payload.id);
-                       } else if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
-                           targets = (task.payload?.updates || []).map((u: any) => u.id);
+                       if (firstTask.type === 'UPDATE_CONTENT' || firstTask.type === 'delete_order') {
+                           targets.push(firstTask.payload.id);
+                       } else if (isBatchable) {
+                           batchTasks.forEach(t => {
+                             (t.payload?.updates || []).forEach((u: any) => {
+                               if (u?.id && !targets.includes(u.id)) targets.push(u.id);
+                             });
+                           });
                        }
                        if (targets.length === 1 && targets[0]) {
                             const getOrderRes = await fetchWithRetry(apiEndpoint, {
@@ -223,23 +295,23 @@ export function useSyncQueue(
                                 const orderData = await getOrderRes.json();
                                 if (orderData.success && orderData.data) {
                                     const latestVersion = orderData.data.version || orderData.data.Version || 0;
-                                    const newPayload = { ...task.payload };
-                                    if (task.type === 'UPDATE_CONTENT') {
+                                    const newPayload = { ...firstTask.payload };
+                                    if (firstTask.type === 'UPDATE_CONTENT') {
                                         newPayload.version = latestVersion;
-                                    } else if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
+                                    } else if (isBatchable) {
                                         if (newPayload.updates && newPayload.updates[0]) {
                                             newPayload.updates[0].version = latestVersion;
                                         }
-                                    } else if (task.type === 'delete_order') {
+                                    } else if (firstTask.type === 'delete_order') {
                                         newPayload.originalLastUpdated = orderData.data.lastUpdated; 
                                     }
                                     const recoveredTask = {
-                                        ...task,
+                                        ...firstTask,
                                         payload: newPayload,
                                         retryCount: 0
                                     };
-                                    setSyncQueue(prev => prev.map(t => t.taskId === task.taskId ? recoveredTask : t));
-                                    await queueStore.setItem(task.taskId, recoveredTask);
+                                    setSyncQueue(prev => prev.map(t => t.taskId === firstTask.taskId ? recoveredTask : t));
+                                    await queueStore.setItem(firstTask.taskId, recoveredTask);
                                     addToast?.('已在背景自動修復資料衝突，即將重試更新', 'info');
                                     setIsSyncingQueue(false);
                                     return; 
@@ -250,12 +322,12 @@ export function useSyncQueue(
                        console.error('[SyncQueue] Failed to auto-recover', e);
                    }
                    // 發生不可逆的格式或版本錯誤，也是丟棄任務
-                   await queueStore.removeItem(task.taskId);
-                   setSyncQueue(prev => prev.filter(t => t.taskId !== task.taskId));
+                   await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
+                   setSyncQueue(prev => prev.filter(t => !processedTaskIds.includes(t.taskId)));
                    
-               addToast?.('⚠️ 發生無法自動修復的版本衝突，請重新整理頁面後再試一次！', 'error');
+                   addToast?.('⚠️ 發生無法自動修復的版本衝突，請重新整理頁面後再試一次！', 'error');
                    if (onSyncGiveUp) {
-                       onSyncGiveUp(task);
+                       batchTasks.forEach(t => onSyncGiveUp(t));
                    }
                } else {
                    throw new Error(json.error || 'Server error');
@@ -268,7 +340,7 @@ export function useSyncQueue(
         let isTaskGivenUp = false;
         
         setSyncQueue(prev => prev.map(t => {
-           if (t.taskId === task.taskId) {
+           if (processedTaskIds.includes(t.taskId)) {
                const currentRetries = typeof t.retryCount === 'number' && !isNaN(t.retryCount) ? t.retryCount : 0;
                const newRetries = currentRetries + 1;
                if (newRetries > 10) {
@@ -276,7 +348,7 @@ export function useSyncQueue(
                  isTaskGivenUp = true;
                  addToast?.(`訂單更新背景同步失敗過多次，請整理畫面重試`, 'error');
                  if (onSyncError) {
-                     onSyncError(task, '同步失敗過多次');
+                     onSyncError(t, '同步失敗過多次');
                  }
                  return null as any; 
                }
@@ -290,14 +362,14 @@ export function useSyncQueue(
         }).filter(Boolean));
 
         if (isTaskGivenUp) {
-           await queueStore.removeItem(task.taskId);
+           await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
            if (onSyncGiveUp) {
-               onSyncGiveUp(task);
+               batchTasks.forEach(t => onSyncGiveUp(t));
            }
         }
 
-        // Add a delay before next attempt so we don't spam if it's an immediate failure
-        await new Promise(r => setTimeout(r, 6000));
+        // 失敗時使用退避延遲 (Error Backoff Delay)，避免網路故障時狂發請求
+        await new Promise(r => setTimeout(r, 4000));
       } finally {
         setIsSyncingQueue(false);
       }
@@ -309,9 +381,10 @@ export function useSyncQueue(
     const currentHour = new Date().getHours();
     const isMaintenanceWindow = currentHour >= 3 && currentHour < 4;
 
-    // 實作短暫防抖 (Debounce / Throttle) 延遲出列
-    // 如果在凌晨 3 點到 4 點之間，將間隔拉長到 15 分鐘，避免與背景自動建單腳本產生 Lock 競爭
-    const timeout = isMaintenanceWindow ? 15 * 60 * 1000 : 1000;
+    // 【方案三：動態縮短任務間隔 (Zero Delay on Queue Flush)】
+    // 一般正常白天營運時段：0ms 零延遲立即推進出列（全速發送下一筆異質任務）
+    // 凌晨 3:00 ~ 4:00 維護期：延遲 15 分鐘避免與伺服器排程鎖定衝突
+    const timeout = isMaintenanceWindow ? 15 * 60 * 1000 : 0;
     
     if (isMaintenanceWindow && syncQueue.length > 0 && !isSyncingQueue) {
        console.log(`[SyncQueue] 進入凌晨維護期，延遲同步操作 ${timeout/60000} 分鐘`);
@@ -328,9 +401,9 @@ export function useSyncQueue(
   // 5. 攔截關閉事件 (BeforeUnload)
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      flushStatusBuffer(); // 關閉前確保緩衝區寫入
       if (syncQueue.length > 0 || isSyncingQueue) {
         e.preventDefault();
-        // 現代瀏覽器會忽略自訂文字，只顯示原生的「您有未儲存的變更」警告
         e.returnValue = '';
       }
     };
@@ -339,7 +412,7 @@ export function useSyncQueue(
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [syncQueue.length, isSyncingQueue]);
+  }, [syncQueue.length, isSyncingQueue, flushStatusBuffer]);
 
   const removeTaskByPayloadId = useCallback(async (payloadId: string) => {
     // 找出符合的 task
