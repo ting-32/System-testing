@@ -182,19 +182,23 @@ export const safeJsonArray = (val: any) => {
 
 export const formatTimeDisplay = (time: any) => {
   if (!time) return '未設定';
-  const date = new Date(time);
-  if (!isNaN(date.getTime()) && String(time).includes('-')) {
-    const h = date.getHours();
-    const m = String(date.getMinutes()).padStart(2, '0');
-    return `${h}:${m}`;
-  }
   const str = String(time).trim();
-  const parts = str.split(':');
+  if (str.includes('T') || (str.includes('-') && str.includes(':'))) {
+    const date = new Date(str);
+    if (!isNaN(date.getTime())) {
+      const h = date.getHours();
+      const m = String(date.getMinutes()).padStart(2, '0');
+      return `${h}:${m}`;
+    }
+  }
+  const cleanStr = str.replace(/：/g, ':');
+  const parts = cleanStr.split(':');
   if (parts.length >= 2) {
-    const h = parseInt(parts[0], 10);
-    if (!isNaN(h) && h >= 0 && h < 24) {
-       const m = parts[1].substring(0, 2);
-       return `${h}:${m}`;
+    const h = parseInt(parts[0].replace(/[^\d]/g, ''), 10);
+    const mStr = parts[1].replace(/[^\d]/g, '').substring(0, 2);
+    const m = parseInt(mStr, 10);
+    if (!isNaN(h) && h >= 0 && h < 24 && !isNaN(m) && m >= 0 && m < 60) {
+       return `${h}:${String(m).padStart(2, '0')}`;
     }
   }
   return str;
@@ -202,19 +206,23 @@ export const formatTimeDisplay = (time: any) => {
 
 export const formatTimeForInput = (time: any) => {
   if (!time) return '08:00';
-  const date = new Date(time);
-  if (!isNaN(date.getTime()) && String(time).includes('-')) {
-    const h = String(date.getHours()).padStart(2, '0');
-    const m = String(date.getMinutes()).padStart(2, '0');
-    return `${h}:${m}`;
-  }
   const str = String(time).trim();
-  const parts = str.split(':');
+  if (str.includes('T') || (str.includes('-') && str.includes(':'))) {
+    const date = new Date(str);
+    if (!isNaN(date.getTime())) {
+      const h = String(date.getHours()).padStart(2, '0');
+      const m = String(date.getMinutes()).padStart(2, '0');
+      return `${h}:${m}`;
+    }
+  }
+  const cleanStr = str.replace(/：/g, ':');
+  const parts = cleanStr.split(':');
   if (parts.length >= 2) {
-    let h = parseInt(parts[0], 10);
-    if (!isNaN(h) && h >= 0 && h < 24) {
-       const m = parts[1].substring(0, 2);
-       return `${String(h).padStart(2, '0')}:${m}`;
+    let h = parseInt(parts[0].replace(/[^\d]/g, ''), 10);
+    const mStr = parts[1].replace(/[^\d]/g, '').substring(0, 2);
+    let m = parseInt(mStr, 10);
+    if (!isNaN(h) && h >= 0 && h < 24 && !isNaN(m) && m >= 0 && m < 60) {
+       return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     }
   }
   return '08:00';
@@ -274,17 +282,28 @@ export const getOrderDeliveryMinutes = (
     cust = customerMap instanceof Map ? customerMap.get(order.customerName) : customerMap[order.customerName];
   }
 
-  const rawTime = (order.deliveryTime && String(order.deliveryTime).trim() !== '') 
+  let rawTime = (order.deliveryTime && String(order.deliveryTime).trim() !== '') 
     ? String(order.deliveryTime).trim() 
     : (cust?.deliveryTime ? String(cust.deliveryTime).trim() : '');
 
   if (!rawTime) return 9999; // 未設時間排在最後
 
+  // 1. 若為 ISO 日期時間字串 (包含 T 或 - 且有 :)
+  if (rawTime.includes('T') || (rawTime.includes('-') && rawTime.includes(':'))) {
+    const d = new Date(rawTime);
+    if (!isNaN(d.getTime())) {
+      return d.getHours() * 60 + d.getMinutes();
+    }
+  }
+
+  // 2. 統一將全形冒號取代為半形，並清理中文與多餘非數字冒號字元
+  rawTime = rawTime.replace(/：/g, ':').replace(/[^\d:]/g, '');
+
   const parts = rawTime.split(':');
   if (parts.length >= 2) {
     const hours = parseInt(parts[0], 10);
     const minutes = parseInt(parts[1], 10);
-    if (!isNaN(hours) && !isNaN(minutes)) {
+    if (!isNaN(hours) && !isNaN(minutes) && hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
       return hours * 60 + minutes;
     }
   }

@@ -411,7 +411,7 @@ export const SchedulePage: React.FC<SchedulePageProps> = ({
 
             return sortedTrips.map(trip => {
               // 2. 趟次內排序：若處於手動調整模式且已設定 sortOrder 則以手動順序優先；平時則以配送時間升冪排序 (例如 09:05 -> 09:15)
-              const tripOrders = groupedByTrip[trip].sort((a, b) => {
+              const tripOrders = [...groupedByTrip[trip]].sort((a, b) => {
                 if (isOrderReorderMode && a.sortOrder !== undefined && b.sortOrder !== undefined && a.sortOrder !== b.sortOrder) {
                   return a.sortOrder - b.sortOrder;
                 }
