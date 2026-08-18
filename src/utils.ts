@@ -11,6 +11,15 @@ export const getStatusStyles = (status: OrderStatus) => {
         iconColor: '#4A6356',
         label: '已收款'
       };
+    case OrderStatus.PAID_UNSHIPPED:
+      return {
+        cardBg: '#F0FDFA', // 淺青色底 (Teal/Cyan Tint)
+        cardBorder: '#99F6E4', // Teal-200
+        tagBg: '#CCFBF1', // Teal-100
+        tagText: '#0F766E', // Teal-700
+        iconColor: '#0D9488', // Teal-600
+        label: '已收未配'
+      };
     case OrderStatus.SHIPPED:
       return {
         cardBg: '#F7F3E8', // 淺米杏色 (Light Beige/Latte)
@@ -210,3 +219,76 @@ export const formatTimeForInput = (time: any) => {
   }
   return '08:00';
 };
+
+/**
+ * 處理 LINE 傳入或外部來源訂單時的自動趟數與時間增強邏輯 (Fallback Auto-fill)
+ */
+export const enhanceOrderWithCustomerDefaults = <T extends Partial<import('./types').Order>>(
+  rawOrder: T, 
+  customerMap: Record<string, import('./types').Customer> | Map<string, import('./types').Customer>
+): T => {
+  const customerName = rawOrder.customerName || '';
+  const customer = customerMap instanceof Map ? customerMap.get(customerName) : customerMap[customerName];
+  
+  // 趟數自動填補：若訂單本身沒帶 trip 或為空白，自動取店家預設 defaultTrip
+  const hasExplicitTrip = rawOrder.trip && String(rawOrder.trip).trim() !== '';
+  const effectiveTrip = hasExplicitTrip 
+    ? String(rawOrder.trip).trim() 
+    : (customer?.defaultTrip && customer.defaultTrip.trim() !== '' ? customer.defaultTrip.trim() : (rawOrder.trip || ''));
+
+  const isTripAutoFilled = !hasExplicitTrip && !!customer?.defaultTrip && customer.defaultTrip.trim() !== '';
+
+  // 配送時間自動填補
+  const hasExplicitTime = rawOrder.deliveryTime && String(rawOrder.deliveryTime).trim() !== '';
+  const effectiveTime = hasExplicitTime
+    ? String(rawOrder.deliveryTime).trim()
+    : (customer?.deliveryTime && customer.deliveryTime.trim() !== '' ? customer.deliveryTime.trim() : (rawOrder.deliveryTime || ''));
+
+  const isTimeAutoFilled = !hasExplicitTime && !!customer?.deliveryTime && customer.deliveryTime.trim() !== '';
+
+  // 配送方式自動填補
+  const effectiveMethod = (rawOrder.deliveryMethod && String(rawOrder.deliveryMethod).trim() !== '')
+    ? rawOrder.deliveryMethod
+    : (customer?.deliveryMethod || rawOrder.deliveryMethod || '');
+
+  return {
+    ...rawOrder,
+    trip: effectiveTrip,
+    deliveryTime: effectiveTime,
+    deliveryMethod: effectiveMethod,
+    isTripAutoFilled: rawOrder.isTripAutoFilled ?? isTripAutoFilled,
+    isTimeAutoFilled: rawOrder.isTimeAutoFilled ?? isTimeAutoFilled
+  };
+};
+
+/**
+ * 計算訂單的有效配送分鐘數（用於精確排序：例如 9:05 -> 545, 09:15 -> 555）
+ * 優先取用訂單本身時間，若無則取用店家預設時間；未設定時間者回傳 9999 排至最末端
+ */
+export const getOrderDeliveryMinutes = (
+  order: Partial<import('./types').Order>, 
+  customerMap?: Map<string, import('./types').Customer> | Record<string, import('./types').Customer>
+): number => {
+  let cust: import('./types').Customer | undefined;
+  if (customerMap && order.customerName) {
+    cust = customerMap instanceof Map ? customerMap.get(order.customerName) : customerMap[order.customerName];
+  }
+
+  const rawTime = (order.deliveryTime && String(order.deliveryTime).trim() !== '') 
+    ? String(order.deliveryTime).trim() 
+    : (cust?.deliveryTime ? String(cust.deliveryTime).trim() : '');
+
+  if (!rawTime) return 9999; // 未設時間排在最後
+
+  const parts = rawTime.split(':');
+  if (parts.length >= 2) {
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    if (!isNaN(hours) && !isNaN(minutes)) {
+      return hours * 60 + minutes;
+    }
+  }
+  return 9999;
+};
+
+

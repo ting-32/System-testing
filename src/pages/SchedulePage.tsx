@@ -6,7 +6,7 @@ import {
 import { WorkCalendar } from '../components/WorkCalendar';
 import { ScheduleOrderCard } from '../components/ScheduleOrderCard';
 import { Order, Customer, Product, OrderStatus } from '../types';
-import { getTomorrowDate } from '../utils';
+import { getTomorrowDate, getOrderDeliveryMinutes } from '../utils';
 import { DELIVERY_METHODS, COLORS, isWalkInCustomer } from '../constants';
 
 export interface SchedulePageProps {
@@ -71,21 +71,24 @@ export const SchedulePage: React.FC<SchedulePageProps> = ({
 
   // CHANGED: 行程明細計算並分流主時間軸（固定配送店家）與散客自取區
   const { scheduleOrders, timelineOrders, walkInOrders } = useMemo(() => {
+    const custMap = new Map<string, Customer>(customers.map(c => [c.name, c]));
+
     const rawOrders = orders.filter(o => {
       if (o.pendingAction === 'delete') return false;
       if (o.deliveryDate !== scheduleDate) return false;
       if (scheduleDeliveryMethodFilter.length > 0) {
-        const customer = customers.find(c => c.name === o.customerName);
+        const customer = custMap.get(o.customerName);
         const method = o.deliveryMethod || customer?.deliveryMethod || '';
         if (!scheduleDeliveryMethodFilter.includes(method)) return false;
       }
       return true;
     }).sort((a, b) => {
-      const custA = customers.find(c => c.name === a.customerName);
-      const custB = customers.find(c => c.name === b.customerName);
-      const timeA = (a.deliveryTime && a.deliveryTime.trim() !== '') ? a.deliveryTime.trim() : (custA?.deliveryTime?.trim() || '99:99');
-      const timeB = (b.deliveryTime && b.deliveryTime.trim() !== '') ? b.deliveryTime.trim() : (custB?.deliveryTime?.trim() || '99:99');
-      return timeA.localeCompare(timeB, undefined, { numeric: true });
+      const timeA = getOrderDeliveryMinutes(a, custMap);
+      const timeB = getOrderDeliveryMinutes(b, custMap);
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      return (a.createdAt || '').localeCompare(b.createdAt || '');
     });
 
     const seen = new Set();
@@ -121,7 +124,7 @@ export const SchedulePage: React.FC<SchedulePageProps> = ({
     scheduleOrders.forEach(order => {
       const amount = calculateOrderTotalAmount(order);
       totalReceivable += amount;
-      if (order.status === OrderStatus.PAID) {
+      if (order.status === OrderStatus.PAID || order.status === OrderStatus.PAID_UNSHIPPED) {
         totalCollected += amount;
       }
     });
@@ -403,8 +406,23 @@ export const SchedulePage: React.FC<SchedulePageProps> = ({
               );
             }
 
+            // 1. 建立 customer 快取 Map 提升比對效能
+            const custMap = new Map<string, Customer>(customers.map(c => [c.name, c]));
+
             return sortedTrips.map(trip => {
-              const tripOrders = groupedByTrip[trip].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+              // 2. 趟次內排序：若處於手動調整模式且已設定 sortOrder 則以手動順序優先；平時則以配送時間升冪排序 (例如 09:05 -> 09:15)
+              const tripOrders = groupedByTrip[trip].sort((a, b) => {
+                if (isOrderReorderMode && a.sortOrder !== undefined && b.sortOrder !== undefined && a.sortOrder !== b.sortOrder) {
+                  return a.sortOrder - b.sortOrder;
+                }
+                const timeA = getOrderDeliveryMinutes(a, custMap);
+                const timeB = getOrderDeliveryMinutes(b, custMap);
+                if (timeA !== timeB) {
+                  return timeA - timeB;
+                }
+                return (a.createdAt || '').localeCompare(b.createdAt || '');
+              });
+
               if (tripOrders.length === 0 && trip === '未分配') return null; // 若未分配為空且無單則不佔版面
               
               const summary = getTripSummary(tripOrders);

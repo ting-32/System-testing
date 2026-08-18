@@ -323,8 +323,10 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
 
                 const allPaid = custOrders.every(o => o.status === OrderStatus.PAID);
                 const allShipped = custOrders.every(o => o.status === OrderStatus.SHIPPED || o.status === OrderStatus.PAID);
+                const allPaidUnshipped = custOrders.every(o => o.status === OrderStatus.PAID_UNSHIPPED);
                 let statusTag = { label: '待處理', color: 'bg-blue-50 text-blue-600 border-blue-100' };
                 if (allPaid) statusTag = { label: '已收款', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
+                else if (allPaidUnshipped) statusTag = { label: '已收未配', color: 'bg-teal-50 text-teal-700 border-teal-200' };
                 else if (allShipped) statusTag = { label: '已配送', color: 'bg-amber-50 text-amber-600 border-amber-100' };
 
                 return (

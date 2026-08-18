@@ -50,6 +50,11 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
     : (customer?.deliveryTime && customer.deliveryTime.trim() !== '' ? customer.deliveryTime.trim() : '');
   const isTimeAuto = order.isTimeAutoFilled || (!order.deliveryTime && !!customer?.deliveryTime);
 
+  const effectiveTrip = (order.trip && order.trip.trim() !== '')
+    ? order.trip.trim()
+    : (customer?.defaultTrip && customer.defaultTrip.trim() !== '' ? customer.defaultTrip.trim() : '');
+  const isTripAuto = order.isTripAutoFilled || (!order.trip && !!customer?.defaultTrip);
+
   const totalAmount = useMemo(() => { 
     let total = 0; 
     order.items.forEach(item => { 
@@ -78,7 +83,8 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
       animate(x, 0, { type: 'spring', stiffness: 300, damping: 20 });
       if (order.status === OrderStatus.PENDING) {
         onStatusChange(order.id, OrderStatus.SHIPPED);
-      } else if (order.status === OrderStatus.SHIPPED) {
+      } else if (order.status === OrderStatus.SHIPPED || order.status === OrderStatus.PAID_UNSHIPPED) {
+        // 若訂單處於已收款未配送 (PAID_UNSHIPPED)，往右滑動送達現場後直接切換為 PAID 完成
         onStatusChange(order.id, OrderStatus.PAID);
       }
     } else if (offset < -DRAG_THRESHOLD) { 
@@ -87,6 +93,8 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
       if (order.status === OrderStatus.PAID) {
         onStatusChange(order.id, OrderStatus.SHIPPED);
       } else if (order.status === OrderStatus.SHIPPED) {
+        onStatusChange(order.id, OrderStatus.PENDING);
+      } else if (order.status === OrderStatus.PAID_UNSHIPPED) {
         onStatusChange(order.id, OrderStatus.PENDING);
       } else {
         onDelete(order.id); 
@@ -164,69 +172,93 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
         )} 
 
         <div className={`p-5 transition-all ${isSelectionMode ? 'pl-14' : ''}`}> 
-          <div className="flex justify-between items-center mb-4"> 
-            <div className="flex items-center gap-2"> 
-              <div className="flex items-center gap-1.5">
-                {/* CHANGED: 依據 isWalkIn 顯示 📦 散客 徽章或配送時間 */}
-                {isWalkIn ? (
-                  <div className="px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-200">
-                    <span className="text-xs">📦</span>
-                    <span>散客</span>
-                    {effectiveDeliveryTime && (
-                      <span className="text-[11px] text-slate-500 font-mono">({formatTimeDisplay(effectiveDeliveryTime)})</span>
-                    )}
-                  </div>
-                ) : (
-                  <div 
-                    className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors duration-300 ${
-                      !effectiveDeliveryTime ? 'bg-amber-50 text-amber-700 border border-amber-200' : ''
-                    }`} 
-                    style={effectiveDeliveryTime ? { backgroundColor: statusConfig.tagBg, color: statusConfig.tagText } : {}}
-                  > 
-                    <Clock className="w-3.5 h-3.5" /> 
-                    {effectiveDeliveryTime ? (
-                      <span>{formatTimeDisplay(effectiveDeliveryTime)}</span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-amber-800">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                        未指定時間
-                      </span>
-                    )}
-                  </div>
-                )}
-                {isTimeAuto && effectiveDeliveryTime && (
-                  <span 
-                    title="此時間為系統自動依【店家預設】填入，點擊卡片可手動調整。" 
-                    className="inline-flex items-center gap-0.5 text-[10px] font-extrabold bg-morandi-blue/10 text-morandi-blue border border-morandi-blue/20 px-1.5 py-0.5 rounded-md cursor-help select-none tracking-wide hover:bg-morandi-blue/20 transition-colors"
-                  >
-                    <Sparkles className="w-2.5 h-2.5" />
-                    預設
-                  </span>
-                )}
-              </div>
-              {order.deliveryMethod && (<span className="text-[10px] font-bold text-gray-400 bg-white/60 px-2 py-1 rounded-lg border border-black/5">{order.deliveryMethod}</span>)} 
-              {habitLabel && (<span className="text-[10px] font-bold text-morandi-blue bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">{habitLabel}</span>)} 
+          {/* 【頂層：核心出車節點】只放 時間、趟次 與 狀態切換選單 */}
+          <div className="flex justify-between items-center mb-3 gap-2"> 
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1"> 
+              {/* 1. 配送時間 (含 ✨ 預設指示) */}
+              {isWalkIn ? (
+                <div className="px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                  <span className="text-xs">📦</span>
+                  <span>散客</span>
+                  {effectiveDeliveryTime && (
+                    <span className="text-[11px] text-slate-500 font-mono">({formatTimeDisplay(effectiveDeliveryTime)})</span>
+                  )}
+                </div>
+              ) : (
+                <div 
+                  title={isTimeAuto ? "此時間為系統依【店家預設】自動填入" : undefined}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors duration-300 shrink-0 ${
+                    !effectiveDeliveryTime 
+                      ? 'bg-amber-50 text-amber-700 border border-amber-200' 
+                      : (isTimeAuto ? 'ring-1 ring-morandi-blue/20' : '')
+                  }`} 
+                  style={effectiveDeliveryTime ? { backgroundColor: statusConfig.tagBg, color: statusConfig.tagText } : {}}
+                > 
+                  <Clock className="w-3.5 h-3.5" /> 
+                  {effectiveDeliveryTime ? (
+                    <span className="flex items-center gap-1">
+                      {formatTimeDisplay(effectiveDeliveryTime)}
+                      {isTimeAuto && <Sparkles className="w-2.5 h-2.5 text-morandi-blue opacity-80" />}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-amber-800">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                      未設時間
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* 2. 趟次 (含 ✨ 自動指示) */}
+              {effectiveTrip && (
+                <div 
+                  title={isTripAuto ? "此趟數為系統依【店家預設】自動填入" : undefined}
+                  className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 shrink-0"
+                >
+                  <span>{effectiveTrip}</span>
+                  {isTripAuto && <Sparkles className="w-2.5 h-2.5 text-emerald-600 opacity-80" />}
+                </div>
+              )}
             </div> 
-            <div className="relative group" onClick={(e) => isSelectionMode && e.stopPropagation()}> 
-              <select disabled={isSelectionMode} value={order.status || OrderStatus.PENDING} onChange={(e) => handleStatusSelectChange(e.target.value as OrderStatus)} className={`appearance-none pl-4 pr-9 py-2 rounded-xl text-xs font-extrabold cursor-pointer outline-none transition-all duration-300 border border-transparent hover:brightness-95 ${isSelectionMode ? 'opacity-50 pointer-events-none' : ''}`} style={{ backgroundColor: statusConfig.tagBg, color: statusConfig.tagText }}> 
-                <option value={OrderStatus.PENDING}>待處理</option><option value={OrderStatus.SHIPPED}>已配送</option><option value={OrderStatus.PAID}>已收款</option> 
+
+            {/* 3. 狀態選單 (確保不被壓縮) */}
+            <div className="relative group shrink-0" onClick={(e) => isSelectionMode && e.stopPropagation()}> 
+              <select disabled={isSelectionMode} value={order.status || OrderStatus.PENDING} onChange={(e) => handleStatusSelectChange(e.target.value as OrderStatus)} className={`appearance-none pl-3 pr-8 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer outline-none transition-all duration-300 border border-transparent hover:brightness-95 ${isSelectionMode ? 'opacity-50 pointer-events-none' : ''}`} style={{ backgroundColor: statusConfig.tagBg, color: statusConfig.tagText }}> 
+                <option value={OrderStatus.PENDING}>待處理</option>
+                <option value={OrderStatus.SHIPPED}>已配送</option>
+                <option value={OrderStatus.PAID_UNSHIPPED}>已收未配</option>
+                <option value={OrderStatus.PAID}>已收款</option> 
               </select> 
-              <ChevronDown className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-300 group-hover:rotate-180" style={{ color: statusConfig.iconColor }} /> 
+              <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-300 group-hover:rotate-180" style={{ color: statusConfig.iconColor }} /> 
             </div> 
           </div> 
-          <div className="flex justify-between items-end mb-5"> 
-            <div className="flex items-center gap-2">
-              <h4 
-                className={`font-extrabold text-slate-800 text-xl tracking-tight leading-none ${onViewCustomer ? 'cursor-pointer hover:text-morandi-blue underline decoration-slate-300 hover:decoration-morandi-blue decoration-2 underline-offset-4 transition-colors' : ''}`}
-                onClick={(e) => {
-                  if (onViewCustomer) {
-                    e.stopPropagation();
-                    onViewCustomer(order.customerName);
-                  }
-                }}
-              >
-                {order.customerName}
-              </h4> 
+
+          {/* 【主標行：店名與金額】 */}
+          <div className="flex justify-between items-baseline mb-2"> 
+            <h4 
+              className={`font-extrabold text-slate-800 text-xl tracking-tight leading-snug ${onViewCustomer ? 'cursor-pointer hover:text-morandi-blue underline decoration-slate-300 hover:decoration-morandi-blue decoration-2 underline-offset-4 transition-colors' : ''}`}
+              onClick={(e) => {
+                if (onViewCustomer) {
+                  e.stopPropagation();
+                  onViewCustomer(order.customerName);
+                }
+              }}
+            >
+              {order.customerName}
+            </h4> 
+            <div className="flex flex-col items-end shrink-0 pl-2">
+              {isLoadingProducts ? (
+                <div className="h-6 w-16 bg-slate-200/70 animate-pulse rounded-md"></div>
+              ) : (
+                <span className="font-mono font-black text-xl text-morandi-charcoal tracking-tight"><span className="text-sm text-gray-400 mr-1">$</span>{totalAmount.toLocaleString()}</span>
+              )}
+            </div> 
+          </div>
+
+          {/* 【次層：屬性徽章區塊】放置 來源、配送方式、預訂習慣 */}
+          {(order.source || order.deliveryMethod || habitLabel) && (
+            <div className="flex items-center gap-1.5 flex-wrap mb-4">
+              {/* 建單來源標籤 */}
               {order.source && (
                 <span 
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border tracking-wide
@@ -246,15 +278,23 @@ export const SwipeableOrderCard: React.FC<SwipeableOrderCardProps> = ({
                   {order.source}
                 </span>
               )}
-            </div>
-            <div className="flex flex-col items-end">
-              {isLoadingProducts ? (
-                <div className="h-6 w-16 bg-slate-200/70 animate-pulse rounded-md mt-1"></div>
-              ) : (
-                <span className="font-mono font-black text-xl text-morandi-charcoal tracking-tight"><span className="text-sm text-gray-400 mr-1">$</span>{totalAmount.toLocaleString()}</span>
+
+              {/* 配送方式標籤 */}
+              {order.deliveryMethod && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/80 shrink-0">
+                  {order.deliveryMethod.includes('機車') ? '🛵' : order.deliveryMethod.includes('自取') ? '🏪' : '🚚'}
+                  <span>{order.deliveryMethod}</span>
+                </span>
               )}
-            </div> 
-          </div> 
+
+              {/* 預訂習慣標籤 */}
+              {habitLabel && (
+                <span className="text-[10px] font-bold text-slate-500 bg-blue-50/70 px-2 py-0.5 rounded-md border border-blue-100/80">
+                  {habitLabel}
+                </span>
+              )}
+            </div>
+          )} 
           <div className="space-y-2"> 
             {order.items.map((item, idx) => { 
               const p = productMap[item.productId]; 

@@ -1,9 +1,10 @@
 
 export enum OrderStatus {
-  PENDING = 'PENDING', // 待出貨
-  SHIPPED = 'SHIPPED', // 已出貨
-  PAID = 'PAID',       // 已出貨收款
-  CANCELLED = 'CANCELLED' // 取消 (保留)
+  PENDING = 'PENDING',                 // 待出貨 (未出貨未收款)
+  SHIPPED = 'SHIPPED',                 // 已出貨 (已送達未收款)
+  PAID = 'PAID',                       // 已出貨收款 (已出貨且已收款)
+  PAID_UNSHIPPED = 'PAID_UNSHIPPED',   // 已收款未出貨 (款項已結清，貨物待出)
+  CANCELLED = 'CANCELLED'              // 取消 (保留)
 }
 
 declare global {
@@ -100,6 +101,7 @@ export interface Order {
   version?: number; // 樂觀鎖版本號 (整數)
   syncStatus?: 'synced' | 'pending' | 'error'; // 同步狀態
   isTimeAutoFilled?: boolean; // 新增：標記是否為系統依據店家預設自動補齊
+  isTripAutoFilled?: boolean; // 新增：標記是否為系統依據店家預設自動補齊趟數
   errorMessage?: string; // 錯誤訊息
   pendingAction?: 'create' | 'update' | 'delete' | 'statusUpdate'; // 待處理動作
   // --- 暫態屬性 (僅限前端使用) ---

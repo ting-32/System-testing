@@ -291,15 +291,19 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
             const normalizedDate = normalizeDate(rawDate); 
             const customerName = o.客戶名 || o.customerName || '未知客戶';
             let deliveryTime = String(o.配送時間 || o.deliveryTime || '').trim();
+            let trip = String(o.趟次 || o.trip || '').trim();
             let isTimeAutoFilled = o.isTimeAutoFilled === true || o.自動補齊時間 === true || String(o.isTimeAutoFilled).toLowerCase() === 'true';
+            let isTripAutoFilled = o.isTripAutoFilled === true || o.自動補齊趟數 === true || String(o.isTripAutoFilled).toLowerCase() === 'true';
 
-            // 雙重防護：如果外部來源 (如 LINE) 無配送時間，自動從店家預設時間帶入
-            if (!deliveryTime) {
-              const matchedCust = mappedCustomers.find(c => c.name === customerName);
-              if (matchedCust && matchedCust.deliveryTime && matchedCust.deliveryTime.trim() !== '') {
-                deliveryTime = matchedCust.deliveryTime.trim();
-                isTimeAutoFilled = true;
-              }
+            // 雙重防護：如果外部來源 (如 LINE) 無配送時間或趟數，自動從店家預設帶入
+            const matchedCust = mappedCustomers.find(c => c.name === customerName);
+            if (!deliveryTime && matchedCust && matchedCust.deliveryTime && matchedCust.deliveryTime.trim() !== '') {
+              deliveryTime = matchedCust.deliveryTime.trim();
+              isTimeAutoFilled = true;
+            }
+            if (!trip && matchedCust && matchedCust.defaultTrip && matchedCust.defaultTrip.trim() !== '') {
+              trip = matchedCust.defaultTrip.trim();
+              isTripAutoFilled = true;
             }
 
             orderMap[oid] = { 
@@ -312,9 +316,10 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
               note: o.備註 || o.note || '', 
               status: (o.狀態 || o.status as OrderStatus) || OrderStatus.PENDING, 
               source: o.資料來源 || o.source || (String(oid).startsWith('AUTO-') ? '🤖 自動建單' : ''),
-              deliveryMethod: o.配送方式 || o.deliveryMethod || '',
-              trip: o.趟次 || o.trip || '',
+              deliveryMethod: o.配送方式 || o.deliveryMethod || (matchedCust?.deliveryMethod || ''),
+              trip,
               isTimeAutoFilled,
+              isTripAutoFilled,
               lastUpdated: safeNumber(o.lastUpdated, 0, `Order ${oid} lastUpdated`),
               syncStatus: 'synced' 
             }; 

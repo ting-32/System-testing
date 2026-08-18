@@ -439,6 +439,8 @@ export const useVoiceAssistant = ({
       let deliveryMethod = '';
       let deliveryTime = '08:00';
       let trip = ''; // 👈 1. 新增變數
+      let isTripAutoFilled = false;
+      let isTimeAutoFilled = false;
       
       if (matchedCustomerId) {
         const c = customers.find(x => x.id === matchedCustomerId);
@@ -446,6 +448,8 @@ export const useVoiceAssistant = ({
           deliveryMethod = c.deliveryMethod || '';
           deliveryTime = formatTimeForInput(c.deliveryTime);
           trip = c.defaultTrip || ''; // 👈 2. 提取客戶預設趟數
+          isTripAutoFilled = !!c.defaultTrip && c.defaultTrip.trim() !== '';
+          isTimeAutoFilled = !!c.deliveryTime && c.deliveryTime.trim() !== '';
         }
       }
 
@@ -457,6 +461,8 @@ export const useVoiceAssistant = ({
         deliveryTime: deliveryTime,
         deliveryMethod: deliveryMethod,
         trip: trip, // 👈 3. 寫入表單狀態
+        isTripAutoFilled,
+        isTimeAutoFilled,
         items: newItems,
         note: globalNote // 全域備註
       }));

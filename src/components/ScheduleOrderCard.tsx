@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, useMotionValue, useTransform, PanInfo, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, RotateCcw, Clock, ChevronDown, ChevronUp, Share2, MapPin, Sparkles, AlertTriangle } from 'lucide-react';
 import { Order, OrderStatus, Product, Customer } from '../types';
-import { isWalkInCustomer } from '../constants';
+import { isWalkInCustomer, ORDERING_HABITS } from '../constants';
 import { getStatusStyles, formatTimeDisplay } from '../utils';
 import { buttonTap, triggerHaptic } from './animations';
 
@@ -40,6 +40,11 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
     : (customer?.deliveryTime && customer.deliveryTime.trim() !== '' ? customer.deliveryTime.trim() : '');
   const isTimeAuto = order.isTimeAutoFilled || (!order.deliveryTime && !!customer?.deliveryTime);
 
+  const effectiveTrip = (order.trip && order.trip.trim() !== '')
+    ? order.trip.trim()
+    : (customer?.defaultTrip && customer.defaultTrip.trim() !== '' ? customer.defaultTrip.trim() : '');
+  const isTripAuto = order.isTripAutoFilled || (!order.trip && !!customer?.defaultTrip);
+
   const totalAmount = useMemo(() => { 
     let total = 0; 
     order.items.forEach(item => { 
@@ -55,6 +60,8 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
     return total; 
   }, [order.items, customer, productMap]);
   
+  const habitLabel = ORDERING_HABITS.find(h => h.value === (order.paymentTerm || customer?.paymentTerm))?.label;
+
   const itemSummary = order.items.map(item => { 
     const p = productMap[item.productId] || productMap[item.name as string]; 
     return `${item.productName || p?.name || (isLoadingProducts ? '載入中...' : '未知品項')} ${item.quantity}${item.unit || '斤'}`; 
@@ -67,7 +74,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
       if (order.status === OrderStatus.PENDING) { 
         triggerHaptic(50); 
         onStatusChange(order.id, OrderStatus.SHIPPED); 
-      } else if (order.status === OrderStatus.SHIPPED) { 
+      } else if (order.status === OrderStatus.SHIPPED || order.status === OrderStatus.PAID_UNSHIPPED) { 
         triggerHaptic(50); 
         onStatusChange(order.id, OrderStatus.PAID); 
       } 
@@ -75,7 +82,7 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
       if (order.status === OrderStatus.PAID) { 
         triggerHaptic(50); 
         onStatusChange(order.id, OrderStatus.SHIPPED); 
-      } else if (order.status === OrderStatus.SHIPPED) { 
+      } else if (order.status === OrderStatus.SHIPPED || order.status === OrderStatus.PAID_UNSHIPPED) { 
         triggerHaptic(50); 
         onStatusChange(order.id, OrderStatus.PENDING); 
       } 
@@ -119,11 +126,12 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
         )} 
         <div className={`p-4 ${isSelectionMode ? 'pl-14' : ''}`}> 
           <div className="flex justify-between items-center" onClick={() => !isSelectionMode && !isDragging && setIsExpanded(!isExpanded)}> 
-            <div className="flex flex-col gap-1 min-w-0 flex-1 pr-2"> 
+            <div className="flex flex-col gap-1.5 min-w-0 flex-1 pr-2"> 
+              {/* 【頂層：核心出車節點】只放 時間、趟次 與 狀態 */}
               <div className="flex items-center gap-1.5 flex-wrap"> 
-                {/* CHANGED: 依據 isWalkIn 顯示 📦 散客 徽章或配送時間 */}
+                {/* 1. 配送時間 (含 ✨ 預設指示) */}
                 {isWalkIn ? (
-                  <div className="px-2 py-0.5 rounded-md text-[10px] font-medium flex items-center gap-1 bg-slate-100 text-slate-700 border border-slate-200">
+                  <div className="px-2 py-0.5 rounded-md text-[10px] font-medium flex items-center gap-1 bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
                     <span className="text-[10px]">📦</span>
                     <span>散客</span>
                     {effectiveDeliveryTime && (
@@ -132,48 +140,77 @@ export const ScheduleOrderCard: React.FC<ScheduleOrderCardProps> = ({
                   </div>
                 ) : (
                   <div 
-                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 transition-colors ${
-                      !effectiveDeliveryTime ? 'bg-amber-50 text-amber-700 border border-amber-200' : ''
+                    title={isTimeAuto ? "此時間為系統依【店家預設】自動填入" : undefined}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 transition-colors shrink-0 ${
+                      !effectiveDeliveryTime 
+                        ? 'bg-amber-50 text-amber-700 border border-amber-200' 
+                        : (isTimeAuto ? 'ring-1 ring-morandi-blue/20' : '')
                     }`} 
                     style={effectiveDeliveryTime ? { backgroundColor: statusConfig.tagBg, color: statusConfig.tagText } : {}}
                   > 
                     <Clock className="w-3 h-3" /> 
                     {effectiveDeliveryTime ? (
-                      <span>{formatTimeDisplay(effectiveDeliveryTime)}</span>
+                      <span className="flex items-center gap-1">
+                        {formatTimeDisplay(effectiveDeliveryTime)}
+                        {isTimeAuto && <Sparkles className="w-2 h-2 text-morandi-blue opacity-80" />}
+                      </span>
                     ) : (
                       <span className="flex items-center gap-0.5 text-amber-800">
                         <AlertTriangle className="w-3 h-3 text-amber-600" />
-                        未指定時間
+                        未設時間
                       </span>
                     )}
                   </div>
                 )}
-                {isTimeAuto && effectiveDeliveryTime && (
-                  <span 
-                    title="此時間為系統自動依【店家預設】填入，點擊卡片可手動調整。" 
-                    className="inline-flex items-center gap-0.5 text-[9px] font-extrabold bg-morandi-blue/10 text-morandi-blue border border-morandi-blue/20 px-1 py-0.5 rounded cursor-help select-none tracking-wide"
+
+                {/* 2. 趟次 (含 ✨ 自動指示) */}
+                {effectiveTrip && (
+                  <div 
+                    title={isTripAuto ? "此趟數為系統依【店家預設】自動填入" : undefined}
+                    className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200 shrink-0"
                   >
-                    <Sparkles className="w-2.5 h-2.5" />
-                    預設
-                  </span>
+                    <span>{effectiveTrip}</span>
+                    {isTripAuto && <Sparkles className="w-2 h-2 text-emerald-600 opacity-80" />}
+                  </div>
                 )}
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${order.status === OrderStatus.PAID ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : order.status === OrderStatus.SHIPPED ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-500 border-gray-200'}`}> 
+
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border shrink-0 ${order.status === OrderStatus.PAID ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : order.status === OrderStatus.SHIPPED ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-500 border-gray-200'}`}> 
                   {statusConfig.label} 
                 </span> 
               </div> 
-              <div className="flex items-center gap-2"> 
+
+              {/* 【主標行：店名與金額】 */}
+              <div className="flex items-baseline justify-between gap-2"> 
                 <h4 className="font-bold text-slate-800 text-base truncate">{order.customerName}</h4> 
                 {!isExpanded && (
                   isLoadingProducts ? (
-                    <div className="h-4 w-12 bg-slate-200/70 animate-pulse rounded"></div>
+                    <div className="h-4 w-12 bg-slate-200/70 animate-pulse rounded shrink-0"></div>
                   ) : (
-                    <span className="text-xs font-bold text-morandi-charcoal">${totalAmount.toLocaleString()}</span>
+                    <span className="text-xs font-bold text-morandi-charcoal shrink-0">${totalAmount.toLocaleString()}</span>
                   )
                 )} 
               </div> 
+
+              {/* 【次層：屬性徽章區塊】配送方式、習慣 */}
+              {(order.deliveryMethod || habitLabel) && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {order.deliveryMethod && (
+                    <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200/80 shrink-0 whitespace-nowrap">
+                      {order.deliveryMethod.includes('機車') ? '🛵' : order.deliveryMethod.includes('自取') ? '🏪' : '🚚'}
+                      <span>{order.deliveryMethod}</span>
+                    </span>
+                  )}
+                  {habitLabel && (
+                    <span className="text-[9px] font-medium text-slate-500 bg-blue-50/60 px-1.5 py-0.5 rounded border border-blue-100/60 shrink-0">
+                      {habitLabel}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {!isExpanded && ( 
                 isLoadingProducts ? (
-                  <div className="h-3 w-32 bg-slate-200/70 animate-pulse rounded mt-1"></div>
+                  <div className="h-3 w-32 bg-slate-200/70 animate-pulse rounded mt-0.5"></div>
                 ) : (
                   <p className="text-[10px] text-gray-400 truncate">{itemSummary}</p> 
                 )
