@@ -164,6 +164,7 @@ const App: React.FC = () => {
 
   const {
     isAuthenticated,
+    setIsAuthenticated,
     apiEndpoint, customers, setCustomers,
     products, setProducts,
     orders, setOrders,
@@ -280,31 +281,39 @@ const App: React.FC = () => {
   const [isWarmingUp, _setIsWarmingUp] = useState(false);
   const [showDeadlockModal, setShowDeadlockModal] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const handleDeadlock = () => setShowDeadlockModal(true);
     const handleRetryStart = () => setIsRetrying(true);
     const handleRetryEnd = () => setIsRetrying(false);
-    const handleUnauthorized = () => {
+    
+    const handleUnauthorized = (e: Event) => {
+      const customMsg = (e as CustomEvent)?.detail?.message || '登入時效已逾期，請重新登入以確保資料安全。';
+      
+      // 清除本地身分憑證
       localStorage.removeItem('nm_auth_status');
       localStorage.removeItem('APP_SESSION_TOKEN');
       localStorage.removeItem('APP_USER_ROLE');
       localStorage.removeItem('APP_USER_NAME');
-      window.location.reload();
+      
+      // 透過 React 狀態將 isAuthenticated 設為 false，並顯示提示，避免整頁 reload
+      setIsAuthenticated(false);
+      setSessionExpiredNotice(customMsg);
     };
 
     window.addEventListener('networkDeadlock', handleDeadlock);
     window.addEventListener('networkRetryStart', handleRetryStart);
     window.addEventListener('networkRetryEnd', handleRetryEnd);
-    window.addEventListener('app-unauthorized', handleUnauthorized);
+    window.addEventListener('app-unauthorized', handleUnauthorized as EventListener);
 
     return () => {
       window.removeEventListener('networkDeadlock', handleDeadlock);
       window.removeEventListener('networkRetryStart', handleRetryStart);
       window.removeEventListener('networkRetryEnd', handleRetryEnd);
-      window.removeEventListener('app-unauthorized', handleUnauthorized);
+      window.removeEventListener('app-unauthorized', handleUnauthorized as EventListener);
     };
-  }, []);
+  }, [setIsAuthenticated]);
 
   useEffect(() => {
     if (!apiEndpoint) return;
@@ -736,6 +745,7 @@ const App: React.FC = () => {
   const onSaveCustomerCloud = async (finalCustomer: Customer, isEditingCustomer: string | null, originalLastUpdated: string | undefined, previousCustomers: Customer[]) => {
     if (!apiEndpoint || isSaving) return false;
     setIsSaving(true);
+    let json: any = null;
     try {
       const payload = { ...finalCustomer };
       delete payload._syncStatus;
@@ -747,7 +757,7 @@ const App: React.FC = () => {
       }
       const token = localStorage.getItem('APP_SESSION_TOKEN');
       const res = await fetchWithRetry(apiEndpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'updateCustomer', token: token || "", data: payload }) });
-      const json = await res.json();
+      json = await res.json();
       if (!json.success) {
         if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
              localStorage.removeItem('nm_auth_status');
@@ -781,8 +791,16 @@ const App: React.FC = () => {
     }
     setIsSaving(false);
     
-    // 解除 pending 狀態
-    setCustomers(prev => prev.map(c => c.id === finalCustomer.id ? { ...c, _syncStatus: 'synced' } : c));
+    const serverLastUpdated = json?.data?.lastUpdated ? Number(json.data.lastUpdated) : Date.now();
+
+    // 解除 pending 狀態，同時保留 isArchived / isPaused 狀態與伺服器最新時間戳
+    setCustomers(prev => prev.map(c => c.id === finalCustomer.id ? { 
+      ...c, 
+      ...finalCustomer,
+      lastUpdated: serverLastUpdated,
+      _localUpdatedTs: serverLastUpdated,
+      _syncStatus: 'synced' 
+    } : c));
     
     addToast('店家資料已儲存', 'success');
     broadcastDataChange();
@@ -938,7 +956,18 @@ const App: React.FC = () => {
     return (
       <AnimatePresence mode="wait">
         {!isAuthenticated ? (
-          <LoginScreen key="login-screen" onLogin={handleLogin} onSaveApiUrl={handleSaveApiUrl} apiEndpoint={apiEndpoint} addToast={addToast} />
+          <LoginScreen 
+            key="login-screen" 
+            onLogin={async (pwd) => {
+              const ok = await handleLogin(pwd);
+              if (ok) setSessionExpiredNotice(null);
+              return ok;
+            }} 
+            onSaveApiUrl={handleSaveApiUrl} 
+            apiEndpoint={apiEndpoint} 
+            addToast={addToast}
+            sessionExpiredMessage={sessionExpiredNotice}
+          />
         ) : (
           <motion.div 
             key="initial-loading"

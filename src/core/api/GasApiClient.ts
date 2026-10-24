@@ -85,8 +85,16 @@ export class GasApiClient implements ApiClient {
           localStorage.removeItem('APP_SESSION_TOKEN');
           localStorage.removeItem('APP_USER_ROLE');
           localStorage.removeItem('APP_USER_NAME');
-          // Emit a custom event so the UI can log out gracefully without unhandled alerts in iframes
-          window.dispatchEvent(new Event('app-unauthorized'));
+
+          // 改用 CustomEvent 攜帶觸發時的動作資訊與使用者友善說明
+          window.dispatchEvent(new CustomEvent('app-unauthorized', {
+            detail: {
+              action,
+              message: action === 'checkUpdates' 
+                ? '系統已閒置一段時間，憑證已過期，請重新輸入密碼。' 
+                : '連線憑證無效或已過期，請重新輸入密碼。'
+            }
+          }));
           throw new Error("UNAUTHORIZED_OR_EXPIRED");
         }
         if (json.error && json.error.includes('Lock Timeout') && attempt < maxLockRetries) {

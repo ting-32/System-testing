@@ -6,6 +6,8 @@ import { Order, Product } from '../types';
 import { DELIVERY_METHODS, COLORS, PRODUCT_CATEGORIES } from '../constants';
 import { buttonTap, containerVariants, itemVariants, triggerHaptic } from '../components/animations';
 
+import { formatDateStr, getTomorrowDate } from '../utils';
+
 interface WorkPageProps {
   orders: Order[];
   products: Product[];
@@ -81,6 +83,99 @@ export function WorkPage({
            )}
          </div>
          </div>
+
+         <div className="flex items-center gap-2 overflow-x-auto pb-1 mb-3">
+           <button
+             type="button"
+             onClick={() => { triggerHaptic(); setWorkDates([formatDateStr(new Date())]); }}
+             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border whitespace-nowrap ${
+               workDates.length === 1 && workDates[0] === formatDateStr(new Date())
+                 ? 'bg-morandi-blue text-white border-morandi-blue shadow-sm'
+                 : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+             }`}
+           >
+             📅 今天
+           </button>
+           <button
+             type="button"
+             onClick={() => { triggerHaptic(); setWorkDates([getTomorrowDate()]); }}
+             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border whitespace-nowrap ${
+               workDates.length === 1 && workDates[0] === getTomorrowDate()
+                 ? 'bg-morandi-blue text-white border-morandi-blue shadow-sm'
+                 : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+             }`}
+           >
+             📅 明天
+           </button>
+           {(() => {
+             const today = new Date();
+             const day = today.getDay();
+             const sunday = new Date(today);
+             if (day === 0) {
+               // 今天是週日
+             } else if (day === 6) {
+               sunday.setDate(today.getDate() + 1);
+             } else if (day === 1) {
+               sunday.setDate(today.getDate() - 1);
+             } else {
+               sunday.setDate(today.getDate() + (7 - day));
+             }
+             const monday = new Date(sunday);
+             monday.setDate(sunday.getDate() + 1);
+             const sunStr = formatDateStr(sunday);
+             const monStr = formatDateStr(monday);
+             const weekendDates = [sunStr, monStr].sort();
+             const isWeekendSelected = workDates.length === 2 && 
+               [...workDates].sort().join(',') === weekendDates.join(',');
+
+             return (
+               <button
+                 type="button"
+                 onClick={() => { triggerHaptic(); setWorkDates([...weekendDates]); }}
+                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border whitespace-nowrap flex items-center gap-1.5 ${
+                   isWeekendSelected
+                     ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                     : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                 }`}
+               >
+                 <span>⚡</span>
+                 <span>週日＋週一 (連休跨日製作)</span>
+               </button>
+             );
+           })()}
+         </div>
+
+         {(() => {
+           const today = new Date();
+           const day = today.getDay();
+           const sunday = new Date(today);
+           if (day === 0) {
+             // 今天是週日
+           } else if (day === 6) {
+             sunday.setDate(today.getDate() + 1);
+           } else if (day === 1) {
+             sunday.setDate(today.getDate() - 1);
+           } else {
+             sunday.setDate(today.getDate() + (7 - day));
+           }
+           const monday = new Date(sunday);
+           monday.setDate(sunday.getDate() + 1);
+           const sunStr = formatDateStr(sunday);
+           const monStr = formatDateStr(monday);
+           const weekendDates = [sunStr, monStr].sort();
+           const isWeekendSelected = workDates.length === 2 && 
+             [...workDates].sort().join(',') === weekendDates.join(',');
+
+           if (!isWeekendSelected) return null;
+
+           return (
+             <div className="mb-3 p-3 bg-amber-50/90 border border-amber-200 rounded-2xl flex items-center gap-2 text-xs text-amber-900 font-medium shadow-sm">
+               <span className="text-base">🍜</span>
+               <span><strong>連休小抄模式：</strong>已同時匯總<strong>【{sunStr} (週日)】</strong>與<strong>【{monStr} (週一)】</strong>訂單，方便週日凌晨提前一次製作完畢！</span>
+             </div>
+           );
+         })()}
+
          <div className="mb-6"><WorkCalendar selectedDate={workDates} onSelect={setWorkDates} orders={orders} /></div>
          
          <div className="space-y-4">

@@ -9,9 +9,16 @@ interface LoginScreenProps {
   onSaveApiUrl?: (url: string) => void;
   apiEndpoint?: string;
   addToast?: (msg: string, type: 'success' | 'error' | 'info') => void;
+  sessionExpiredMessage?: string | null;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onSaveApiUrl, apiEndpoint, addToast }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({ 
+  onLogin, 
+  onSaveApiUrl, 
+  apiEndpoint, 
+  addToast,
+  sessionExpiredMessage 
+}) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -113,6 +120,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onSaveApiUrl,
         </div>
         
         <form onSubmit={handleSubmit} className="space-y-6">
+          {sessionExpiredMessage && (
+            <motion.div 
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-3 bg-amber-50 border border-amber-200 rounded-sm text-amber-800 text-xs flex items-center gap-2"
+            >
+              <Lock className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span>{sessionExpiredMessage}</span>
+            </motion.div>
+          )}
           <div>
             <div className="relative">
               <input

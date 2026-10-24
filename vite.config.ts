@@ -30,7 +30,6 @@ export default defineConfig(({ mode }) => {
     define: {
       // 這裡定義全域常數 replacement
       // 當程式碼出現 process.env.API_KEY 時，Vite 會在建置時將其替換為實際的字串值
-      'process.env.API_KEY': JSON.stringify(apiKey),
     },
   };
 });

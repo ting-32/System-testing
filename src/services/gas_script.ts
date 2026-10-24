@@ -16,6 +16,24 @@ function safeFormatDate(sheetValue, format = "yyyy-MM-dd HH:mm:ss") {
   return String(sheetValue).trim();
 }
 
+function safeFormatTime(timeValue) {
+  if (!timeValue) return '';
+  if (timeValue instanceof Date) {
+    const tz = (typeof SS !== 'undefined' && SS) ? SS.getSpreadsheetTimeZone() : "Asia/Taipei";
+    return Utilities.formatDate(timeValue, tz, "HH:mm");
+  }
+  const str = String(timeValue).trim();
+  // 處理如果已經被轉成 Date 字串格式 (例如含有 GMT 或 1899)
+  if (str.includes("GMT") || str.includes("1899") || str.includes("T")) {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      const tz = (typeof SS !== 'undefined' && SS) ? SS.getSpreadsheetTimeZone() : "Asia/Taipei";
+      return Utilities.formatDate(d, tz, "HH:mm");
+    }
+  }
+  return str;
+}
+
 // 👇 新增這個輔助函數：用來將試算表的 Date 物件格式化為乾淨的字串
 // Helper to ensure Config sheet exists and return it
 function getConfigSheet() {
@@ -97,7 +115,10 @@ function doPost(e) {
     if (action !== "login") {
       const tokenPayload = verifyTokenAndGetPayload(params.token, currentDbPassword);
       if (!tokenPayload) {
-        writeSystemLog("SYSTEM_UNAUTHORIZED_ACCESS", "未授權的 API 調用", JSON.stringify({ action: action, tokenProvided: !!params.token }));
+        // 優化：背景 checkUpdates 的過期視為正常 Session 結束，不寫入紅色 SYSTEM_UNAUTHORIZED_ACCESS
+        if (action !== "checkUpdates") {
+          writeSystemLog("SYSTEM_UNAUTHORIZED_ACCESS", "未授權的 API 調用", JSON.stringify({ action: action, tokenProvided: !!params.token }));
+        }
         return ContentService.createTextOutput(JSON.stringify({ 
           success: false, 
           error: "UNAUTHORIZED_OR_EXPIRED" 
@@ -227,6 +248,10 @@ function doPost(e) {
       case "getSystemLogs":
         result = getSystemLogs(params.data?.limit || 200);
         break;
+      case "triggerAutoOrders":
+        result = generateTomorrowDefaultOrders(params.data?.dates);
+        writeSystemLog("TRIGGER_AUTO_ORDERS", "觸發自動建單", JSON.stringify(result));
+        break;
       default:
         throw new Error("Unknown action: " + action);
     }
@@ -240,7 +265,8 @@ function doPost(e) {
       "changePassword", "createOrder", "updateOrderContent", "updateOrderStatus",
       "batchUpdateOrders", "batchUpdatePaymentStatus", "deleteOrder",
       "reorderProducts", "updateCustomer", "deleteCustomer", 
-      "updateProduct", "deleteProduct", "saveTrips", "saveSettings"
+      "updateProduct", "deleteProduct", "saveTrips", "saveSettings",
+      "triggerAutoOrders"
     ];
     if (mutationActions.includes(action)) {
       updateGlobalTimestamp();
@@ -548,7 +574,7 @@ function getData(startDateStr, since = 0) {
           phone: c.Phone || c.phone || c.電話,
           address: c.Address || c.address || c.地址 || '',
           coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
-          deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
+          deliveryTime: formatDeliveryTimeString(c.DeliveryTime || c.deliveryTime || c.配送時間),
           defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
           priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
           offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
@@ -586,7 +612,7 @@ function getData(startDateStr, since = 0) {
         phone: c.Phone || c.phone || c.電話,
         address: c.Address || c.address || c.地址 || '',
         coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
-        deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
+        deliveryTime: formatDeliveryTimeString(c.DeliveryTime || c.deliveryTime || c.配送時間),
         defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
         priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
         offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
@@ -651,7 +677,7 @@ function getData(startDateStr, since = 0) {
       createdAt: o.CreatedAt || o.createdAt || o.建立時間,
       customerName: o.CustomerName || o.customerName || o.客戶名,
       deliveryDate: finalDateStr,
-      deliveryTime: o.DeliveryTime || o.deliveryTime || o.配送時間,
+      deliveryTime: formatDeliveryTimeString(o.DeliveryTime || o.deliveryTime || o.配送時間),
       productName: o.ProductName || o.productName || o.品項,
       quantity: o.Quantity || o.quantity || o.數量,
       unit: o.Unit || o.unit || o.單位,
@@ -721,13 +747,13 @@ function getData(startDateStr, since = 0) {
   if (!settings) settings = {};
   settings.rules = getRemindRulesFromSheet();
 
-  // 1. 取得通知日誌最新時間
-  const traceSheet = SS.getSheetByName("TraceLogs");
+  // 1. 取得通知日誌最新時間 (支援中文與英文工作表名稱)
+  const traceSheet = SS.getSheetByName("執行日誌") || SS.getSheetByName("TraceLogs");
   const traceLastRow = traceSheet ? traceSheet.getLastRow() : 0;
   const latestNotifyLogTs = traceLastRow > 1 ? new Date(traceSheet.getRange(traceLastRow, 1).getValue()).getTime() : 0;
 
-  // 2. 取得系統系統日誌最新時間
-  const sysSheet = SS.getSheetByName("SystemLogs");
+  // 2. 取得系統操作日誌最新時間 (支援中文與英文工作表名稱)
+  const sysSheet = SS.getSheetByName("系統操作日誌") || SS.getSheetByName("SystemLogs");
   const sysLastRow = sysSheet ? sysSheet.getLastRow() : 0;
   const latestSystemLogTs = sysLastRow > 1 ? new Date(sysSheet.getRange(sysLastRow, 1).getValue()).getTime() : 0;
 
@@ -1075,7 +1101,7 @@ function updateOrderContent(orderData) {
     headers.forEach((h, i) => { if (h) headerMap[String(h).trim()] = i; });
     
     // 確保必備欄位存在
-    const requiredHeaders = ["LastUpdated", "Trip", "資料來源", "Version", "單價", "小計"];
+    const requiredHeaders = ["LastUpdated", "Trip", "資料來源", "Version"];
     let needsInsert = false;
     requiredHeaders.forEach(req => {
       if (headerMap[req] === undefined) {
@@ -1206,8 +1232,6 @@ function updateOrderContent(orderData) {
         row[lastUpdatedColIdx] = newLastUpdatedTs;
         if (headerMap["Trip"]) row[headerMap["Trip"]] = orderData.trip || "";
         if (headerMap["資料來源"]) row[headerMap["資料來源"]] = orderData.source || "";
-        if (headerMap["單價"]) row[headerMap["單價"]] = item.unitPrice !== undefined ? item.unitPrice : (orderData.unitPrice !== undefined ? orderData.unitPrice : "");
-        if (headerMap["小計"]) row[headerMap["小計"]] = item.subtotal !== undefined ? item.subtotal : (orderData.subtotal !== undefined ? orderData.subtotal : "");
         row[versionColIdx] = currentVersion + 1; 
         
         newRows.push(row);
@@ -1567,6 +1591,10 @@ function updateCustomer(data) {
     sheet.appendRow(newRow);
   }
   
+  // 立即清除快取並強制落盤，防止後續立即發起同步時讀取到 Google Sheets API 尚未同步的舊快照
+  try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (e) {}
+  SpreadsheetApp.flush();
+  
   return { lastUpdated: newLastUpdatedTs };
 }
 
@@ -1653,7 +1681,7 @@ function safeJsonArray(val) {
   return Array.isArray(val) ? val : [];
 }
 
-function generateTomorrowDefaultOrders() {
+function generateTomorrowDefaultOrders(explicitDates) {
   const functionName = 'generateTomorrowDefaultOrders';
   const lock = LockService.getScriptLock();
   try {
@@ -1672,243 +1700,273 @@ function generateTomorrowDefaultOrders() {
     const sheets = getSheets();
     const orderSheet = sheets.ORDERS;
   
-  const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip", "Status", "狀態", "單價", "小計"]);
-  const sourceColIdx = headerMap["資料來源"];
-  const lastUpdatedColIdx = headerMap["LastUpdated"];
-  const tripColIdx = headerMap["Trip"];
-  const unitPriceColIdx = headerMap["單價"];
-  const subtotalColIdx = headerMap["小計"];
-  
-  // 取得狀態欄位位置 (自動適配英中文標題，預設降級為 Index 8)
-  const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : 
-                       (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
-  
-  const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
-  const today = new Date();
-  
-  // 將目標日期改為「明天」
-  const tomorrow = new Date();
-  tomorrow.setDate(today.getDate() + 1);
-  const targetDateStr = Utilities.formatDate(tomorrow, timeZone, "yyyy-MM-dd");
-  const targetDayOfWeek = tomorrow.getDay(); 
-
-  // ==========================================
-  // 👇 新增的第 1 段：建立防呆檢查名單 👇
-  // ==========================================
-  const lastRow = orderSheet.getLastRow();
-  // 只抓最後 2000 筆，避免歷史資料拖垮效能
-  const checkRows = Math.max(0, Math.min(lastRow - 1, 2000)); 
-  const existingOrders = checkRows > 0 
-    ? orderSheet.getRange(lastRow - checkRows + 1, 1, checkRows, orderSheet.getMaxColumns()).getDisplayValues()
-    : [];
-  const alreadyGeneratedCustomers = new Set();
-  
-  // Helper function to normalize time to HH:mm
-  const normalizeTimeStr = (t) => {
-    if (!t) return "00:00";
-    const s = String(t).trim();
-    const parts = s.split(":");
-    const h = parts[0] ? parts[0].padStart(2, "0") : "00";
-    const m = parts[1] ? parts[1].padStart(2, "0") : "00";
-    return `${h}:${m}`;
-  };
-
-  // 從第 1 列開始迴圈 (因為 getRange 已經跳過標題列，所以從 0 開始)
-  for (let i = 0; i < existingOrders.length; i++) {
-    let rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
-    const rowCustomer = String(existingOrders[i][2] || '').trim(); // 第 3 欄 (Index 2) 是客戶名稱
+    const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip", "Status", "狀態"]);
+    const sourceColIdx = headerMap["資料來源"];
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const tripColIdx = headerMap["Trip"];
     
-    // 抓出配送時間 (第 5 欄, Index 4)
-    let rowTime = existingOrders[i][4];
-    if (rowTime instanceof Date) {
-      rowTime = Utilities.formatDate(rowTime, timeZone, "HH:mm");
-    } else {
-      rowTime = normalizeTimeStr(rowTime);
-    }
+    // 取得狀態欄位位置 (自動適配英中文標題，預設降級為 Index 8)
+    const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : 
+                         (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
     
-    // 抓取該筆訂單的狀態
-    const rowStatus = String(existingOrders[i][statusColIdx] || '').trim().toUpperCase();
+    const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
+    const now = new Date();
     
-    // 避免 Google Sheets 欄位為純 Date 物件，並處理 getDisplayValues 帶來的非補零格式 (如 2024/8/5)
-    let rowDateStr = "";
-    if (rowDate instanceof Date) {
-      rowDateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
-    } else {
-      rowDateStr = String(rowDate || '').trim().replace(/\//g, "-");
-      const dateParts = rowDateStr.split('-');
-      if (dateParts.length === 3) {
-        rowDateStr = `${dateParts[0]}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`;
-      }
-    }
-    
-    // 只要明天 (targetDateStr) 已經有該客戶的訂單，而且狀態不是 DELETED
-    // 將「客戶名稱_時間」記到「已建單名單」，實現更精準的時段攔截
-    if (rowDateStr === targetDateStr && rowStatus !== 'DELETED') {
-      alreadyGeneratedCustomers.add(`${rowCustomer}_${rowTime}`); 
-      // 👇 新增這行：記錄該客戶當天已經有任何訂單 (全域標記)
-      alreadyGeneratedCustomers.add(`${rowCustomer}_ANY`); 
-    }
-  }
-  // ==========================================
-  // 👆 第 1 段結束 👆
-  // ==========================================
+    // 取得在目標時區 (Asia/Taipei) 下的今天日期與星期幾
+    const todayStr = Utilities.formatDate(now, timeZone, "yyyy-MM-dd");
+    const todayParts = todayStr.split('-').map(Number);
+    const todayDateObj = new Date(todayParts[0], todayParts[1] - 1, todayParts[2]);
+    const currentDayOfWeek = todayDateObj.getDay(); // 0:週日, 1:週一, ..., 6:週六
 
-  // 取代原先的 getData()，避免全表(包含ORDERS)都被載入解析而導致逾時
-  const customers = getSheetData(sheets.CUSTOMERS).map(c => ({
-    name: c.Name || c.name || c.客戶名稱,
-    defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
-    offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
-    holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
-    deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
-    deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
-    defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
-    autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
-    isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
-    isArchived: String(c.封存 || c.isArchived).trim().toLowerCase() === 'true' || c.封存 === true,
-    priceList: c.PriceList || c.priceList || c.客製化價格JSON || c.客製化價格
-  }));
-
-  const products = getSheetData(sheets.PRODUCTS).map(p => ({
-    id: p.ID || p.id,
-    name: p.Name || p.name || p.品項,
-    price: Number(p.Price || p.price || p.預設單價 || p.單價) || 0
-  }));
-  
-  const globalProductMap = new Map();
-  products.forEach(p => {
-    // 預先將商品名稱與預設價格打包存入，後續 O(1) 取出
-    globalProductMap.set(p.id, { name: p.name, price: p.price });
-  });
-  const newOrderRows = [];
-  const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
-  const lastUpdatedTs = String(new Date().getTime());
-
-  const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx, unitPriceColIdx, subtotalColIdx) + 1;
-  if (orderSheet.getMaxColumns() < maxCol) {
-    orderSheet.insertColumnsAfter(orderSheet.getMaxColumns(), maxCol - orderSheet.getMaxColumns());
-  }
-
-  customers.forEach(c => {
-    // 檢查是否已封存 (永久停業) 或暫停供貨，若是則不建立訂單
-    if (c.isArchived || c.isPaused) return;
-
-    const isAutoEnabled = c.autoOrderEnabled;
-    if (!isAutoEnabled) return; 
-
-
-
-    const defaultItems = typeof c.defaultItems === 'string' ? safeJsonArray(c.defaultItems) : (c.defaultItems || []);
-    if (!defaultItems || defaultItems.length === 0) return;
-    
-    const offDays = typeof c.offDays === 'string' ? safeJsonArray(c.offDays) : (c.offDays || []);
-    if (offDays.includes(targetDayOfWeek)) return;
-    
-    const holidayDates = typeof c.holidayDates === 'string' ? safeJsonArray(c.holidayDates) : (c.holidayDates || []);
-    if (holidayDates.includes(targetDateStr)) return;
-
-    // 建立客製化價格 Map O(1)
-    const priceList = (typeof c.priceList === 'string' ? safeJsonArray(c.priceList) : (c.priceList || []));
-    const customPriceMap = new Map();
-    priceList.forEach(pl => customPriceMap.set(pl.productId, pl.price));
-
-    // 將預設品項按時間與車趟分群
-    const itemsByTimeAndTrip = {};
-    defaultItems.forEach(item => {
-      const timeKey = item.deliveryTime || c.deliveryTime || "08:00";
-      const tripKey = item.trip || c.defaultTrip || "";
-      const groupKey = timeKey + "||" + tripKey;
-      
-      if (!itemsByTimeAndTrip[groupKey]) {
-        itemsByTimeAndTrip[groupKey] = [];
-      }
-      itemsByTimeAndTrip[groupKey].push({
-        ...item,
-        _time: timeKey,
-        _trip: tripKey,
-        _hasIndependentTime: !!item.deliveryTime
+    // 計算目標建單日期列表：
+    // 1. 一般平日（週日～週五）：建單「明天」
+    // 2. 星期六（currentDayOfWeek === 6）：
+    //    【關鍵業務邏輯】麵廠每週一固定休息，必須在週日凌晨將週日與週一的訂單都製作出來（工作小抄合併計算）。
+    //    因此星期六執行自動建單時，必須連同「週日（明天）」與「週一（後天）」的訂單一併生成，避免週日凌晨缺漏生產！
+    let targetDateConfigs = [];
+    if (Array.isArray(explicitDates) && explicitDates.length > 0) {
+      targetDateConfigs = explicitDates.map(ds => {
+        const parts = String(ds).split('-').map(Number);
+        const dObj = new Date(parts[0], parts[1] - 1, parts[2]);
+        return {
+          dateObj: dObj,
+          dateStr: Utilities.formatDate(dObj, timeZone, "yyyy-MM-dd"),
+          dayOfWeek: dObj.getDay()
+        };
       });
-    });
-
-    Object.keys(itemsByTimeAndTrip).forEach(groupKey => {
-      const groupItems = itemsByTimeAndTrip[groupKey];
-      const timeKey = normalizeTimeStr(groupItems[0]._time);
-      const tripKey = groupItems[0]._trip;
-      const cName = String(c.name || '').trim();
-      
-      // 檢查這個群組內是否含有明確指定「獨立時間」的品項
-      const hasIndependentTime = groupItems.some(i => i._hasIndependentTime);
-      
-      if (!hasIndependentTime) {
-        // 情境 A：沒有設定獨立時間 (依靠預設時間)
-        // 邏輯：只要當天系統裡有該客戶的「任何一筆訂單」，就不重複建單
-        if (alreadyGeneratedCustomers.has(`${cName}_ANY`)) {
-          return;
-        }
-      } else {
-        // 情境 B：有設定獨立時間 (例如早班、晚班拆單)
-        // 邏輯：精準比對該「獨立時段」是否已經有訂單，避免擋掉其他時段的加單
-        if (alreadyGeneratedCustomers.has(`${cName}_${timeKey}`)) {
-          return;
-        }
-      }
-      
-      
-      const orderId = "AUTO-" + Utilities.formatDate(tomorrow, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
-
-      groupItems.forEach(item => {
-        let currentPrice = 0;
-        let productName = item.productName || item.productId; // Fallback
-        
-        // 1. O(1) 從全域商品字典抓預設資料
-        const globalProduct = globalProductMap.get(item.productId);
-        if (globalProduct) {
-          productName = globalProduct.name;
-          if (typeof globalProduct.price === 'number') {
-            currentPrice = globalProduct.price;
-          }
-        }
-
-        // 2. O(1) 從客戶客製化字典抓資料 (若有客製價，直接無腦覆蓋預設價)
-        const customPrice = customPriceMap.get(item.productId);
-        if (typeof customPrice === 'number') {
-          currentPrice = customPrice;
-        }
-
-        const subtotal = currentPrice * (item.quantity || 1);
-        
-        const row = new Array(maxCol).fill("");
-        row[0] = timestamp;
-        row[1] = orderId;
-        row[2] = c.name;
-        row[3] = targetDateStr;
-        row[4] = timeKey;
-        row[5] = productName;
-        row[6] = item.quantity || 1;
-        row[7] = ""; // 備註先留空
-        row[8] = "PENDING";
-        row[9] = c.deliveryMethod || "";
-        row[10] = item.unit || "斤";
-        row[lastUpdatedColIdx] = lastUpdatedTs;
-        row[tripColIdx] = tripKey;
-        row[sourceColIdx] = "🤖 自動建單";
-        row[unitPriceColIdx] = currentPrice;
-        row[subtotalColIdx] = subtotal;
-        
-        newOrderRows.push(row);
+    } else {
+      // 明天 (週日或平日隔天)
+      const tomorrowDateObj = new Date(todayDateObj);
+      tomorrowDateObj.setDate(todayDateObj.getDate() + 1);
+      targetDateConfigs.push({
+        dateObj: tomorrowDateObj,
+        dateStr: Utilities.formatDate(tomorrowDateObj, timeZone, "yyyy-MM-dd"),
+        dayOfWeek: tomorrowDateObj.getDay()
       });
-    });
-  });
 
-  if (newOrderRows.length > 0) {
+      // 星期六特別加碼：連同週一 (後天) 一起自動生成
+      if (currentDayOfWeek === 6) {
+        const mondayDateObj = new Date(todayDateObj);
+        mondayDateObj.setDate(todayDateObj.getDate() + 2);
+        targetDateConfigs.push({
+          dateObj: mondayDateObj,
+          dateStr: Utilities.formatDate(mondayDateObj, timeZone, "yyyy-MM-dd"),
+          dayOfWeek: mondayDateObj.getDay()
+        });
+      }
+    }
+
+    // ==========================================
+    // 建立防呆檢查名單 (含日期維度)
+    // ==========================================
     const lastRow = orderSheet.getLastRow();
-    orderSheet.getRange(lastRow + 1, 1, newOrderRows.length, maxCol).setValues(newOrderRows);
-  }
-  
+    // 只抓最後 2000 筆，避免歷史資料拖垮效能
+    const checkRows = Math.max(0, Math.min(lastRow - 1, 2000)); 
+    const existingOrders = checkRows > 0 
+      ? orderSheet.getRange(lastRow - checkRows + 1, 1, checkRows, orderSheet.getMaxColumns()).getDisplayValues()
+      : [];
+    const alreadyGeneratedCustomers = new Set();
+    
+    // Helper function to normalize time to HH:mm
+    const normalizeTimeStr = (t) => {
+      if (!t) return "00:00";
+      const s = String(t).trim();
+      const parts = s.split(":");
+      const h = parts[0] ? parts[0].padStart(2, "0") : "00";
+      const m = parts[1] ? parts[1].padStart(2, "0") : "00";
+      return `${h}:${m}`;
+    };
+
+    for (let i = 0; i < existingOrders.length; i++) {
+      let rowDate = existingOrders[i][3]; // 第 4 欄 (Index 3) 是出貨日期
+      const rowCustomer = String(existingOrders[i][2] || '').trim(); // 第 3 欄 (Index 2) 是客戶名稱
+      
+      let rowTime = existingOrders[i][4];
+      if (rowTime instanceof Date) {
+        rowTime = Utilities.formatDate(rowTime, timeZone, "HH:mm");
+      } else {
+        rowTime = normalizeTimeStr(rowTime);
+      }
+      
+      const rowStatus = String(existingOrders[i][statusColIdx] || '').trim().toUpperCase();
+      
+      let rowDateStr = "";
+      if (rowDate instanceof Date) {
+        rowDateStr = Utilities.formatDate(rowDate, timeZone, "yyyy-MM-dd");
+      } else {
+        rowDateStr = String(rowDate || '').trim().replace(/\//g, "-");
+        const dateParts = rowDateStr.split('-');
+        if (dateParts.length === 3) {
+          rowDateStr = `${dateParts[0]}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`;
+        }
+      }
+      
+      // 將特定出貨日期、客戶名稱與時間記到名單，避免重覆建單
+      if (rowDateStr && rowStatus !== 'DELETED') {
+        alreadyGeneratedCustomers.add(`${rowDateStr}_${rowCustomer}_${rowTime}`); 
+        alreadyGeneratedCustomers.add(`${rowDateStr}_${rowCustomer}_ANY`); 
+      }
+    }
+
+    // 取代原先的 getData()，避免全表(包含ORDERS)都被載入解析而導致逾時
+    const customers = getSheetData(sheets.CUSTOMERS).map(c => ({
+      name: c.Name || c.name || c.客戶名稱,
+      defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
+      offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
+      holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
+      deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
+      deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
+      defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
+      autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+      isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
+      isArchived: String(c.封存 || c.isArchived).trim().toLowerCase() === 'true' || c.封存 === true,
+      priceList: c.PriceList || c.priceList || c.客製化價格JSON || c.客製化價格
+    }));
+
+    const products = getSheetData(sheets.PRODUCTS).map(p => ({
+      id: p.ID || p.id,
+      name: p.Name || p.name || p.品項,
+      price: Number(p.Price || p.price || p.預設單價 || p.單價) || 0
+    }));
+    
+    const globalProductMap = new Map();
+    products.forEach(p => {
+      globalProductMap.set(p.id, { name: p.name, price: p.price });
+    });
+    
+    const newOrderRows = [];
+    const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
+    const lastUpdatedTs = String(new Date().getTime());
+
+    const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
+    if (orderSheet.getMaxColumns() < maxCol) {
+      orderSheet.insertColumnsAfter(orderSheet.getMaxColumns(), maxCol - orderSheet.getMaxColumns());
+    }
+
+    // 依序針對每個目標日期建立訂單 (週六時會依序建立週日與週一)
+    targetDateConfigs.forEach(targetConfig => {
+      const targetDateStr = targetConfig.dateStr;
+      const targetDayOfWeek = targetConfig.dayOfWeek;
+      const targetDateObj = targetConfig.dateObj;
+
+      customers.forEach(c => {
+        // 檢查是否已封存 (永久停業) 或暫停供貨，若是則不建立訂單
+        if (c.isArchived || c.isPaused) return;
+
+        const isAutoEnabled = c.autoOrderEnabled;
+        if (!isAutoEnabled) return; 
+
+        const defaultItems = typeof c.defaultItems === 'string' ? safeJsonArray(c.defaultItems) : (c.defaultItems || []);
+        if (!defaultItems || defaultItems.length === 0) return;
+        
+        const offDays = typeof c.offDays === 'string' ? safeJsonArray(c.offDays) : (c.offDays || []);
+        // 嚴謹比對固定公休：支援數字 0~6、字串 "0"~"6"、或中文如 "一"、"日"
+        const isOffDay = offDays.some(h => {
+          const str = String(h).trim();
+          return str === String(targetDayOfWeek) ||
+                 Number(str) === targetDayOfWeek ||
+                 (targetDayOfWeek === 0 && (str === '7' || str === '日' || str === '天')) ||
+                 (targetDayOfWeek === 1 && (str === '一' || str.includes('一')));
+        });
+        if (isOffDay) return;
+        
+        const holidayDates = typeof c.holidayDates === 'string' ? safeJsonArray(c.holidayDates) : (c.holidayDates || []);
+        if (holidayDates.includes(targetDateStr)) return;
+
+        // 將預設品項按時間與車趟分群
+        const itemsByTimeAndTrip = {};
+        defaultItems.forEach(item => {
+          const timeKey = item.deliveryTime || c.deliveryTime || "08:00";
+          const tripKey = item.trip || c.defaultTrip || "";
+          const groupKey = timeKey + "||" + tripKey;
+          
+          if (!itemsByTimeAndTrip[groupKey]) {
+            itemsByTimeAndTrip[groupKey] = [];
+          }
+          itemsByTimeAndTrip[groupKey].push({
+            ...item,
+            _time: timeKey,
+            _trip: tripKey,
+            _hasIndependentTime: !!item.deliveryTime
+          });
+        });
+
+        Object.keys(itemsByTimeAndTrip).forEach(groupKey => {
+          const groupItems = itemsByTimeAndTrip[groupKey];
+          const timeKey = normalizeTimeStr(groupItems[0]._time);
+          const tripKey = groupItems[0]._trip;
+          const cName = String(c.name || '').trim();
+          
+          // 檢查這個群組內是否含有明確指定「獨立時間」的品項
+          const hasIndependentTime = groupItems.some(i => i._hasIndependentTime);
+          
+          if (!hasIndependentTime) {
+            // 情境 A：沒有設定獨立時間 (依靠預設時間)
+            // 只要目標日期已有該客戶的「任何一筆訂單」，就不重複建單
+            if (alreadyGeneratedCustomers.has(`${targetDateStr}_${cName}_ANY`)) {
+              return;
+            }
+          } else {
+            // 情境 B：有設定獨立時間 (例如早班、晚班拆單)
+            // 精準比對該目標日期之「獨立時段」是否已有訂單
+            if (alreadyGeneratedCustomers.has(`${targetDateStr}_${cName}_${timeKey}`)) {
+              return;
+            }
+          }
+          
+          const orderId = "AUTO-" + Utilities.formatDate(targetDateObj, timeZone, "MMdd") + "-" + Math.floor(Math.random() * 10000);
+
+          groupItems.forEach(item => {
+            let productName = item.productName || item.productId; // Fallback
+            
+            // O(1) 從全域商品字典抓預設資料
+            const globalProduct = globalProductMap.get(item.productId);
+            if (globalProduct) {
+              productName = globalProduct.name;
+            }
+
+            const row = new Array(maxCol).fill("");
+            row[0] = timestamp;
+            row[1] = orderId;
+            row[2] = c.name;
+            row[3] = targetDateStr;
+            row[4] = timeKey;
+            row[5] = productName;
+            row[6] = item.quantity || 1;
+            row[7] = ""; // 備註先留空
+            row[8] = "PENDING";
+            row[9] = c.deliveryMethod || "";
+            row[10] = item.unit || "斤";
+            row[lastUpdatedColIdx] = lastUpdatedTs;
+            row[tripColIdx] = tripKey;
+            row[sourceColIdx] = "🤖 自動建單";
+            
+            newOrderRows.push(row);
+          });
+
+          // 當前批次建好後，立即加入已建單防呆名單
+          alreadyGeneratedCustomers.add(`${targetDateStr}_${cName}_ANY`);
+          alreadyGeneratedCustomers.add(`${targetDateStr}_${cName}_${timeKey}`);
+        });
+      });
+    });
+
+    if (newOrderRows.length > 0) {
+      const lastRow = orderSheet.getLastRow();
+      orderSheet.getRange(lastRow + 1, 1, newOrderRows.length, maxCol).setValues(newOrderRows);
+    }
+
+    return {
+      success: true,
+      createdRows: newOrderRows.length,
+      targetDates: targetDateConfigs.map(t => t.dateStr)
+    };
+    
   } finally {
     SpreadsheetApp.flush(); // 強制將快取變更寫入 Sheets，確保後續 Lock 拿到最新資料
     lock.releaseLock();
     
-    // ▼ ▼ ▼ 補上這一行，建單完成後通知所有前端拉取資料 ▼ ▼ ▼
+    // ▼ ▼ ▼ 建單完成後通知所有前端拉取最新資料 ▼ ▼ ▼
     notifyFirebase(); 
   }
 }
@@ -2575,10 +2633,35 @@ function handleLineWebhook(payload) {
       const replyToken = event.replyToken;
       
       let replyText = "";
-      if (text === "查ID" || text === "我的ID") {
+      
+      // 1. 查詢自己的 LINE User ID
+      if (text === "查ID" || text === "我的ID" || text === "id" || text === "ID") {
         replyText = "您的 User ID 是：\n" + userId;
-      } else {
-        replyText = "您可以輸入「查ID」來獲取您的 User ID。";
+      } 
+      // 2. 說明選單 / 幫助
+      else if (text === "說明" || text === "幫助" || text === "help" || text === "功能" || text === "?") {
+        replyText = "🤖【系統查詢指令說明】\n" +
+                    "━━━━━━━━━━━━━━\n" +
+                    "1️⃣ 店家營業與公休：\n" +
+                    "👉「鵝肉亭今天有營業嗎？」\n" +
+                    "👉「鵝肉亭什麼時候公休？」\n\n" +
+                    "2️⃣ 配送進度與訂單：\n" +
+                    "👉「鵝肉亭今天有去嗎？」\n" +
+                    "👉「鵝肉亭有叫麵嗎？」\n" +
+                    "👉「正宗民雄鵝肉亭」（看完整店家資料）\n\n" +
+                    "3️⃣ 指定日期訂單：\n" +
+                    "👉「誠石 5/30 訂了多少？」\n" +
+                    "👉「大埔 5/30 叫了啥」\n\n" +
+                    "4️⃣ 月份貨款統計：\n" +
+                    "👉「誠石 5月貨款是多少？」\n" +
+                    "👉「鵝肉亭五月要收多少」\n\n" +
+                    "5️⃣ 生成對帳單 PDF：\n" +
+                    "👉「誠石 5月報表」\n" +
+                    "👉「鵝肉亭 5月PDF」";
+      }
+      else {
+        // 進入智慧查詢處理器
+        replyText = processLineOrderQuery(text);
       }
 
       try {
@@ -2595,12 +2678,1080 @@ function handleLineWebhook(payload) {
           muteHttpExceptions: true
         });
       } catch (err) {
-        // Ignore reply errors
+        console.error("LINE reply error: " + err.toString());
       }
     }
   });
   
   return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
+}
+
+/**
+ * 智慧訂單與帳務自然語言解析器 (支援 Gemini AI 意圖理解與結構化查詢)
+ */
+function processLineOrderQuery(rawText) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const timeZone = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const now = new Date();
+  const currentYear = Utilities.formatDate(now, timeZone, "yyyy");
+  const todayStr = Utilities.formatDate(now, timeZone, "yyyy-MM-dd");
+
+  const cleanText = rawText.replace(/\s+/g, ' ').trim();
+
+  // 1. 嘗試使用 Gemini AI 進行深度語意理解 (若有設定 GEMINI_API_KEY)
+  const aiIntent = parseQueryIntentWithGemini(cleanText, todayStr);
+  if (aiIntent && aiIntent.action) {
+    if (aiIntent.action === 'BUSINESS_STATUS' && aiIntent.customerName) {
+      return queryCustomerBusinessStatus(ss, aiIntent.customerName, todayStr, timeZone);
+    }
+    if (aiIntent.action === 'HOLIDAY_INFO' && aiIntent.customerName) {
+      return queryCustomerHolidayInfo(ss, aiIntent.customerName, todayStr, timeZone);
+    }
+    if (aiIntent.action === 'DELIVERY_STATUS' && aiIntent.customerName) {
+      return queryDeliveryStatusOnly(ss, aiIntent.customerName, todayStr);
+    }
+    if (aiIntent.action === 'CUSTOMER_PROFILE' && aiIntent.customerName) {
+      return queryCustomerProfileOverview(ss, aiIntent.customerName, todayStr, timeZone);
+    }
+    if (aiIntent.action === 'TODAY_STATUS' && aiIntent.customerName) {
+      return queryTodayOrderStatus(ss, aiIntent.customerName, todayStr);
+    }
+    if (aiIntent.action === 'DATE_ORDER' && aiIntent.customerName) {
+      const targetDate = aiIntent.targetDate || todayStr;
+      const displayDate = targetDate.substring(5);
+      return queryDateOrders(ss, aiIntent.customerName, targetDate, displayDate);
+    }
+    if (aiIntent.action === 'MONTHLY_BILL' && aiIntent.customerName) {
+      const monthNum = aiIntent.month || parseInt(todayStr.split('-')[1], 10);
+      const yearStr = aiIntent.year || currentYear;
+      return queryMonthlyBill(ss, aiIntent.customerName, monthNum, yearStr);
+    }
+    if (aiIntent.action === 'GENERATE_PDF' && aiIntent.customerName) {
+      const monthNum = aiIntent.month || parseInt(todayStr.split('-')[1], 10);
+      const yearStr = aiIntent.year || currentYear;
+      return generateMonthlyStatementPDF(ss, aiIntent.customerName, monthNum, yearStr);
+    }
+  }
+
+  // 2. Fallback：使用精確正規表達式 (規則引擎) 解析
+  // ----------------------------------------------------
+  // 情境 A：公休日查詢 (例如：「誠石什麼時候公休」、「大埔哪天休息」、「阿石公休日」)
+  // ----------------------------------------------------
+  const holidayMatch = cleanText.match(/(.+?)(?:什麼時候公休|甚麼時候公休|哪天公休|哪天休息|公休是哪天|公休日是哪天|公休哪一天|公休哪天|公休日|公休|休哪天|哪天休|休息日)/);
+  if (holidayMatch) {
+    const custName = holidayMatch[1].replace(/^(?:幫我|請幫我|查|查詢|看)\s*/, '').trim();
+    if (custName) {
+      return queryCustomerHolidayInfo(ss, custName, todayStr, timeZone);
+    }
+  }
+
+  // ----------------------------------------------------
+  // 情境 B：今天有無營業 / 開門查詢 (例如：「誠石今天有營業嗎」、「大埔今天有開嗎」、「阿石今天休息嗎」)
+  // ----------------------------------------------------
+  const businessMatch = cleanText.match(/(.+?)(?:今天有營業嗎|今天有開嗎|今天有開門嗎|今天營業嗎|今天開嗎|今天有休息嗎|今天休息嗎|今天公休嗎|今天有公休嗎|有營業嗎|有開嗎|有開門嗎|休假嗎)/);
+  if (businessMatch) {
+    const custName = businessMatch[1].replace(/^(?:幫我|請幫我|查|查詢|看|今天|今日)\s*/, '').trim();
+    if (custName) {
+      return queryCustomerBusinessStatus(ss, custName, todayStr, timeZone);
+    }
+  }
+
+  // ----------------------------------------------------
+  // 情境 C：配送進度專屬查詢 (例如：「誠石今天有去嗎」、「送到了沒」、「去了沒」)
+  // ----------------------------------------------------
+  const deliveryProgressMatch = cleanText.match(/(.+?)(?:今天有去嗎|今天去了嗎|今天有送嗎|今天送了嗎|去了嗎|送了嗎|到了嗎|去了沒|送了沒|到了沒|有去嗎|有送嗎|送到了嗎)/);
+  if (deliveryProgressMatch) {
+    const custName = deliveryProgressMatch[1].replace(/^(?:今天|今日|幫我|請幫我|查|查詢)/, '').trim();
+    if (custName) {
+      return queryDeliveryStatusOnly(ss, custName, todayStr);
+    }
+  }
+
+  // ----------------------------------------------------
+  // 情境 4：產生/下載 PDF 報表
+  // 例：「C店家 5月報表」、「誠石5月PDF」、「印 誠石 5月對帳單」
+  // ----------------------------------------------------
+  const pdfMatch = cleanText.match(/(?:印|產出|產生|下載|匯出)?\s*(.+?)\s*(\d{1,2})月\s*(?:報表|對帳單|PDF|pdf)/i);
+  if (pdfMatch) {
+    const custName = pdfMatch[1].replace(/^(?:幫我|請幫我|查|查詢)/, '').trim();
+    const monthNum = parseInt(pdfMatch[2], 10);
+    return generateMonthlyStatementPDF(ss, custName, monthNum, currentYear);
+  }
+
+  // ----------------------------------------------------
+  // 情境 3：查詢月份貨款 / 帳單
+  // 例：「B店家 5月貨款是多少？」、「誠石5月帳單」、「大埔 5月份 金額」
+  // ----------------------------------------------------
+  const monthlyBillMatch = cleanText.match(/(?:查|查詢|看|算)?\s*(.+?)\s*(\d{1,2})月(?:份)?\s*(?:的)?(?:貨款|帳單|帳款|金額|總額|總計|是多少)/);
+  if (monthlyBillMatch) {
+    const custName = monthlyBillMatch[1].replace(/^(?:幫我|請幫我)/, '').trim();
+    const monthNum = parseInt(monthlyBillMatch[2], 10);
+    return queryMonthlyBill(ss, custName, monthNum, currentYear);
+  }
+
+  // ----------------------------------------------------
+  // 情境 2：查詢指定日期訂單
+  // 例：「A店家 5/30 訂了多少貨？」、「誠石 5/30 訂單」、「誠石 5-30」、「大埔 05/30」
+  // ----------------------------------------------------
+  const dateMatch = cleanText.match(/(.+?)\s*(\d{1,2})[\/\-\.](\d{1,2})(?:號|日)?(?:\s*(?:訂單|叫貨|貨|訂了多少|訂了什麼|有訂嗎))?/);
+  if (dateMatch) {
+    const custName = dateMatch[1].replace(/^(?:查|查詢|幫我|請幫我)/, '').trim();
+    const monthStr = String(dateMatch[2]).padStart(2, '0');
+    const dayStr = String(dateMatch[3]).padStart(2, '0');
+    const targetDate = `${currentYear}-${monthStr}-${dayStr}`;
+    return queryDateOrders(ss, custName, targetDate, `${monthStr}/${dayStr}`);
+  }
+
+  // ----------------------------------------------------
+  // 情境 1：今日訂單明細與叫貨狀態
+  // 例：「鵝肉亭有叫麵?」、「鵝肉亭有訂貨?」、「有叫麵嗎」、「有訂貨嗎」
+  // ----------------------------------------------------
+  const todayOrderMatch = cleanText.match(/(.+?)(?:有叫麵|有叫貨|有訂貨|有叫嗎|有訂嗎|有訂貨嗎|有叫麵嗎|訂了沒|叫了沒|叫麵了嗎|叫貨了嗎|訂貨了嗎|今天有叫|今天有訂)/);
+  if (todayOrderMatch) {
+    let rawCust = (todayOrderMatch[1] || '').trim();
+    const custName = rawCust
+      .replace(/^(?:今天|今日|幫我|請幫我|查|查詢)/, '')
+      .trim();
+    if (custName) {
+      return queryTodayOrderStatus(ss, custName, todayStr);
+    }
+  }
+
+  // ----------------------------------------------------
+  // 純店家名稱查詢：提供完整的「店家總覽資料」（包含今日訂單、配送趟次、營業/公休時間、聯絡資訊）
+  // ----------------------------------------------------
+  if (cleanText.length >= 2 && cleanText.length <= 15 && !cleanText.includes("說明") && !cleanText.includes("http")) {
+    const custName = cleanText.replace(/^(?:查|查詢|看)\s*/, '').trim();
+    return queryCustomerProfileOverview(ss, custName, todayStr, timeZone);
+  }
+
+  // 模糊關鍵字 fallback
+  return "🤖 抱歉，未能完全理解您的提問。\n\n" +
+         "💡 您可以嘗試這樣問：\n" +
+         "• 查營業狀態：「鵝肉亭今天有營業嗎？」\n" +
+         "• 查公休時間：「鵝肉亭什麼時候公休？」\n" +
+         "• 查配送進度：「鵝肉亭今天有去嗎？」、「送到了沒？」\n" +
+         "• 查叫貨明細：「鵝肉亭有叫麵嗎？」\n" +
+         "• 查店家檔案：「正宗民雄鵝肉亭」（輸入純店名）\n" +
+         "• 查特定日期：「誠石 5/30 訂單」\n" +
+         "• 查月份貨款：「誠石 5月貨款是多少？」\n" +
+         "• 生成月報表：「誠石 5月報表」\n\n" +
+         "輸入「說明」可查看所有指令範例。";
+}
+
+/**
+ * 透過 Google Gemini AI 進行自然語言意圖理解
+ */
+function parseQueryIntentWithGemini(userText, todayStr) {
+  try {
+    const configSheet = getConfigSheet();
+    let geminiApiKey = String(getSystemConfig(configSheet, "GeminiApiKey") || '').trim();
+    if (!geminiApiKey) {
+      const settingsStr = getSystemConfig(configSheet, "AppSettings");
+      if (settingsStr) {
+        try {
+          const settings = JSON.parse(settingsStr);
+          geminiApiKey = String(settings.geminiApiKey || '').trim();
+        } catch (e) {}
+      }
+    }
+    
+    // 若未設定 Gemini Key 則回傳 null 走規則引擎
+    if (!geminiApiKey) {
+      console.warn("⚠️ 系統尚未在 Config 設定 GeminiApiKey");
+      return null;
+    }
+
+    const prompt = `你是一個專業製麵廠 ERP 系統的 AI 助理。請精準分析使用者這句口語化的提問，將其精確分類為以下 8 種專屬意圖之一，並提取「店家名稱」：
+使用者提問："${userText}"
+今天日期：${todayStr}
+
+意圖定義與分類準則：
+1. "BUSINESS_STATUS"：詢問某店家「今天有沒有營業 / 有開嗎 / 有開門嗎 / 今天休息嗎 / 今天公休嗎」。
+   - 範例：「誠石今天有營業嗎？」、「鵝肉亭今天有開嗎？」、「大埔今天有休息嗎？」
+2. "HOLIDAY_INFO"：詢問某店家「什麼時候公休 / 哪天休息 / 公休日是哪天 / 特定公休日」。
+   - 範例：「鵝肉亭什麼時候公休？」、「誠石休哪天？」、「大埔公休日是禮拜幾？」
+3. "DELIVERY_STATUS"：詢問司機「今天送去了嗎 / 今天有去送嗎 / 送到了沒 / 去了沒 / 送了沒」（專注在司機配送進度）。
+   - 範例：「誠石今天有去嗎？」、「鵝肉亭送到了沒？」、「阿石去了沒？」
+4. "TODAY_STATUS"：詢問某店家「今天有沒有叫麵 / 有沒有叫貨 / 有沒有訂貨 / 今天叫了什麼」（專注在叫貨數量品項）。
+   - 範例：「鵝肉亭有叫麵嗎？」、「誠石今天有訂貨嗎？」、「今天有叫貨嗎？」
+5. "CUSTOMER_PROFILE"：使用者只輸入了「純店家名稱」或詢問店家基本檔案。
+   - 範例：「鵝肉亭」、「正宗民雄鵝肉亭」、「查 誠石」
+6. "DATE_ORDER"：詢問某店家在特定日期的叫貨量、品項或金額。
+   - 範例：「大埔 5/30 叫了啥」、「誠石 8-15 訂單」
+7. "MONTHLY_BILL"：詢問某店家特定月份的貨款、帳款、要收多少錢。
+   - 範例：「誠石五月要收多少」、「大埔 5月 帳單」
+8. "GENERATE_PDF"：要求產出、下載、列印某店家特定月份的對帳單/報表/PDF。
+   - 範例：「幫我做一份大埔 5 月對帳單」、「誠石 5月 PDF」
+
+請僅回傳 JSON 物件，格式如下（不要加任何 markdown 標記或反引號）：
+{
+  "action": "BUSINESS_STATUS" | "HOLIDAY_INFO" | "DELIVERY_STATUS" | "TODAY_STATUS" | "CUSTOMER_PROFILE" | "DATE_ORDER" | "MONTHLY_BILL" | "GENERATE_PDF" | "UNKNOWN",
+  "customerName": "提取出的精確店家名稱（去掉今天、營業、公休、有去嗎、有叫麵、查、幫我等所有贅詞）",
+  "targetDate": "YYYY-MM-DD (若為 DATE_ORDER 且有提到日期)",
+  "month": 數字月份 (例如 5, 若為 MONTHLY_BILL 或 GENERATE_PDF),
+  "year": "YYYY (年份，預設當前年份)"
+}`;
+
+    // 支援最新 gemini-2.5-flash 與 gemini-1.5-flash
+    const modelsToTry = [
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + geminiApiKey,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + geminiApiKey
+    ];
+
+    const payload = {
+      contents: [{
+        parts: [{ text: prompt }]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json"
+      }
+    };
+
+    let lastError = null;
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const url = modelsToTry[i];
+      try {
+        const response = UrlFetchApp.fetch(url, {
+          method: "post",
+          contentType: "application/json",
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        });
+
+        const statusCode = response.getResponseCode();
+        const responseText = response.getContentText();
+
+        if (statusCode === 200) {
+          const resJson = JSON.parse(responseText);
+          const rawOutput = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawOutput) {
+            const cleanJson = rawOutput.replace(/```json/g, '').replace(/```/g, '').trim();
+            const parsed = JSON.parse(cleanJson);
+            if (parsed.action && parsed.action !== 'UNKNOWN' && parsed.customerName) {
+              return parsed;
+            }
+          }
+        } else {
+          lastError = `HTTP ${statusCode}: ${responseText}`;
+          console.error(`Gemini model ${i + 1} 呼叫失敗: ${lastError}`);
+        }
+      } catch (callErr) {
+        lastError = callErr.message || String(callErr);
+      }
+    }
+  } catch (err) {
+    console.error("Gemini AI intent parsing failed: " + err.toString());
+  }
+  return null;
+}
+
+/**
+ * 格式化配送時間欄位（去除試算表把純時間自動解析成 1899年 Date 物件的干擾字串）
+ */
+function formatDeliveryTimeString(rawVal, timeZone) {
+  if (!rawVal) return '';
+  if (rawVal instanceof Date) {
+    const tz = timeZone || "Asia/Taipei";
+    return Utilities.formatDate(rawVal, tz, "HH:mm");
+  }
+  const str = String(rawVal).trim();
+  // 若是 "Sat Dec 30 1899 09:40:00 GMT+0800..." 或包含 GMT / 1899 / 1900 等格式
+  if (str.includes("1899") || str.includes("1900") || str.includes("GMT") || str.includes("台灣標準時") || str.includes("Taipei Standard Time")) {
+    const match = str.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
+    if (match) {
+      const hh = match[1].padStart(2, '0');
+      const mm = match[2];
+      return `${hh}:${mm}`;
+    }
+  }
+  return str;
+}
+
+/**
+ * 將公休日陣列或字串 (例如 [0, 1] 或 "0, 1" 或 "1、2") 轉換為親切的中文星期格式 (例如 "週日、週一")
+ */
+function formatOffDaysToChinese(rawOffDays) {
+  if (!rawOffDays && rawOffDays !== 0) return "無固定公休 (全年無休或依店家公告)";
+
+  let list = [];
+  if (typeof rawOffDays === 'string') {
+    const trimmed = rawOffDays.trim();
+    if (!trimmed || trimmed === '無' || trimmed === '[]') return "無固定公休 (全年無休或依店家公告)";
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) list = parsed;
+      else list = [trimmed];
+    } catch (e) {
+      list = trimmed.split(/[,、，\s]+/).filter(Boolean);
+    }
+  } else if (Array.isArray(rawOffDays)) {
+    list = rawOffDays;
+  } else if (typeof rawOffDays === 'number') {
+    list = [rawOffDays];
+  }
+
+  if (!list || list.length === 0) return "無固定公休 (全年無休或依店家公告)";
+
+  const dayMap = {
+    "0": "週日",
+    "1": "週一",
+    "2": "週二",
+    "3": "週三",
+    "4": "週四",
+    "5": "週五",
+    "6": "週六",
+    "7": "週日",
+    "日": "週日",
+    "天": "週日",
+    "一": "週一",
+    "二": "週二",
+    "三": "週三",
+    "四": "週四",
+    "五": "週五",
+    "六": "週六",
+    "週日": "週日", "星期日": "週日", "禮拜日": "週日", "禮拜天": "週日", "星期天": "週日",
+    "週一": "週一", "星期一": "週一", "禮拜一": "週一",
+    "週二": "週二", "星期二": "週二", "禮拜二": "週二",
+    "週三": "週三", "星期三": "週三", "禮拜三": "週三",
+    "週四": "週四", "星期四": "週四", "禮拜四": "週四",
+    "週五": "週五", "星期五": "週五", "禮拜五": "週五",
+    "週六": "週六", "星期六": "週六", "禮拜六": "週六"
+  };
+
+  const formatted = list.map(item => {
+    const s = String(item).trim();
+    return dayMap[s] || s;
+  });
+
+  const unique = [];
+  for (let i = 0; i < formatted.length; i++) {
+    if (formatted[i] && unique.indexOf(formatted[i]) === -1) {
+      unique.push(formatted[i]);
+    }
+  }
+
+  return unique.length > 0 ? unique.join('、') : "無固定公休 (全年無休或依店家公告)";
+}
+
+/**
+ * A. 查詢店家「今天是否有營業 / 休息」
+ */
+function queryCustomerBusinessStatus(ss, customerName, todayStr, timeZone) {
+  if (!customerName) return "請輸入要查詢的店家名稱（例如：誠石今天有營業嗎？）";
+
+  const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+  if (!custSheet || custSheet.getLastRow() <= 1) {
+    return `⚠️ 系統中目前尚無客戶資料表。`;
+  }
+
+  const custData = getSheetData(custSheet);
+  const matchedCust = custData.find(c => {
+    const cName = String(c.Name || c.name || c.客戶名稱 || '').trim();
+    return cName && (cName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(cName.toLowerCase()));
+  });
+
+  if (!matchedCust) {
+    return `⚪【查無店家】找不到名稱包含「${customerName}」的店家資料。`;
+  }
+
+  const cName = String(matchedCust.Name || matchedCust.name || matchedCust.客戶名稱 || '').trim();
+  const rawOffDays = matchedCust.OffDays || matchedCust.offDays || matchedCust.公休日週期JSON || matchedCust.公休日週期 || matchedCust.Holidays || matchedCust.公休日 || '';
+  const rawHolidayDates = matchedCust.HolidayDates || matchedCust.holidayDates || matchedCust.特定公休日JSON || matchedCust.特定公休日 || '';
+  const businessHours = String(matchedCust.BusinessHours || matchedCust.businessHours || matchedCust.營業時間 || '未設定').trim();
+
+  // 計算今天星期幾
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ...
+  const dayOfWeekMap = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
+  const todayWeekDayStr = dayOfWeekMap[dayOfWeek];
+
+  // 1. 解析固定公休 (週期)
+  let isHolidayToday = false;
+  let holidaysList = [];
+  if (typeof rawOffDays === 'string') {
+    try {
+      const parsed = JSON.parse(rawOffDays);
+      if (Array.isArray(parsed)) holidaysList = parsed;
+      else holidaysList = [rawOffDays];
+    } catch (e) {
+      holidaysList = rawOffDays.split(/[,、，\s]+/).filter(Boolean);
+    }
+  } else if (Array.isArray(rawOffDays)) {
+    holidaysList = rawOffDays;
+  } else if (typeof rawOffDays === 'number') {
+    holidaysList = [rawOffDays];
+  }
+
+  const isMatchWeeklyHoliday = holidaysList.some(h => {
+    const str = String(h).trim();
+    return str === String(dayOfWeek) ||
+           (dayOfWeek === 0 && (str === '7' || str === '日' || str === '天')) ||
+           str.includes(todayWeekDayStr) || 
+           str.includes(`星期${todayWeekDayStr.slice(1)}`) ||
+           str.includes(`禮拜${todayWeekDayStr.slice(1)}`);
+  });
+
+  // 2. 解析特定公休日 (特定日期清單，如 ["2026-08-20", "2026-08-25"])
+  let specificHolidays = [];
+  if (typeof rawHolidayDates === 'string') {
+    try {
+      const parsed = JSON.parse(rawHolidayDates);
+      if (Array.isArray(parsed)) specificHolidays = parsed;
+      else specificHolidays = [rawHolidayDates];
+    } catch (e) {
+      specificHolidays = rawHolidayDates.split(/[,、，\s]+/).filter(Boolean);
+    }
+  } else if (Array.isArray(rawHolidayDates)) {
+    specificHolidays = rawHolidayDates;
+  }
+
+  // 格式化特定公休日為標準 yyyy-MM-dd
+  const normalizedSpecificDates = specificHolidays.map(d => {
+    let str = String(d).trim().replace(/\//g, '-');
+    return str;
+  }).filter(Boolean);
+
+  const isMatchSpecificHoliday = normalizedSpecificDates.some(d => d === todayStr);
+
+  if (isMatchWeeklyHoliday || isMatchSpecificHoliday) {
+    isHolidayToday = true;
+  }
+
+  // 未來（包含今天）特定公休日
+  const upcomingSpecificHolidays = normalizedSpecificDates
+    .filter(d => d >= todayStr)
+    .sort();
+
+  // 同時檢查今天是否有訂單
+  const allOrders = getAllOrdersFromSheet(ss);
+  const todayOrders = allOrders.filter(o => 
+    o.deliveryDate === todayStr && 
+    (o.customerName.toLowerCase().includes(cName.toLowerCase()) || cName.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  let reply = `🏪【${cName} - 今日營業狀態】\n` +
+              `📅 查詢日期：${todayStr} (${todayWeekDayStr})\n` +
+              `━━━━━━━━━━━━━━\n`;
+
+  if (isHolidayToday) {
+    const formattedOffDays = formatOffDaysToChinese(rawOffDays);
+    const reason = isMatchSpecificHoliday ? `特定公休日 (${todayStr})` : `固定公休 (${formattedOffDays})`;
+    reply += `🔴 今日狀態：【公休中】\n` +
+             `🛌 公休原因：${reason}\n`;
+  } else {
+    reply += `🟢 今日狀態：【正常營業】\n` +
+             `⏰ 營業時間：${businessHours}\n`;
+  }
+
+  if (upcomingSpecificHolidays.length > 0) {
+    reply += `📌 近期特定公休：${upcomingSpecificHolidays.join('、')}\n`;
+  }
+
+  if (todayOrders.length > 0) {
+    reply += `📦 今日叫貨：本日已有 ${todayOrders.length} 筆訂單配送中。\n`;
+  } else {
+    reply += `ℹ️ 今日叫貨：本日目前尚無叫貨紀錄。\n`;
+  }
+
+  return reply;
+}
+
+/**
+ * B. 查詢店家「公休時間 / 休息日」（包含固定公休與未來特定公休日）
+ */
+function queryCustomerHolidayInfo(ss, customerName, todayStr, timeZone) {
+  if (!customerName) return "請輸入要查詢的店家名稱（例如：誠石什麼時候公休？）";
+
+  const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+  if (!custSheet || custSheet.getLastRow() <= 1) {
+    return `⚠️ 系統中目前尚無客戶資料表。`;
+  }
+
+  const custData = getSheetData(custSheet);
+  const matchedCust = custData.find(c => {
+    const cName = String(c.Name || c.name || c.客戶名稱 || '').trim();
+    return cName && (cName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(cName.toLowerCase()));
+  });
+
+  if (!matchedCust) {
+    return `⚪【查無店家】找不到名稱包含「${customerName}」的店家資料。`;
+  }
+
+  const cName = String(matchedCust.Name || matchedCust.name || matchedCust.客戶名稱 || '').trim();
+  const rawOffDays = matchedCust.OffDays || matchedCust.offDays || matchedCust.公休日週期JSON || matchedCust.公休日週期 || matchedCust.Holidays || matchedCust.公休日 || '';
+  const rawHolidayDates = matchedCust.HolidayDates || matchedCust.holidayDates || matchedCust.特定公休日JSON || matchedCust.特定公休日 || '';
+  const businessHours = String(matchedCust.BusinessHours || matchedCust.businessHours || matchedCust.營業時間 || '未設定').trim();
+  const note = String(matchedCust.Note || matchedCust.note || matchedCust.備註 || '').trim();
+
+  // 1. 固定公休 (轉換為中文如 "週日、週一")
+  const holidayText = formatOffDaysToChinese(rawOffDays);
+
+  // 2. 特定公休日（過濾掉今天以前的歷史日期）
+  let specificHolidays = [];
+  if (typeof rawHolidayDates === 'string') {
+    try {
+      const parsed = JSON.parse(rawHolidayDates);
+      if (Array.isArray(parsed)) specificHolidays = parsed;
+      else specificHolidays = [rawHolidayDates];
+    } catch (e) {
+      specificHolidays = rawHolidayDates.split(/[,、，\s]+/).filter(Boolean);
+    }
+  } else if (Array.isArray(rawHolidayDates)) {
+    specificHolidays = rawHolidayDates;
+  }
+
+  const upcomingSpecificHolidays = specificHolidays
+    .map(d => String(d).trim().replace(/\//g, '-'))
+    .filter(d => d && d >= todayStr)
+    .sort();
+
+  let reply = `🏖️【${cName} - 公休與營業時間】\n` +
+              `━━━━━━━━━━━━━━\n` +
+              `🛌 固定公休：${holidayText}\n`;
+
+  if (upcomingSpecificHolidays.length > 0) {
+    reply += `📌 特定公休：${upcomingSpecificHolidays.join('、')}\n`;
+  }
+
+  reply += `⏰ 營業時間：${businessHours}\n`;
+
+  if (note) {
+    reply += `📝 店家備註：${note}\n`;
+  }
+
+  return reply;
+}
+
+/**
+ * C. 專門查詢司機「今天送去了嗎 / 配送進度」
+ */
+function queryDeliveryStatusOnly(ss, customerName, todayStr) {
+  if (!customerName) return "請輸入要查詢的店家名稱（例如：誠石今天有去嗎？）";
+
+  const allOrders = getAllOrdersFromSheet(ss);
+  const matchedOrders = allOrders.filter(o => 
+    o.deliveryDate === todayStr && 
+    (o.customerName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  if (matchedOrders.length === 0) {
+    return `⚪【${customerName}】\n📅 日期：${todayStr}\nℹ️ 本日無該店家的配送單，司機今天無排定配送行程。`;
+  }
+
+  const primaryCustomer = matchedOrders[0].customerName;
+  const first = matchedOrders[0];
+  const isAllShipped = matchedOrders.every(o => o.status === 'SHIPPED' || o.status === 'PAID');
+  const isAnyShipped = matchedOrders.some(o => o.status === 'SHIPPED' || o.status === 'PAID');
+  const isAllPaid = matchedOrders.every(o => o.status === 'PAID');
+
+  let statusBadge = "🔴 尚未送達 (未配送)";
+  if (isAllPaid) {
+    statusBadge = "🟢 已送達並收款完成";
+  } else if (isAllShipped) {
+    statusBadge = "🟢 已送達 (待收款/月結)";
+  } else if (isAnyShipped) {
+    statusBadge = "🚚 配送中 / 部分已送達";
+  }
+
+  const tripInfo = first.trip ? `${first.trip}` : "未指定趟次";
+  const cleanTime = formatDeliveryTimeString(first.deliveryTime);
+  const timeInfo = cleanTime ? ` (${cleanTime})` : "";
+
+  return `🚚【${primaryCustomer} - 配送進度回報】\n` +
+         `📅 日期：${todayStr}\n` +
+         `📊 目前進度：${statusBadge}\n` +
+         `📍 配送趟次：${tripInfo}${timeInfo}\n` +
+         `📦 今日件數：共 ${matchedOrders.length} 項品項`;
+}
+
+/**
+ * D. 查詢「店家完整總覽資料」（純店名或查店家時觸發）
+ */
+function queryCustomerProfileOverview(ss, customerName, todayStr, timeZone) {
+  if (!customerName) return "請輸入要查詢的店家名稱（例如：誠石）";
+
+  const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+  let customerData = null;
+  if (custSheet && custSheet.getLastRow() > 1) {
+    const allCusts = getSheetData(custSheet);
+    customerData = allCusts.find(c => {
+      const cName = String(c.Name || c.name || c.客戶名稱 || '').trim();
+      return cName && (cName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(cName.toLowerCase()));
+    });
+  }
+
+  const allOrders = getAllOrdersFromSheet(ss);
+  const todayOrders = allOrders.filter(o => 
+    o.deliveryDate === todayStr && 
+    (o.customerName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  const displayName = customerData ? String(customerData.Name || customerData.name || customerData.客戶名稱).trim() : customerName;
+
+  let reply = `🏪【${displayName} - 店家基本與今日資料】\n` +
+              `━━━━━━━━━━━━━━\n`;
+
+  if (customerData) {
+    const phone = customerData.Phone || customerData.phone || customerData.電話 || '無';
+    const address = customerData.Address || customerData.address || customerData.地址 || '無';
+    const rawOffDays = customerData.OffDays || customerData.offDays || customerData.公休日週期JSON || customerData.公休日週期 || customerData.Holidays || customerData.公休日 || '無';
+    const rawHolidayDates = customerData.HolidayDates || customerData.holidayDates || customerData.特定公休日JSON || customerData.特定公休日 || '';
+    const businessHours = customerData.BusinessHours || customerData.businessHours || customerData.營業時間 || '無';
+    
+    // 解析固定公休 (轉換為中文如 "週日、週一")
+    const offDaysStr = formatOffDaysToChinese(rawOffDays);
+
+    // 解析未來特定公休日
+    let upcomingSpecific = [];
+    if (rawHolidayDates) {
+      try {
+        const parsed = typeof rawHolidayDates === 'string' ? JSON.parse(rawHolidayDates) : rawHolidayDates;
+        const arr = Array.isArray(parsed) ? parsed : [rawHolidayDates];
+        upcomingSpecific = arr.map(d => String(d).trim().replace(/\//g, '-')).filter(d => d && d >= todayStr).sort();
+      } catch (e) {
+        upcomingSpecific = String(rawHolidayDates).split(/[,、，\s]+/).filter(d => d && d >= todayStr).sort();
+      }
+    }
+    
+    reply += `📞 電話：${phone}\n` +
+             `📍 地址：${address}\n` +
+             `⏰ 營業時間：${businessHours}\n` +
+             `🏖️ 固定公休：${offDaysStr}\n`;
+
+    if (upcomingSpecific.length > 0) {
+      reply += `📌 特定公休：${upcomingSpecific.join('、')}\n`;
+    }
+    
+    reply += `━━━━━━━━━━━━━━\n`;
+  }
+
+  if (todayOrders.length > 0) {
+    const isAllShipped = todayOrders.every(o => o.status === 'SHIPPED' || o.status === 'PAID');
+    const statusText = isAllShipped ? "🟢 今日已送達" : "🔴 今日未配送/待出貨";
+    const itemsSummary = todayOrders.map(o => `• ${o.productName} × ${o.quantity} ${o.unit || '斤'}`).join('\n');
+    
+    reply += `📦 今日訂單狀態：${statusText}\n` +
+             `🚚 配送趟次：${todayOrders[0].trip || '未排趟'}\n` +
+             `📋 訂購品項：\n${itemsSummary}`;
+  } else {
+    reply += `📦 今日訂單：本日尚無叫貨紀錄。`;
+  }
+
+  return reply;
+}
+
+/**
+ * 1. 查詢今日訂單與配送狀態
+ */
+function queryTodayOrderStatus(ss, customerName, todayStr) {
+  if (!customerName) return "請輸入要查詢的店家名稱（例如：誠石去了嗎？）";
+  
+  const allOrders = getAllOrdersFromSheet(ss);
+  const matchedOrders = allOrders.filter(o => 
+    o.deliveryDate === todayStr && 
+    (o.customerName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  if (matchedOrders.length === 0) {
+    return `⚪【${customerName} - 今日無訂單】\n\n` +
+           `📅 查詢日期：${todayStr}\n` +
+           `ℹ️ 系統中本日尚無該店家的叫貨紀錄。`;
+  }
+
+  const primaryCustomer = matchedOrders[0].customerName;
+  const first = matchedOrders[0];
+  
+  // 統計配送狀態與付款狀態
+  const isAllShipped = matchedOrders.every(o => o.status === 'SHIPPED' || o.status === 'PAID');
+  const isAnyShipped = matchedOrders.some(o => o.status === 'SHIPPED' || o.status === 'PAID');
+  const isAllPaid = matchedOrders.every(o => o.status === 'PAID');
+  const isAnyPaid = matchedOrders.some(o => o.status === 'PAID');
+
+  let statusText = "🔴 未配送";
+  if (isAllPaid) {
+    statusText = "🟢 已配送並收款完畢";
+  } else if (isAllShipped) {
+    statusText = isAnyPaid ? "🟡 已配送 (部分已收款)" : "🟡 已配送 (待收款)";
+  } else if (isAnyShipped) {
+    statusText = "🚚 部分已配送";
+  } else if (isAnyPaid) {
+    statusText = "🔵 未配送 (已先收款)";
+  }
+
+  // 彙整品項清單
+  let itemsSummary = matchedOrders.map(o => `• ${o.productName} × ${o.quantity} ${o.unit || '斤'}`).join('\n');
+  
+  // 趟次與時間 (處理時間格式化)
+  const tripInfo = first.trip ? `${first.trip}` : "未指定趟次";
+  const cleanTime = formatDeliveryTimeString(first.deliveryTime);
+  const timeInfo = cleanTime ? ` (${cleanTime})` : "";
+
+  let totalAmount = 0;
+  let hasPrice = false;
+  matchedOrders.forEach(o => {
+    if (typeof o.subtotal === 'number' && !isNaN(o.subtotal)) {
+      totalAmount += o.subtotal;
+      hasPrice = true;
+    }
+  });
+
+  let text = `🏪【${primaryCustomer}】\n` +
+             `📊 當前狀態：${statusText}\n` +
+             `🚚 配送行程：${tripInfo}${timeInfo}\n` +
+             `━━━━━━━━━━━━━━\n` +
+             `📦 今日訂購品項：\n${itemsSummary}`;
+
+  if (hasPrice && totalAmount > 0) {
+    text += `\n━━━━━━━━━━━━━━\n💰 今日總金額：$${totalAmount.toLocaleString()} 元`;
+  }
+
+  return text;
+}
+
+/**
+ * 2. 查詢指定日期的訂單明細與總量
+ */
+function queryDateOrders(ss, customerName, targetDateStr, displayDateStr) {
+  if (!customerName) return "請提供店家名稱與日期（例如：誠石 5/30 訂了多少？）";
+
+  const allOrders = getAllOrdersFromSheet(ss);
+  const matchedOrders = allOrders.filter(o => 
+    o.deliveryDate === targetDateStr && 
+    (o.customerName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  if (matchedOrders.length === 0) {
+    return `⚪【${customerName}】在 ${displayDateStr} (${targetDateStr}) 無訂單紀錄。`;
+  }
+
+  const primaryCustomer = matchedOrders[0].customerName;
+  const itemsSummary = matchedOrders.map(o => {
+    const priceStr = (typeof o.subtotal === 'number' && o.subtotal > 0) ? ` ($${o.subtotal.toLocaleString()})` : '';
+    return `• ${o.productName} × ${o.quantity} ${o.unit || '斤'}${priceStr}`;
+  }).join('\n');
+
+  let totalAmount = 0;
+  let hasAmount = false;
+  matchedOrders.forEach(o => {
+    if (typeof o.subtotal === 'number' && !isNaN(o.subtotal)) {
+      totalAmount += o.subtotal;
+      hasAmount = true;
+    }
+  });
+
+  const isCompleted = matchedOrders.every(o => o.status === 'PAID' || o.status === 'SHIPPED');
+  const statusBadge = isCompleted ? "✅ 已出貨" : "⏳ 待出貨";
+
+  let result = `📅 查詢日期：${displayDateStr} (${targetDateStr})\n` +
+               `🏪 客戶名稱：${primaryCustomer}\n` +
+               `📊 出貨狀態：${statusBadge}\n` +
+               `━━━━━━━━━━━━━━\n` +
+               `📦 訂購明細：\n${itemsSummary}`;
+
+  if (hasAmount && totalAmount > 0) {
+    result += `\n━━━━━━━━━━━━━━\n💰 當日總金額：$${totalAmount.toLocaleString()} 元`;
+  }
+
+  return result;
+}
+
+/**
+ * 3. 查詢指定月份的累積貨款與出貨天數
+ */
+function queryMonthlyBill(ss, customerName, monthNum, yearStr) {
+  if (!customerName) return "請輸入店家名稱（例如：誠石 5月貨款）";
+
+  const monthPrefix = `${yearStr}-${String(monthNum).padStart(2, '0')}`;
+  const allOrders = getAllOrdersFromSheet(ss);
+
+  const matchedOrders = allOrders.filter(o => 
+    o.deliveryDate && o.deliveryDate.startsWith(monthPrefix) &&
+    (o.customerName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  if (matchedOrders.length === 0) {
+    return `📊【${customerName}】\n在 ${yearStr}年 ${monthNum}月份 尚無任何出貨訂單紀錄。`;
+  }
+
+  const primaryCustomer = matchedOrders[0].customerName;
+  let totalAmount = 0;
+  let totalQuantity = 0;
+  const activeDays = new Set();
+  let paidAmount = 0;
+
+  matchedOrders.forEach(o => {
+    activeDays.add(o.deliveryDate);
+    totalQuantity += (Number(o.quantity) || 0);
+    const subtotal = Number(o.subtotal) || 0;
+    totalAmount += subtotal;
+    if (o.status === 'PAID') {
+      paidAmount += subtotal;
+    }
+  });
+
+  const unpaidAmount = totalAmount - paidAmount;
+
+  return `📊【${primaryCustomer}】${yearStr}年 ${monthNum}月貨款結算\n` +
+         `━━━━━━━━━━━━━━\n` +
+         `🚚 出貨天數：${activeDays.size} 天\n` +
+         `📦 叫貨筆數：${matchedOrders.length} 筆\n` +
+         `⚖️ 總出貨量：${totalQuantity.toLocaleString()} 斤\n` +
+         `💵 應收總額：$${totalAmount.toLocaleString()} 元\n` +
+         `✅ 已收金額：$${paidAmount.toLocaleString()} 元\n` +
+         (unpaidAmount > 0 ? `⚠️ 未收餘額：$${unpaidAmount.toLocaleString()} 元\n` : `🎉 款項狀態：已全數結清\n`) +
+         `━━━━━━━━━━━━━━\n` +
+         `💡 如需明細報表，可傳送：「${primaryCustomer} ${monthNum}月PDF」`;
+}
+
+/**
+ * 4. 產生月對帳單 PDF 並建立 Google Drive 下載連結
+ */
+function generateMonthlyStatementPDF(ss, customerName, monthNum, yearStr) {
+  if (!customerName) return "請輸入店家名稱（例如：誠石 5月報表）";
+
+  const monthPrefix = `${yearStr}-${String(monthNum).padStart(2, '0')}`;
+  const allOrders = getAllOrdersFromSheet(ss);
+
+  const matchedOrders = allOrders.filter(o => 
+    o.deliveryDate && o.deliveryDate.startsWith(monthPrefix) &&
+    (o.customerName.toLowerCase().includes(customerName.toLowerCase()) || customerName.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  if (matchedOrders.length === 0) {
+    return `⚠️【${customerName}】在 ${yearStr}年 ${monthNum}月查無訂單，無法產出對帳單 PDF。`;
+  }
+
+  const primaryCustomer = matchedOrders[0].customerName;
+
+  // 依日期升冪排序
+  matchedOrders.sort((a, b) => (a.deliveryDate > b.deliveryDate ? 1 : -1));
+
+  let totalAmount = 0;
+  let totalQty = 0;
+
+  const rowsHtml = matchedOrders.map(o => {
+    const sub = Number(o.subtotal) || 0;
+    const up = Number(o.unitPrice) || 0;
+    totalAmount += sub;
+    totalQty += (Number(o.quantity) || 0);
+
+    return `
+      <tr>
+        <td style="border:1px solid #cbd5e1;padding:8px 10px;text-align:center;font-size:13px;">${o.deliveryDate}</td>
+        <td style="border:1px solid #cbd5e1;padding:8px 10px;font-size:13px;font-weight:bold;">${o.productName}</td>
+        <td style="border:1px solid #cbd5e1;padding:8px 10px;text-align:center;font-size:13px;">${o.quantity} ${o.unit || '斤'}</td>
+        <td style="border:1px solid #cbd5e1;padding:8px 10px;text-align:right;font-size:13px;">${up > 0 ? '$' + up : '-'}</td>
+        <td style="border:1px solid #cbd5e1;padding:8px 10px;text-align:right;font-size:13px;font-weight:bold;">${sub > 0 ? '$' + sub.toLocaleString() : '-'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const printTime = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone() || "Asia/Taipei", "yyyy-MM-dd HH:mm");
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; color: #1e293b; padding: 24px; }
+          .header { text-align: center; border-bottom: 2px solid #3b82f6; padding-bottom: 12px; margin-bottom: 16px; }
+          .title { font-size: 22px; font-weight: bold; margin: 0 0 6px 0; color: #0f172a; }
+          .subtitle { font-size: 14px; color: #64748b; margin: 0; }
+          .meta-box { display: flex; justify-content: space-between; margin-bottom: 16px; font-size: 14px; background: #f8fafc; padding: 10px 14px; border-radius: 6px; border: 1px solid #e2e8f0; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+          th { background-color: #f1f5f9; border: 1px solid #cbd5e1; padding: 10px; font-size: 13px; color: #334155; font-weight: bold; }
+          .total-box { text-align: right; font-size: 16px; font-weight: bold; padding: 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; color: #166534; }
+          .footer { margin-top: 24px; display: flex; justify-content: space-between; font-size: 13px; color: #64748b; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1 class="title">製麵廠客戶月份對帳單</h1>
+          <p class="subtitle">結算月份：${yearStr} 年 ${monthNum} 月份</p>
+        </div>
+
+        <div class="meta-box">
+          <div><b>客戶名稱：</b> ${primaryCustomer}</div>
+          <div><b>列印時間：</b> ${printTime}</div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 22%;">配送日期</th>
+              <th style="width: 30%;">品項名稱</th>
+              <th style="width: 16%;">數量</th>
+              <th style="width: 16%;">單價</th>
+              <th style="width: 16%;">小計</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+
+        <div class="total-box">
+          總數量：${totalQty.toLocaleString()} 斤 &nbsp;&nbsp;|&nbsp;&nbsp; 總計應收金額：$${totalAmount.toLocaleString()} 元
+        </div>
+
+        <div class="footer">
+          <div>客戶簽章：____________________</div>
+          <div>經辦簽名：____________________</div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  try {
+    const blob = Utilities.newBlob(htmlContent, 'text/html', `${primaryCustomer}_${yearStr}年${monthNum}月_對帳單.html`).getAs('application/pdf');
+    blob.setName(`${primaryCustomer}_${yearStr}年${monthNum}月_對帳單.pdf`);
+    
+    // 儲存至 Drive 根目錄
+    const pdfFile = DriveApp.createFile(blob);
+    pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    const pdfUrl = pdfFile.getUrl();
+
+    return `📄【${primaryCustomer} ${monthNum}月份對帳單 PDF 已生成】\n\n` +
+           `📅 結算月份：${yearStr}年 ${monthNum}月\n` +
+           `📦 總出貨筆數：${matchedOrders.length} 筆 (${totalQty} 斤)\n` +
+           `💰 應收總額：$${totalAmount.toLocaleString()} 元\n` +
+           `━━━━━━━━━━━━━━\n` +
+           `📥 點擊下方連結線上檢視或下載列印：\n${pdfUrl}`;
+  } catch (err) {
+    console.error("PDF generation failed: " + err.toString());
+    return `❌ 產生 PDF 失敗：${err.message || String(err)}`;
+  }
+}
+
+/**
+ * 輔助函數：高效讀取所有歷史訂單（含智慧單價與小計自動補齊）
+ */
+function getAllOrdersFromSheet(ss) {
+  const orderSheet = ss.getSheetByName("ORDERS") || ss.getSheetByName("Orders");
+  if (!orderSheet || orderSheet.getLastRow() <= 1) return [];
+
+  const raw = getRecentSheetData(orderSheet, 5000);
+  const timeZone = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
+
+  // 預先建立商品預設價與客戶客製價快取，供舊單或未填單價時自動精準回填
+  let productPriceMap = new Map();
+  let productIdToNameMap = new Map();
+  let customerPriceMap = new Map(); // key: customerName_productName -> price
+  try {
+    const prodSheet = ss.getSheetByName("PRODUCTS") || ss.getSheetByName("Products");
+    if (prodSheet && prodSheet.getLastRow() > 1) {
+      const prodData = getSheetData(prodSheet);
+      prodData.forEach(p => {
+        const pName = String(p.Name || p.name || p.品項 || '').trim();
+        const pId = String(p.ID || p.id || '').trim();
+        const pPrice = Number(p.Price || p.price || p.單價 || p.預設單價) || 0;
+        if (pName) productPriceMap.set(pName, pPrice);
+        if (pId) {
+          productPriceMap.set(pId, pPrice);
+          if (pName) productIdToNameMap.set(pId, pName);
+        }
+      });
+    }
+
+    const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+    if (custSheet && custSheet.getLastRow() > 1) {
+      const custData = getSheetData(custSheet);
+      custData.forEach(c => {
+        const cName = String(c.Name || c.name || c.客戶名稱 || '').trim();
+        
+        // 1. 解析客製價目表 PriceList
+        const rawPl = c.PriceList || c.priceList || c.價目表JSON || c.價目表 || c.客製化價格JSON || c.客製化價格;
+        const pl = typeof rawPl === 'string' ? safeJsonArray(rawPl) : (rawPl || []);
+        if (Array.isArray(pl)) {
+          pl.forEach(item => {
+            const pId = String(item.productId || '').trim();
+            const pName = String(item.productName || '').trim();
+            const resolvedName = pName || productIdToNameMap.get(pId) || pId;
+            const price = Number(item.price);
+            if (cName && !isNaN(price)) {
+              if (resolvedName) customerPriceMap.set(`${cName}_${resolvedName}`, price);
+              if (pId) customerPriceMap.set(`${cName}_${pId}`, price);
+              if (pName) customerPriceMap.set(`${cName}_${pName}`, price);
+            }
+          });
+        }
+
+        // 2. 解析預設品項 DefaultItems 裡的自訂單價 (若有設定 price)
+        const rawDef = c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項;
+        const defItems = typeof rawDef === 'string' ? safeJsonArray(rawDef) : (rawDef || []);
+        if (Array.isArray(defItems)) {
+          defItems.forEach(item => {
+            const pId = String(item.productId || '').trim();
+            const pName = String(item.productName || '').trim();
+            const resolvedName = pName || productIdToNameMap.get(pId) || pId;
+            const price = Number(item.price);
+            if (cName && !isNaN(price) && price > 0) {
+              if (resolvedName && !customerPriceMap.has(`${cName}_${resolvedName}`)) {
+                customerPriceMap.set(`${cName}_${resolvedName}`, price);
+              }
+            }
+          });
+        }
+      });
+    }
+  } catch (e) {
+    console.warn("getAllOrdersFromSheet price map init warning: " + e.toString());
+  }
+
+  return raw.map(o => {
+    let rawDate = o.DeliveryDate || o.deliveryDate || o.配送日期;
+    let finalDateStr = '';
+    
+    if (rawDate instanceof Date) {
+      finalDateStr = Utilities.formatDate(rawDate, timeZone, "yyyy-MM-dd");
+    } else if (rawDate) {
+      finalDateStr = String(rawDate).replace(/\s+/g, '').split('T')[0]
+        .replace(/\//g, '-')
+        .replace(/-0?/g, '-')
+        .replace(/-(\d)(?!\d)/g, '-0$1');
+    }
+
+    const cName = String(o.CustomerName || o.customerName || o.客戶名 || '').trim();
+    const pName = String(o.ProductName || o.productName || o.品項 || '').trim();
+    const qty = Number(o.Quantity || o.quantity || o.數量) || 1;
+
+    // 依據使用者需求：價格一律即時從「客戶資料的專屬價目表」取得；若無則由商品預設單價取得
+    let unitPrice = customerPriceMap.get(`${cName}_${pName}`);
+    if (unitPrice === undefined) {
+      // 嘗試比對客戶名稱包含與被包含 (防範簡寫或全名差異)
+      for (const [key, p] of customerPriceMap.entries()) {
+        const [cKey, prodKey] = key.split('_');
+        if (prodKey === pName && (cKey.includes(cName) || cName.includes(cKey))) {
+          unitPrice = p;
+          break;
+        }
+      }
+    }
+    if (unitPrice === undefined) {
+      unitPrice = productPriceMap.get(pName);
+    }
+    if (typeof unitPrice !== 'number' || isNaN(unitPrice)) {
+      unitPrice = 0;
+    }
+    const subtotal = unitPrice * qty;
+
+    return {
+      id: o.ID || o.id || o["Order ID"] || o.訂單ID,
+      customerName: cName,
+      deliveryDate: finalDateStr,
+      deliveryTime: formatDeliveryTimeString(o.DeliveryTime || o.deliveryTime || o.配送時間 || ''),
+      productName: pName,
+      quantity: qty,
+      unit: o.Unit || o.unit || o.單位 || '斤',
+      status: String(o.Status || o.status || o.狀態 || 'PENDING').trim(),
+      unitPrice: unitPrice > 0 ? unitPrice : undefined,
+      subtotal: subtotal > 0 ? subtotal : undefined,
+      trip: o.Trip || o.trip || o.趟次 || ''
+    };
+  });
 }
 
 // 1. 初始化與獲取 Log 表單
@@ -2819,3 +3970,70 @@ function setupDailyTriggers() {
 
   console.log("✅ 觸發器已更新：每天凌晨 03:00 - 04:00 執行");
 }
+
+// ==========================================
+// 🛠️ 測試專區：測試 Gemini AI 與 LINE 查詢功能
+// ==========================================
+
+/**
+ * 🧪 測試 1：測試 Gemini API 連線與意圖解析 (含詳細診斷)
+ * 請在 Apps Script 頂部選取此函式「testGeminiConnection」並點擊「執行」
+ */
+function testGeminiConnection() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = getConfigSheet();
+  const rawKey = getSystemConfig(configSheet, "GeminiApiKey");
+  const todayStr = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd");
+  
+  console.log("🔍 [診斷 1] 讀取 Config 工作表：", configSheet.getName());
+  console.log("🔍 [診斷 2] 讀取到的 GeminiApiKey 長度：", rawKey ? rawKey.length : 0);
+  if (rawKey) {
+    console.log("🔍 [診斷 3] 金鑰開頭與結尾：", rawKey.substring(0, 6) + "..." + rawKey.substring(rawKey.length - 4));
+  } else {
+    console.error("❌ 錯誤：Config 工作表找不到 GeminiApiKey！請確認 A 欄拼字完全為 'GeminiApiKey'，B 欄填入金鑰。");
+    return;
+  }
+
+  const testSentences = [
+    "誠石送到了嗎？",
+    "幫我查一下大埔 5/30 訂了多少",
+    "三民店上個月貨款是多少錢",
+    "幫我產出誠石5月份的報表PDF"
+  ];
+  
+  console.log("\n🚀 開始向 Google Gemini API 發送請求測試...");
+  
+  testSentences.forEach((sentence, idx) => {
+    console.log(`\n--- 測試 [${idx + 1}]: "${sentence}" ---`);
+    const result = parseQueryIntentWithGemini(sentence, todayStr);
+    if (result) {
+      console.log("✅ Gemini AI 解析成功！", JSON.stringify(result));
+    } else {
+      console.error("❌ Gemini AI 解析失敗。請看上方記錄中的 HTTP 錯誤代碼或回傳訊息。");
+    }
+  });
+}
+
+/**
+ * 🧪 測試 2：直接模擬 LINE 收到訊息後的完整回答
+ * 請在 Apps Script 頂部選取此函式「testLineBotQuery」並點擊「執行」
+ */
+function testLineBotQuery() {
+  const testInput = "誠石去了嗎？"; // 您可以更換成您試算表裡真實存在的店家名稱測試
+  console.log(`\n💬 模擬 LINE 使用者傳送：「${testInput}」`);
+  
+  const reply = processLineOrderQuery(testInput);
+  console.log("🤖 系統回覆內容如下：\n" + reply);
+}
+
+/**
+ * 🔑 授權啟用函式：點擊執行此函式以彈出 Google 雲端硬碟權限授權視窗
+ * （只需執行一次即可永久授權 DriveApp 存取權限）
+ */
+function authorizeDriveAppPermission() {
+  console.log("正在驗證 Google Drive 存取權限...");
+  const root = DriveApp.getRootFolder();
+  console.log("✅ Google Drive 權限已成功授權！根目錄名稱：" + root.getName());
+}
+
+

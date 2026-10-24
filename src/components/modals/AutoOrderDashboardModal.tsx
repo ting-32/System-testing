@@ -266,6 +266,13 @@ export const AutoOrderDashboardModal: React.FC<AutoOrderDashboardModalProps> = (
               <X className="w-5 h-5" />
             </button>
           </div>
+
+          <div className="bg-amber-50/80 border border-amber-200/90 rounded-xl px-3 py-2 text-xs text-amber-900 flex items-center gap-2">
+            <span className="text-sm">💡</span>
+            <span>
+              <strong>工作小抄連動支援：</strong>因工廠週一公休，系統已設定<strong>每週六自動建單排程將連同「週一訂單」一併生成</strong>，確保週日凌晨工作小抄不漏產！
+            </span>
+          </div>
         </div>
 
         {/* Scrollable Body with Gesture wrapper */}

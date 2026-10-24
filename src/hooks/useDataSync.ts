@@ -46,9 +46,9 @@ export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: 
   localItems.forEach(localItem => {
     const isPending = localItem._syncStatus === 'pending' || localItem.syncStatus === 'pending';
     const isError = localItem._syncStatus === 'error' || localItem.syncStatus === 'error';
+    const cloudItem = mergedMap.get(localItem.id);
     
     if (isPending || isError) {
-      const cloudItem = mergedMap.get(localItem.id);
       if (!cloudItem) {
          if (localItem.pendingAction === 'delete') {
             // It is not in the cloud, and we wanted to delete it. It's successfully deleted! Drop it.
@@ -73,6 +73,17 @@ export function mergeWithPendingMutations<T extends { id: string; lastUpdated?: 
          } else if (cloudV === localV && localItem.pendingAction === 'delete') {
             mergedMap.set(localItem.id, localItem);
          }
+      }
+    } else if (cloudItem) {
+      // 💡 核心防護：即使不是 pending，若本地時間戳較新，防止雲端舊快取回滾
+      const cloudV = cloudItem.lastUpdated || 0;
+      const localV = localItem._localUpdatedTs || localItem.lastUpdated || 0;
+      if (localV > cloudV) {
+        mergedMap.set(localItem.id, {
+          ...cloudItem,
+          ...localItem,
+          lastUpdated: localV
+        });
       }
     }
   });
