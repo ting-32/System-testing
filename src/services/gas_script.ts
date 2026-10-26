@@ -142,7 +142,7 @@ function doPost(e) {
       }
       
       const userRole = tokenPayload.role;
-      const adminOnlyActions = ["saveSettings", "deleteOrder", "deleteCustomer", "getSystemLogs"];
+      const adminOnlyActions = ["saveSettings", "deleteOrder", "deleteCustomer", "deleteProduct", "changePassword", "getSystemLogs"];
 
       // 【核心防護】如果是員工，且企圖執行老闆專屬功能
       if (userRole === "staff" && adminOnlyActions.includes(action)) {
@@ -396,6 +396,20 @@ function getOrder(data) {
 }
 
 function login(data) {
+  const dId = String(data.deviceId || "未知裝置").trim();
+  const uAgent = String(data.userAgent || "未知環境").trim();
+  const inputPassword = String(data.password || "").trim();
+
+  // 1. 防暴力破解鎖定檢查 (以 deviceId 為單位，連續失敗 5 次鎖定 15 分鐘 = 900 秒)
+  const cache = CacheService.getScriptCache();
+  const failKey = "LOGIN_FAIL_" + encodeURIComponent(dId.slice(0, 60));
+  const failCount = Number(cache.get(failKey)) || 0;
+  
+  if (failCount >= 5) {
+    writeSystemLog("SYSTEM_LOGIN_LOCKED", "防暴力破解觸發鎖定", JSON.stringify({ deviceId: dId, failCount: failCount, userAgent: uAgent }));
+    return { success: false, error: "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。" };
+  }
+
   const sheet = getConfigSheet();
   
   // Use getDisplayValue() to force string representation, safer than getValue()
@@ -405,11 +419,6 @@ function login(data) {
   if (!dbPassword) {
     dbPassword = "8888";
   }
-  
-  const inputPassword = String(data.password).trim();
-  
-  const dId = data.deviceId || "未知裝置";
-  const uAgent = data.userAgent || "未知環境";
 
   // Try parsing ACCOUNTS sheet first
   const accountsSheet = SS.getSheetByName("ACCOUNTS");
@@ -417,6 +426,7 @@ function login(data) {
     const accounts = getSheetData(accountsSheet);
     const user = accounts.find(a => String(a.PIN) === inputPassword && String(a.IsActive).toUpperCase() === "TRUE");
     if (user) {
+      cache.remove(failKey); // 驗證成功，重置失敗計數
       const role = user.Role || "staff";
       const name = user.Name || "員工";
       const token = generateToken(dId, role, name);
@@ -427,12 +437,26 @@ function login(data) {
 
   // Fallback / Super Admin
   if (inputPassword === dbPassword) {
+    cache.remove(failKey); // 驗證成功，重置失敗計數
     const token = generateToken(dId, "admin", "系統管理員");
     writeSystemLog("SYSTEM_LOGIN_SUCCESS", "系統管理員登入", JSON.stringify({ deviceId: dId, userAgent: uAgent }));
     return { success: true, token: token, role: "admin", name: "系統管理員" };
   } else {
-    writeSystemLog("SYSTEM_LOGIN_FAILED", "系統登入異常", JSON.stringify({ deviceId: dId, userAgent: uAgent, attemptPwd: inputPassword }));
-    return { success: false, error: "無效的密碼或 PIN 碼" };
+    const newFailCount = failCount + 1;
+    cache.put(failKey, String(newFailCount), 900); // 累計失敗次數，保留 15 分鐘
+    const remaining = Math.max(0, 5 - newFailCount);
+    
+    writeSystemLog("SYSTEM_LOGIN_FAILED", "系統登入失敗", JSON.stringify({ 
+      deviceId: dId, 
+      userAgent: uAgent, 
+      failCount: newFailCount,
+      remainingAttempts: remaining
+    }));
+
+    const errorMsg = remaining > 0 
+      ? `無效的密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
+      : "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。";
+    return { success: false, error: errorMsg };
   }
 }
 

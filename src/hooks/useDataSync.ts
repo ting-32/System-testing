@@ -555,6 +555,9 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         sessionStorage.setItem('temp_unlock_key', btoa(pwd));
         return true; 
       } 
+      if (isOk && isOk.error) {
+        addToast(isOk.error, 'error');
+      }
       return false; 
     } catch (e) { 
       console.error("Login Error:", e); 
