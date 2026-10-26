@@ -5,7 +5,7 @@ import { Lock, X, Share, Settings, Save, Eye, EyeOff, Loader2 } from 'lucide-rea
 import { buttonTap } from './animations';
 
 interface LoginScreenProps {
-  onLogin: (pwd: string) => Promise<boolean>;
+  onLogin: (pwd: string) => Promise<{ success: boolean; error?: string } | boolean>;
   onSaveApiUrl?: (url: string) => void;
   apiEndpoint?: string;
   addToast?: (msg: string, type: 'success' | 'error' | 'info') => void;
@@ -22,6 +22,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showPwaBanner, setShowPwaBanner] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [tempUrl, setTempUrl] = useState('');
@@ -59,9 +60,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     if (!password) return;
     setLoading(true);
     setError(false);
-    const success = await onLogin(password);
+    setErrorMessage(null);
+    const res = await onLogin(password);
+    const success = typeof res === 'boolean' ? res : (res && res.success);
     if (!success) {
       setError(true);
+      const msg = (typeof res === 'object' && res?.error) ? res.error : '密碼錯誤，請檢查連線或密碼是否正確';
+      setErrorMessage(msg);
     }
     setLoading(false);
   };
@@ -151,7 +156,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 {showPassword ? <EyeOff className="w-5 h-5 stroke-[1.5]" /> : <Eye className="w-5 h-5 stroke-[1.5]" />}
               </button>
             </div>
-            {error && <p className="text-rose-500 text-xs text-center mt-2 font-medium">密碼錯誤，請檢查連線或密碼是否正確</p>}
+            {error && (
+              <p className="text-rose-500 text-xs text-center mt-2 font-medium">
+                {errorMessage || "密碼錯誤，請檢查連線或密碼是否正確"}
+              </p>
+            )}
           </div>
           
           <motion.button

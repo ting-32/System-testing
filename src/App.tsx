@@ -954,33 +954,37 @@ const App: React.FC = () => {
 
   if (!isAuthenticated || isInitialLoading) {
     return (
-      <AnimatePresence mode="wait">
-        {!isAuthenticated ? (
-          <LoginScreen 
-            key="login-screen" 
-            onLogin={async (pwd) => {
-              const ok = await handleLogin(pwd);
-              if (ok) setSessionExpiredNotice(null);
-              return ok;
-            }} 
-            onSaveApiUrl={handleSaveApiUrl} 
-            apiEndpoint={apiEndpoint} 
-            addToast={addToast}
-            sessionExpiredMessage={sessionExpiredNotice}
-          />
-        ) : (
-          <motion.div 
-            key="initial-loading"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0, transition: { duration: 0.3 } }}
-            className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal p-4 space-y-3"
-          >
-            <div className="h-16 bg-white rounded-2xl shadow-sm mb-6 animate-pulse"></div>
-            {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <>
+        <AnimatePresence mode="wait">
+          {!isAuthenticated ? (
+            <LoginScreen 
+              key="login-screen" 
+              onLogin={async (pwd) => {
+                const res = await handleLogin(pwd);
+                const ok = typeof res === 'boolean' ? res : (res && res.success);
+                if (ok) setSessionExpiredNotice(null);
+                return res;
+              }} 
+              onSaveApiUrl={handleSaveApiUrl} 
+              apiEndpoint={apiEndpoint} 
+              addToast={addToast}
+              sessionExpiredMessage={sessionExpiredNotice}
+            />
+          ) : (
+            <motion.div 
+              key="initial-loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.3 } }}
+              className="min-h-screen flex flex-col max-w-md mx-auto bg-morandi-oatmeal p-4 space-y-3"
+            >
+              <div className="h-16 bg-white rounded-2xl shadow-sm mb-6 animate-pulse"></div>
+              {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <ToastNotification toasts={toasts} removeToast={removeToast} />
+      </>
     );
   }
 

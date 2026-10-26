@@ -43,7 +43,17 @@ export function setupMockBackend() {
           const now = Date.now();
 
           if (action === 'login') {
-            return new Response(JSON.stringify({ success: true, data: data.password === '8888' }), { status: 200 });
+            if (data.password === '8888') {
+              sessionStorage.removeItem('mock_login_fail');
+              return new Response(JSON.stringify({ success: true, data: { success: true, token: 'mock_token', role: 'admin', name: '系統管理員' } }), { status: 200 });
+            }
+            const failCount = Number(sessionStorage.getItem('mock_login_fail') || 0) + 1;
+            sessionStorage.setItem('mock_login_fail', String(failCount));
+            const remaining = Math.max(0, 5 - failCount);
+            const errorMsg = remaining > 0 
+              ? `無效的密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
+              : "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。";
+            return new Response(JSON.stringify({ success: true, data: { success: false, error: errorMsg } }), { status: 200 });
           }
           
           if (action === 'changePassword') {

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 
 interface UseAppAuthProps {
-  handleLogin: (password: string) => Promise<boolean>;
+  handleLogin: (password: string) => Promise<{ success: boolean; error?: string } | boolean>;
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -60,8 +60,8 @@ export function useAppAuth({ handleLogin, addToast }: UseAppAuthProps) {
         // 為了視覺上的流暢度，可以稍微加個極短的延遲，讓使用者感覺有在「處理中」
         await new Promise(resolve => setTimeout(resolve, 150)); 
       } else {
-        // 如果 sessionStorage 沒有快取（例如重整網頁後，由 localStorage 自動恢復登入狀態），則 fallback 到原本的登入邏輯
-        isSuccess = await handleLogin(unlockPassword);
+        const res = await handleLogin(unlockPassword);
+        isSuccess = typeof res === 'boolean' ? res : (res && res.success);
         if (isSuccess) {
           try {
             sessionStorage.setItem('temp_unlock_key', btoa(unlockPassword));

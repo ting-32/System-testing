@@ -535,16 +535,24 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
         sessionStorage.setItem('temp_unlock_key', btoa(pwd));
-        return true; 
+        sessionStorage.removeItem('mock_login_fail');
+        return { success: true }; 
       } 
-      return false; 
+      const failCount = Number(sessionStorage.getItem('mock_login_fail') || 0) + 1;
+      sessionStorage.setItem('mock_login_fail', String(failCount));
+      const remaining = Math.max(0, 5 - failCount);
+      const errorMsg = remaining > 0 
+        ? `無效的密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
+        : "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。";
+      addToast(errorMsg, 'error');
+      return { success: false, error: errorMsg }; 
     } 
     try { 
       const deviceId = getOrCreateDeviceId();
       const userAgent = navigator.userAgent;
       
       const isOk = await container.authRepo.login(pwd, deviceId, userAgent); 
-      if (isOk && isOk.success !== false) { // 兼容舊版與新版的 true 及物件
+      if (isOk && isOk.success !== false && (isOk === true || isOk.token || isOk.success === true)) { // 兼容舊版與新版的 true 及物件
         if (isOk.token) {
           localStorage.setItem('APP_SESSION_TOKEN', isOk.token);
           localStorage.setItem('APP_USER_ROLE', isOk.role || 'admin');
@@ -553,15 +561,16 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
         sessionStorage.setItem('temp_unlock_key', btoa(pwd));
-        return true; 
+        return { success: true }; 
       } 
-      if (isOk && isOk.error) {
-        addToast(isOk.error, 'error');
-      }
-      return false; 
-    } catch (e) { 
+      const errorMsg = (isOk && isOk.error) || "無效的密碼或連線異常";
+      addToast(errorMsg, 'error');
+      return { success: false, error: errorMsg }; 
+    } catch (e: any) { 
       console.error("Login Error:", e); 
-      return false; 
+      const errorMsg = e.message || "登入失敗，請檢查網路連線";
+      addToast(errorMsg, 'error');
+      return { success: false, error: errorMsg }; 
     } 
   };
 
