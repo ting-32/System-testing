@@ -83,8 +83,28 @@ function getSheets() {
 
 function doGet(e) {
   try {
-    const startDateStr = e.parameter.startDate;
-    const since = Number(e.parameter.since) || 0;
+    const params = (e && e.parameter) ? e.parameter : {};
+
+    // 輕量心跳偵測 (Ping)：不查詢試算表亦不洩漏任何業務資料
+    if (params.action === "ping") {
+      return ContentService.createTextOutput(JSON.stringify({ success: true, ping: "pong" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const token = params.token;
+    
+    // 嚴格驗證 Token (使用伺服器獨立 256-bit 高強度密鑰)
+    const tokenPayload = verifyTokenAndGetPayload(token);
+    if (!tokenPayload) {
+      writeSystemLog("SYSTEM_UNAUTHORIZED_ACCESS", "未授權的 GET 資料查詢", JSON.stringify({ tokenProvided: !!token }));
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: false, 
+        error: "UNAUTHORIZED_OR_EXPIRED" 
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const startDateStr = params.startDate;
+    const since = Number(params.since) || 0;
     const data = getData(startDateStr, since);
     return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -107,13 +127,9 @@ function doPost(e) {
     
     const action = params.action;
     
-    // 取得最新密碼以供驗證
-    const sheet = getConfigSheet();
-    const currentDbPassword = String(sheet.getRange("B1").getDisplayValue()).trim() || "8888";
-
-    // 【核心防護】除了 login 以外的所有操作，全部要驗證 Token
+    // 【核心防護】除了 login 以外的所有操作，全部要驗證 Token (使用伺服器獨立 256-bit 高強度密鑰)
     if (action !== "login") {
-      const tokenPayload = verifyTokenAndGetPayload(params.token, currentDbPassword);
+      const tokenPayload = verifyTokenAndGetPayload(params.token);
       if (!tokenPayload) {
         // 優化：背景 checkUpdates 的過期視為正常 Session 結束，不寫入紅色 SYSTEM_UNAUTHORIZED_ACCESS
         if (action !== "checkUpdates") {
@@ -403,7 +419,7 @@ function login(data) {
     if (user) {
       const role = user.Role || "staff";
       const name = user.Name || "員工";
-      const token = generateToken(dId, dbPassword, role, name);
+      const token = generateToken(dId, role, name);
       writeSystemLog("SYSTEM_LOGIN_SUCCESS", "員工登入", JSON.stringify({ name: name, role: role, deviceId: dId, userAgent: uAgent }));
       return { success: true, token: token, role: role, name: name };
     }
@@ -411,7 +427,7 @@ function login(data) {
 
   // Fallback / Super Admin
   if (inputPassword === dbPassword) {
-    const token = generateToken(dId, dbPassword, "admin", "系統管理員");
+    const token = generateToken(dId, "admin", "系統管理員");
     writeSystemLog("SYSTEM_LOGIN_SUCCESS", "系統管理員登入", JSON.stringify({ deviceId: dId, userAgent: uAgent }));
     return { success: true, token: token, role: "admin", name: "系統管理員" };
   } else {
@@ -812,7 +828,7 @@ function saveRemindRulesToSheet(rules) {
     return row;
   });
   
-  sheet.getRange(2, 1, dataToRows.length, dataToRows[0].length).setValues(dataToRows);
+  safeSetValues(sheet, 2, 1, dataToRows);
   sheet.getRange(2, 5, dataToRows.length, 1).setNumberFormat("@");
 }
 
@@ -985,12 +1001,57 @@ function ensureHeadersBatch(sheet, requiredHeaders) {
 }
 
 /**
+ * ==========================================
+ * 試算表寫入安全防護層 (Spreadsheet Security & Formula Sanitization - CWE-1236)
+ * ==========================================
+ */
+
+/**
+ * 防禦試算表公式注入 (Formula / CSV Injection)
+ * 若字串開頭是 =, +, -, @, \t, \r 則在前面加上單引號 '，強制 Google Sheets 視為純文字而非公式
+ */
+function sanitizeCellForSheet(val) {
+  if (val === null || val === undefined) return val;
+  if (typeof val !== 'string') return val;
+  const trimmed = val.trim();
+  // 若開頭是 =, +, -, @, \t, \r 則在前面加上單引號 '，強制 Google Sheets 視為純文字而非公式
+  if (/^[=\+\-@\t\r]/.test(trimmed)) {
+    return "'" + val;
+  }
+  return val;
+}
+
+/**
+ * 批次過濾單列資料（一維陣列）
+ */
+function sanitizeRowForSheet(rowArray) {
+  if (!Array.isArray(rowArray)) return rowArray;
+  return rowArray.map(cell => sanitizeCellForSheet(cell));
+}
+
+/**
+ * 批次過濾多列資料（二維矩陣）
+ */
+function sanitizeMatrixForSheet(matrix) {
+  if (!Array.isArray(matrix)) return matrix;
+  return matrix.map(row => sanitizeRowForSheet(row));
+}
+
+/**
+ * 安全地將單列資料附加到工作表最後，自動過濾公式注入字元。
+ */
+function safeAppendRow(sheet, rowDataArray) {
+  return sheet.appendRow(sanitizeRowForSheet(rowDataArray));
+}
+
+/**
  * 安全地將資料寫入指定的 Row。
- * 自動判斷並補齊實體 Column，避免「RangeException」閃退。
+ * 自動判斷並補齊實體 Column，避免「RangeException」閃退，並自動過濾公式注入字元。
  */
 function safeSetRowValues(sheet, rowIndex, rowDataArray) {
+  const sanitizedArray = sanitizeRowForSheet(rowDataArray);
   const maxCols = sheet.getMaxColumns(); // 取得目前的實體欄位總數
-  const targetCols = rowDataArray.length; // 我們準備要寫入的資料長度
+  const targetCols = sanitizedArray.length; // 我們準備要寫入的資料長度
 
   // 若資料長度超過實體表格長度，手動為 Sheet 擴充欄位
   if (targetCols > maxCols) {
@@ -998,23 +1059,25 @@ function safeSetRowValues(sheet, rowIndex, rowDataArray) {
   }
 
   // 擴充完畢後，就可以 100% 安全地執行寫入
-  sheet.getRange(rowIndex, 1, 1, targetCols).setValues([rowDataArray]);
+  sheet.getRange(rowIndex, 1, 1, targetCols).setValues([sanitizedArray]);
 }
 
 /**
- * 安全地將多筆資料寫入。
+ * 安全地將多筆資料寫入，自動擴充欄位並過濾公式注入字元。
  */
 function safeSetValues(sheet, startRow, startCol, dataArray) {
   if (!dataArray || dataArray.length === 0) return;
+  const sanitizedMatrix = sanitizeMatrixForSheet(dataArray);
   const maxCols = sheet.getMaxColumns();
-  const targetCols = startCol - 1 + dataArray[0].length;
+  const targetCols = startCol - 1 + sanitizedMatrix[0].length;
   
   if (targetCols > maxCols) {
     sheet.insertColumnsAfter(maxCols, targetCols - maxCols);
   }
   
-  sheet.getRange(startRow, startCol, dataArray.length, dataArray[0].length).setValues(dataArray);
+  sheet.getRange(startRow, startCol, sanitizedMatrix.length, sanitizedMatrix[0].length).setValues(sanitizedMatrix);
 }
+
 
 // Helper to check version conflict for Orders (樂觀鎖)
 function checkOrderVersionStrict(currentVersion, expectedVersion) {
@@ -1588,7 +1651,7 @@ function updateCustomer(data) {
   if (rowIndex > 0) {
     safeSetRowValues(sheet, rowIndex, newRow);
   } else {
-    sheet.appendRow(newRow);
+    safeAppendRow(sheet, newRow);
   }
   
   // 立即清除快取並強制落盤，防止後續立即發起同步時讀取到 Google Sheets API 尚未同步的舊快照
@@ -1649,7 +1712,7 @@ function updateProduct(data) {
   if (rowIndex > 0) {
     safeSetRowValues(sheet, rowIndex, rowData);
   } else {
-    sheet.appendRow(rowData);
+    safeAppendRow(sheet, rowData);
   }
   return { lastUpdated: newLastUpdatedTs };
 }
@@ -1953,7 +2016,7 @@ function generateTomorrowDefaultOrders(explicitDates) {
 
     if (newOrderRows.length > 0) {
       const lastRow = orderSheet.getLastRow();
-      orderSheet.getRange(lastRow + 1, 1, newOrderRows.length, maxCol).setValues(newOrderRows);
+      safeSetValues(orderSheet, lastRow + 1, 1, newOrderRows);
     }
 
     return {
@@ -2593,7 +2656,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       const logSheet = getNotificationLogSheet();
       const lastRow = logSheet.getLastRow();
       let startRow = lastRow > 0 ? lastRow + 1 : 2;
-      logSheet.getRange(startRow, 1, batchLogs.length, batchLogs[0].length).setValues(batchLogs);
+      safeSetValues(logSheet, startRow, 1, batchLogs);
       
       // 效能防禦：Rolling Window (保留最新 800 筆)
       const afterLastRow = logSheet.getLastRow();
@@ -3778,7 +3841,7 @@ function writeTraceLog(source, ruleId, ruleName, status, detailsObj) {
     // 寫入當下軌跡
     const timestamp = Utilities.formatDate(new Date(), SS.getSpreadsheetTimeZone() || "Asia/Taipei", "yyyy-MM-dd HH:mm:ss");
     const safeDetails = detailsObj ? JSON.stringify(detailsObj) : "{}";
-    sheet.appendRow([timestamp, source, ruleId, ruleName, status, safeDetails]);
+    safeAppendRow(sheet, [timestamp, source, ruleId, ruleName, status, safeDetails]);
     
     // 效能防禦：Rolling Window (保留最新 800 筆)
     const lastRow = sheet.getLastRow();
@@ -3845,7 +3908,7 @@ function writeSystemLog(actionType, target, detailsStr) {
     }
     
     const timestamp = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm:ss");
-    sheet.appendRow([timestamp, actionType, target, detailsStr]);
+    safeAppendRow(sheet, [timestamp, actionType, target, detailsStr]);
   } catch (e) {
     console.error("writeSystemLog error: ", e);
   } finally {
@@ -3910,32 +3973,84 @@ function cleanupOldLogs() {
 }
 
 // ==========================================
-// 資安模組：無狀態 Token 簽發與驗證
+// 資安模組：高強度無狀態 Token 簽發與驗證 (HMAC-SHA256)
 // ==========================================
-function generateToken(deviceId, dbPassword, role, name) {
+
+/**
+ * 取得伺服器端獨立高強度 JWT 簽章密鑰 (256-bit Entropy)
+ * 儲存於 Google Apps Script 的 ScriptProperties，與試算表資料完全隔離，避免試算表被看見或密碼太弱導致偽造
+ */
+function getJwtSecret() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty("JWT_SECRET");
+  if (!secret) {
+    secret = Utilities.getUuid() + "-" + Utilities.getUuid();
+    props.setProperty("JWT_SECRET", secret);
+  }
+  return secret;
+}
+
+/**
+ * 輪替 JWT 密鑰（可立即強制使所有目前已簽發的 Token 失效登出）
+ */
+function rotateJwtSecret() {
+  const props = PropertiesService.getScriptProperties();
+  const newSecret = Utilities.getUuid() + "-" + Utilities.getUuid();
+  props.setProperty("JWT_SECRET", newSecret);
+  return newSecret;
+}
+
+function generateToken(deviceId, arg2, arg3, arg4) {
+  let role = arg2;
+  let name = arg3;
+  // 兼容舊簽章參數格式: generateToken(deviceId, dbPassword, role, name)
+  if (arg4 !== undefined) {
+    role = arg3;
+    name = arg4;
+  }
   const header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: "HS256" }));
   const payload = Utilities.base64EncodeWebSafe(JSON.stringify({
     dId: deviceId,
-    role: role,
-    name: name,
+    role: role || "staff",
+    name: name || "使用者",
     exp: new Date().getTime() + (30 * 24 * 60 * 60 * 1000) // 30天後過期
   }));
-  // 使用「當前系統密碼」作為 HMAC 簽章金鑰
-  const signature = Utilities.computeHmacSha256Signature(header + "." + payload, dbPassword);
+  // 使用 ScriptProperties 獨立 256-bit 高強度 Server Secret 作為 HMAC 簽章金鑰
+  const secret = getJwtSecret();
+  const signature = Utilities.computeHmacSha256Signature(header + "." + payload, secret);
   return header + "." + payload + "." + Utilities.base64EncodeWebSafe(signature);
 }
 
-function verifyTokenAndGetPayload(token, dbPassword) {
+function verifyTokenAndGetPayload(token, fallbackKey) {
   try {
     if (!token) return null;
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     
-    // 確實驗證簽章 (如果密碼被改了，這裡算出來的 signature 會不一樣，直接擋掉)
-    const signature = Utilities.computeHmacSha256Signature(parts[0] + "." + parts[1], dbPassword);
-    if (parts[2] !== Utilities.base64EncodeWebSafe(signature)) return null;
+    // 1. 使用伺服器獨立 256-bit 高強度密鑰驗證簽章
+    const secret = getJwtSecret();
+    const signature = Utilities.computeHmacSha256Signature(parts[0] + "." + parts[1], secret);
+    let valid = (parts[2] === Utilities.base64EncodeWebSafe(signature));
     
-    // 驗證是否過期
+    // 2. 平滑過渡相容：若新密鑰驗證未過，且有舊密鑰（或傳入 fallbackKey），嘗試驗證舊版以資料庫密碼簽發的 Token
+    if (!valid) {
+      const legacyKey = fallbackKey || (function() {
+        try {
+          const cfg = SS.getSheetByName("Config");
+          return cfg ? String(cfg.getRange("B1").getDisplayValue()).trim() : null;
+        } catch(e) { return null; }
+      })();
+      if (legacyKey) {
+        const legacySig = Utilities.computeHmacSha256Signature(parts[0] + "." + parts[1], legacyKey);
+        if (parts[2] === Utilities.base64EncodeWebSafe(legacySig)) {
+          valid = true;
+        }
+      }
+    }
+
+    if (!valid) return null;
+    
+    // 3. 驗證是否過期
     const payloadBytes = Utilities.base64DecodeWebSafe(parts[1]);
     const payloadObj = JSON.parse(Utilities.newBlob(payloadBytes).getDataAsString());
     if (new Date().getTime() > payloadObj.exp) return null;

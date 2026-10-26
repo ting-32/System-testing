@@ -129,8 +129,14 @@ export class GasApiClient implements ApiClient {
     let finalUrl = this.baseConfig.endpoint;
     
     // In our app, get requests to GAS use query params
-    if (params) {
-      const qs = new URLSearchParams(params).toString();
+    const token = localStorage.getItem('APP_SESSION_TOKEN');
+    const queryParams: Record<string, string> = { ...(params || {}) };
+    if (token && !queryParams.token) {
+      queryParams.token = token;
+    }
+
+    const qs = new URLSearchParams(queryParams).toString();
+    if (qs) {
       finalUrl += `?${qs}`;
     }
 
@@ -177,6 +183,20 @@ export class GasApiClient implements ApiClient {
       }
       
       if (!json.success) {
+        if (json.error === "UNAUTHORIZED_OR_EXPIRED") {
+          localStorage.removeItem('nm_auth_status');
+          localStorage.removeItem('APP_SESSION_TOKEN');
+          localStorage.removeItem('APP_USER_ROLE');
+          localStorage.removeItem('APP_USER_NAME');
+
+          window.dispatchEvent(new CustomEvent('app-unauthorized', {
+            detail: {
+              action: 'getData',
+              message: '連線憑證無效或已過期，請重新輸入密碼。'
+            }
+          }));
+          throw new Error("UNAUTHORIZED_OR_EXPIRED");
+        }
         if (json.error && json.error.includes('Lock Timeout') && attempt < maxRetries) {
           console.warn(`Lock Timeout encountered on GET, retrying... (Attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1) + Math.random() * 1000));

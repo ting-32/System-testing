@@ -5,6 +5,7 @@ export interface SyncDataParams {
   startDate: string;
   since?: string;
   _t: string;
+  token?: string;
 }
 
 export interface SyncDataResult {
