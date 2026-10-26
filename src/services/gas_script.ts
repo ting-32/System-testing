@@ -399,65 +399,84 @@ function login(data) {
   const dId = String(data.deviceId || "未知裝置").trim();
   const uAgent = String(data.userAgent || "未知環境").trim();
   const inputPassword = String(data.password || "").trim();
-
-  // 1. 防暴力破解鎖定檢查 (以 deviceId 為單位，連續失敗 5 次鎖定 15 分鐘 = 900 秒)
   const cache = CacheService.getScriptCache();
-  const failKey = "LOGIN_FAIL_" + encodeURIComponent(dId.slice(0, 60));
-  const failCount = Number(cache.get(failKey)) || 0;
-  
-  if (failCount >= 5) {
-    writeSystemLog("SYSTEM_LOGIN_LOCKED", "防暴力破解觸發鎖定", JSON.stringify({ deviceId: dId, failCount: failCount, userAgent: uAgent }));
-    return { success: false, error: "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。" };
-  }
 
+  // 1. 取得資料庫密碼進行驗證
   const sheet = getConfigSheet();
-  
-  // Use getDisplayValue() to force string representation, safer than getValue()
-  let dbPassword = sheet.getRange("B1").getDisplayValue().trim();
-  
-  // Empty cell default
-  if (!dbPassword) {
-    dbPassword = "8888";
-  }
+  let dbPassword = sheet.getRange("B1").getDisplayValue().trim() || "8888";
 
-  // Try parsing ACCOUNTS sheet first
+  // 檢查是否為員工 PIN 碼
+  let matchedUser = null;
   const accountsSheet = SS.getSheetByName("ACCOUNTS");
   if (accountsSheet) {
     const accounts = getSheetData(accountsSheet);
-    const user = accounts.find(a => String(a.PIN) === inputPassword && String(a.IsActive).toUpperCase() === "TRUE");
-    if (user) {
-      cache.remove(failKey); // 驗證成功，重置失敗計數
-      const role = user.Role || "staff";
-      const name = user.Name || "員工";
+    matchedUser = accounts.find(a => String(a.PIN) === inputPassword && String(a.IsActive).toUpperCase() === "TRUE");
+  }
+
+  const isSuperAdmin = (inputPassword === dbPassword);
+  const isCorrect = (matchedUser !== null && matchedUser !== undefined) || isSuperAdmin;
+
+  // ==========================================
+  // 核心原則 1：手持正確密碼者，永遠 100% 立即放行！
+  // (有心人士惡意輸錯 100 次也絕不會影響正常人上班，根除 DoS 威脅)
+  // ==========================================
+  if (isCorrect) {
+    const failKey = "LOGIN_FAIL_" + encodeURIComponent(dId.slice(0, 60));
+    cache.remove(failKey); // 驗證成功，清除該裝置的失敗紀錄
+
+    if (matchedUser) {
+      const role = matchedUser.Role || "staff";
+      const name = matchedUser.Name || "員工";
       const token = generateToken(dId, role, name);
       writeSystemLog("SYSTEM_LOGIN_SUCCESS", "員工登入", JSON.stringify({ name: name, role: role, deviceId: dId, userAgent: uAgent }));
       return { success: true, token: token, role: role, name: name };
+    } else {
+      const token = generateToken(dId, "admin", "系統管理員");
+      writeSystemLog("SYSTEM_LOGIN_SUCCESS", "系統管理員登入", JSON.stringify({ deviceId: dId, userAgent: uAgent }));
+      return { success: true, token: token, role: "admin", name: "系統管理員" };
     }
   }
 
-  // Fallback / Super Admin
-  if (inputPassword === dbPassword) {
-    cache.remove(failKey); // 驗證成功，重置失敗計數
-    const token = generateToken(dId, "admin", "系統管理員");
-    writeSystemLog("SYSTEM_LOGIN_SUCCESS", "系統管理員登入", JSON.stringify({ deviceId: dId, userAgent: uAgent }));
-    return { success: true, token: token, role: "admin", name: "系統管理員" };
-  } else {
-    const newFailCount = failCount + 1;
-    cache.put(failKey, String(newFailCount), 900); // 累計失敗次數，保留 15 分鐘
-    const remaining = Math.max(0, 5 - newFailCount);
-    
-    writeSystemLog("SYSTEM_LOGIN_FAILED", "系統登入失敗", JSON.stringify({ 
-      deviceId: dId, 
-      userAgent: uAgent, 
-      failCount: newFailCount,
-      remainingAttempts: remaining
-    }));
+  // ==========================================
+  // 核心原則 2：若密碼錯誤，啟動焦油坑延遲與單機限流
+  // ==========================================
 
-    const errorMsg = remaining > 0 
-      ? `無效的密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
-      : "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。";
-    return { success: false, error: errorMsg };
+  // (A) 單機連續輸錯 5 次鎖定 15 分鐘（防止在別人電腦前亂猜）
+  const failKey = "LOGIN_FAIL_" + encodeURIComponent(dId.slice(0, 60));
+  const failCount = Number(cache.get(failKey)) || 0;
+  const newFailCount = failCount + 1;
+  cache.put(failKey, String(newFailCount), 900); // 鎖定/保留 15 分鐘
+
+  // (B) 焦油坑延遲防禦 (Tarpit Delay)：
+  // 只要密碼錯誤，強迫後端沉睡 2.5 秒才回應！
+  // 徹底截斷自動化爆破腳本速度；若多線程狂發，GAS 並發槽位會在 1 秒內被吃滿，觸發 Google Edge 429 阻斷攻擊者
+  Utilities.sleep(2500);
+
+  const remaining = Math.max(0, 5 - newFailCount);
+  writeSystemLog("SYSTEM_LOGIN_FAILED", "系統登入失敗", JSON.stringify({ 
+    deviceId: dId, 
+    userAgent: uAgent, 
+    failCount: newFailCount,
+    remainingAttempts: remaining
+  }));
+
+  const errorMsg = remaining > 0 
+    ? `無效的密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
+    : "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。";
+  return { success: false, error: errorMsg };
+}
+
+/**
+ * 管理員應急重置登入鎖定 (可在 Apps Script 編輯器手動執行)
+ */
+function resetLoginLockout(deviceId) {
+  const cache = CacheService.getScriptCache();
+  if (deviceId) {
+    cache.remove("LOGIN_FAIL_" + encodeURIComponent(deviceId.slice(0, 60)));
   }
+  cache.remove("GLOBAL_LOGIN_FAIL_COUNT");
+  cache.remove("GLOBAL_LOGIN_LOCKED_UNTIL");
+  console.log("✅ 登入鎖定快取已清除");
 }
 
 function changePassword(data) {

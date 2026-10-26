@@ -1239,6 +1239,7 @@ const App: React.FC = () => {
          handleAppUnlock={auth.handleAppUnlock}
          isUnlocking={auth.isUnlocking}
          unlockError={auth.unlockError}
+         unlockErrorMessage={auth.unlockErrorMessage}
          onEditCustomerItems={(customer) => {
            setCustomerForm({ ...customer }); // 2. 塞入店家原始資料準備編輯
            setIsEditingCustomer(customer.id); // 3. 觸發編輯狀態

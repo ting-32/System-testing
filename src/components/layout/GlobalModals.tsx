@@ -27,6 +27,7 @@ interface GlobalModalsProps {
   handleAppUnlock?: (e: React.FormEvent) => void;
   isUnlocking?: boolean;
   unlockError?: boolean;
+  unlockErrorMessage?: string | null;
   onToggleAutoOrder?: (customerId: string) => void;
   onEditCustomerItems?: (customer: any) => void;
   onEditCustomerHoliday?: (customerId: string) => void;
@@ -193,6 +194,7 @@ export function GlobalModals(props: GlobalModalsProps) {
         handleAppUnlock={props.handleAppUnlock ?? mockHandleAppUnlock}
         isUnlocking={props.isUnlocking ?? ui.isUnlocking}
         unlockError={props.unlockError ?? ui.unlockError}
+        unlockErrorMessage={props.unlockErrorMessage}
         setUnlockError={props.setUnlockError ?? ui.setUnlockError}
         unlockPassword={props.unlockPassword ?? ui.unlockPassword}
         setUnlockPassword={props.setUnlockPassword ?? ui.setUnlockPassword}

@@ -30,6 +30,7 @@ export function AppModals(props: AppModalsProps) {
         handleAppUnlock={props.handleAppUnlock}
         isUnlocking={props.isUnlocking}
         unlockError={props.unlockError}
+        unlockErrorMessage={props.unlockErrorMessage}
         setUnlockError={props.setUnlockError}
         unlockPassword={props.unlockPassword}
         setUnlockPassword={props.setUnlockPassword}

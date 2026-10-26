@@ -47,6 +47,7 @@ export function setupMockBackend() {
               sessionStorage.removeItem('mock_login_fail');
               return new Response(JSON.stringify({ success: true, data: { success: true, token: 'mock_token', role: 'admin', name: '系統管理員' } }), { status: 200 });
             }
+
             const failCount = Number(sessionStorage.getItem('mock_login_fail') || 0) + 1;
             sessionStorage.setItem('mock_login_fail', String(failCount));
             const remaining = Math.max(0, 5 - failCount);

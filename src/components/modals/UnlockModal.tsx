@@ -6,6 +6,7 @@ interface UnlockModalProps {
   isOpen: boolean;
   onClose: () => void;
   unlockError: boolean;
+  unlockErrorMessage?: string | null;
   unlockPassword: string;
   setUnlockPassword: (val: string) => void;
   setUnlockError: (val: boolean) => void;
@@ -17,6 +18,7 @@ export function UnlockModal({
   isOpen,
   onClose,
   unlockError,
+  unlockErrorMessage,
   unlockPassword,
   setUnlockPassword,
   setUnlockError,
@@ -51,7 +53,7 @@ export function UnlockModal({
               <AnimatePresence>
                 {unlockError && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="text-rose-500 text-xs font-bold text-center">
-                    密碼錯誤
+                    {unlockErrorMessage || "密碼錯誤"}
                   </motion.div>
                 )}
               </AnimatePresence>
