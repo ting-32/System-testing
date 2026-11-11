@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Trash2, 
@@ -263,13 +264,13 @@ export const BatchCleanOrdersModal: React.FC<BatchCleanOrdersModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-morandi-charcoal/40 backdrop-blur-xs animate-in fade-in duration-200">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-morandi-charcoal/60 backdrop-blur-xs animate-in fade-in duration-200">
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 10 }}
-        className="bg-morandi-paper w-full max-w-2xl rounded-[28px] shadow-2xl border border-morandi-oatmeal overflow-hidden flex flex-col max-h-[90vh]"
+        className="bg-morandi-paper w-full max-w-2xl rounded-[28px] shadow-2xl border border-morandi-oatmeal overflow-hidden flex flex-col max-h-[92dvh] relative"
       >
         {/* 標頭 (燕麥柔和底色 + 焦炭黑字) */}
         <div className="px-6 py-4.5 border-b border-morandi-oatmeal flex items-center justify-between bg-morandi-oatmeal/60">
@@ -744,6 +745,7 @@ export const BatchCleanOrdersModal: React.FC<BatchCleanOrdersModalProps> = ({
           </div>
         </div>
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 };
