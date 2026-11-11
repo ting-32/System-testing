@@ -29,3 +29,16 @@ export function sanitizeMatrixForSheet<T extends unknown[][]>(matrix: T): T {
   if (!Array.isArray(matrix)) return matrix;
   return matrix.map(row => sanitizeRowForSheet(row)) as T;
 }
+
+/**
+ * 防禦 XSS 注入：將 HTML 特殊字元轉為安全實體代碼 (CWE-79)
+ */
+export function escapeHtml(str: unknown): string {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}

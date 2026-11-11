@@ -104,10 +104,47 @@ export interface Order {
   isTripAutoFilled?: boolean; // 新增：標記是否為系統依據店家預設自動補齊趟數
   errorMessage?: string; // 錯誤訊息
   pendingAction?: 'create' | 'update' | 'delete' | 'statusUpdate'; // 待處理動作
+  assignedTo?: string; // 指派人員 ID (user_id)
+  assignedName?: string; // 指派人員姓名
+  dispatchStatus?: string; // 指派狀態 (UNASSIGNED, ASSIGNED, ACCEPTED)
   // --- 暫態屬性 (僅限前端使用) ---
   _syncStatus?: 'pending' | 'synced' | 'error';
   _localUpdatedTs?: number;
 }
+
+export type UserRole = 'admin' | 'manager' | 'staff';
+
+export interface UserPermissionMatrix {
+  canViewAllOrders: boolean;
+  canAssignOrders: boolean;
+  canUpdateAnyOrderStatus: boolean;
+  canDeleteOrders: boolean;
+  canEditOrderContent: boolean;
+}
+
+export const PERMISSIONS: Record<UserRole, UserPermissionMatrix> = {
+  admin: {
+    canViewAllOrders: true,
+    canAssignOrders: true,
+    canUpdateAnyOrderStatus: true,
+    canDeleteOrders: true,
+    canEditOrderContent: true
+  },
+  manager: {
+    canViewAllOrders: true,
+    canAssignOrders: true,
+    canUpdateAnyOrderStatus: true,
+    canDeleteOrders: false,
+    canEditOrderContent: true
+  },
+  staff: {
+    canViewAllOrders: false,        // 嚴格限制：只能讀取 assigned_to === 自己的單
+    canAssignOrders: false,         // 無權指派
+    canUpdateAnyOrderStatus: false, // 只能更新 assigned_to === 自己的單
+    canDeleteOrders: false,
+    canEditOrderContent: false
+  }
+};
 
 export interface ReminderCondition {
   id?: string;

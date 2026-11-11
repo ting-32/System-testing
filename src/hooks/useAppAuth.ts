@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 
 interface UseAppAuthProps {
-  handleLogin: (password: string) => Promise<{ success: boolean; error?: string } | boolean>;
+  handleLogin: (usernameOrPassword: string, maybePassword?: string) => Promise<{ success: boolean; error?: string } | boolean>;
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -79,7 +79,12 @@ export function useAppAuth({ handleLogin, addToast }: UseAppAuthProps) {
         }
         await new Promise(resolve => setTimeout(resolve, 150)); 
       } else {
-        const res = await handleLogin(unlockPassword);
+        const savedUserStr = localStorage.getItem('APP_USER');
+        let savedUsername = '';
+        if (savedUserStr) {
+          try { savedUsername = JSON.parse(savedUserStr).username || ''; } catch {}
+        }
+        const res = await (savedUsername ? handleLogin(savedUsername, unlockPassword) : handleLogin(unlockPassword));
         isSuccess = typeof res === 'boolean' ? res : (res && res.success);
         if (typeof res === 'object' && res?.error) {
           failureError = res.error;

@@ -9,6 +9,7 @@ import {
 import { formatTimeDisplay } from '../utils';
 import { ReportHeroSection } from './reports/ReportHeroSection';
 import { ReportAggregatedTable } from './reports/ReportAggregatedTable';
+import { escapeHtml } from '../utils/sanitize';
 
 const COLORS = ['#5b7a8c', '#a8b8c2', '#d9e0e5', '#899da9', '#cbd5db', '#718c9e'];
 
@@ -315,9 +316,9 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
     aggregatedItems.sort((a, b) => b.totalAmount - a.totalAmount).forEach(item => {
       tableHtml += `
         <tr>
-          <td><strong>${item.productName}</strong></td>
+          <td><strong>${escapeHtml(item.productName)}</strong></td>
           ${printOptions.showUnitPrice ? `<td class="text-right text-gray">${item.unitPrice ? '$' + item.unitPrice : '-'}</td>` : ''}
-          <td class="text-right"><strong>${item.totalQuantity}</strong> ${item.unit}</td>
+          <td class="text-right"><strong>${item.totalQuantity}</strong> ${escapeHtml(item.unit)}</td>
           ${printOptions.showTotalPrice ? `<td class="text-right"><strong>$${item.totalAmount.toLocaleString()}</strong></td>` : ''}
         </tr>
       `;
@@ -363,9 +364,9 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
         const p = products.find(prod => prod.id === item.productId || prod.name === item.productId);
         return `
           <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-            <span style="font-weight: bold;">${item.productName || p?.name || '未知品項'}</span>
+            <span style="font-weight: bold;">${escapeHtml(item.productName || p?.name || '未知品項')}</span>
             <span>
-              <span style="display: inline-block; width: 80px; text-align: right;">${item.quantity} ${item.unit || p?.unit || '斤'}</span>
+              <span style="display: inline-block; width: 80px; text-align: right;">${item.quantity} ${escapeHtml(item.unit || p?.unit || '斤')}</span>
             </span>
           </div>
         `;
@@ -376,9 +377,9 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
           <td style="vertical-align: top; font-weight: bold; font-size: 18px;">${order.deliveryDate.substring(5).replace('-', '/')}</td>
           <td style="vertical-align: top;">
             ${itemsHtml}
-            ${(printOptions.showNotes && order.note) ? `<div style="font-size: 14px; color: #666; margin-top: 4px; font-style: italic;">外站備註: ${order.note}</div>` : ''}
+            ${(printOptions.showNotes && order.note) ? `<div style="font-size: 14px; color: #666; margin-top: 4px; font-style: italic;">外站備註: ${escapeHtml(order.note)}</div>` : ''}
           </td>
-          ${printOptions.showDeliveryTrip ? `<td style="vertical-align: top;">${order.trip || customer?.defaultTrip || '未分配'}</td>` : ''}
+          ${printOptions.showDeliveryTrip ? `<td style="vertical-align: top;">${escapeHtml(order.trip || customer?.defaultTrip || '未分配')}</td>` : ''}
           ${printOptions.showTotalPrice ? `<td style="vertical-align: top;" class="text-right font-bold text-lg">$${orderTotal.toLocaleString()}</td>` : ''}
         </tr>
       `;
@@ -392,7 +393,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
     const htmlContent = `<!DOCTYPE html>
     <html>
       <head>
-        <title>${reportTitle}</title>
+        <title>${escapeHtml(reportTitle)}</title>
         <style>
           body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 20px; color: #222; }
           h1 { text-align: center; margin-bottom: 5px; font-size: 32px; }
@@ -425,7 +426,7 @@ export const CustomerReportModal: React.FC<CustomerReportModalProps> = ({
           返回 / 關閉
         </button>
         
-        <h1>${reportTitle}</h1>
+        <h1>${escapeHtml(reportTitle)}</h1>
         <p class="date">共 ${reportOrders.length} 筆訂單，總計出貨 ${kpis.totalVolume.toLocaleString()} 單位</p>
         
         ${tableHtml}

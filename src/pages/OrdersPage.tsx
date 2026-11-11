@@ -20,6 +20,9 @@ import { getSmartDefaultDate } from '../utils';
 
 import { useOrderCalculations } from '../hooks/useOrderCalculations';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
+import { usePermission } from '../hooks/usePermission';
+import { BatchCleanOrdersModal } from '../components/BatchCleanOrdersModal';
+import { OrderDispatchItem } from './OrderDispatchPage';
 
   export interface OrdersPageProps {
     orders: Order[];
@@ -129,6 +132,8 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
   const [isOrderDatePickerOpen, setIsOrderDatePickerOpen] = useState(false);
   const [viewingCustomerProfile, setViewingCustomerProfile] = useState<string | null>(null);
   const [viewingCustomerReport, setViewingCustomerReport] = useState<string | null>(null);
+  const [showBatchCleanModal, setShowBatchCleanModal] = useState(false);
+  const { role } = usePermission();
   
   // ======== State moved to App.tsx & passed down via props ========
   // isAddingOrder, editingOrderId, quickAddData, lastOrderCandidate, orderForm
@@ -224,6 +229,16 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
               </motion.button>
               
               <div className="flex gap-2 shrink-0">
+                {(role === 'admin' || role === 'manager') && (
+                  <motion.button 
+                    whileTap={buttonTap} 
+                    onClick={() => { triggerHaptic(); setShowBatchCleanModal(true); }} 
+                    className="w-14 h-14 rounded-[20px] bg-white text-morandi-pink border border-morandi-pink/30 shadow-sm flex items-center justify-center hover:bg-morandi-pink/10 transition-all cursor-pointer"
+                    title="條件式快速批次清理訂單 (管理員專用)"
+                  >
+                     <Trash2 className="w-5 h-5 text-morandi-pink" />
+                  </motion.button>
+                )}
                 <motion.button 
                   whileTap={buttonTap} 
                   onClick={() => { triggerHaptic(); setIsAutoOrderDashboardOpen(true); }} 
@@ -578,6 +593,30 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
         )}
       </AnimatePresence>
       </>, document.body)}
+
+      {/* 條件式快速批次清理訂單工具 (管理員專用) */}
+      <AnimatePresence>
+        {showBatchCleanModal && (
+          <BatchCleanOrdersModal
+            isOpen={showBatchCleanModal}
+            onClose={() => setShowBatchCleanModal(false)}
+            customers={customers}
+            orders={orders.map(o => ({
+              id: o.id,
+              order_id: o.id,
+              customerName: o.customerName,
+              deliveryDate: o.deliveryDate,
+              status: o.status
+            }))}
+            onSuccess={() => {
+              if (handleForceRetry) {
+                handleForceRetry();
+              }
+            }}
+            showToast={(msg, type) => addToast(msg, type === 'error' ? 'error' : 'success')}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 };

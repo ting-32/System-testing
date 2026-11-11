@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X, Maximize, Activity, ChevronLeft, Trash2, ChevronRight, LogOut } from 'lucide-react';
+import { RefreshCw, Link as LinkIcon, Lock, Key, CheckCircle2, Save, Loader2, X, Maximize, Activity, ChevronLeft, Trash2, ChevronRight, LogOut, Users } from 'lucide-react';
 import localforage from 'localforage';
 import { modalVariants, buttonTap } from './animations';
 import { SystemLogViewer } from './SystemLogViewer';
+import { PermissionSettingsModal } from './PermissionSettingsModal';
+import { BatchCleanOrdersModal } from './BatchCleanOrdersModal';
 import { useUIStore } from '../store/useUIStore';
+import { OrderDispatchItem } from '../pages/OrderDispatchPage';
 
 type SettingView = 'main' | 'layout' | 'connection' | 'security' | 'logs';
 
@@ -37,16 +40,54 @@ export const SettingsModal: React.FC<{
   const [inputUrl, setInputUrl] = useState(currentUrl);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [urlSaveStatus, setUrlSaveStatus] = useState<'idle' | 'success'>('idle');
+  const [showRbacModal, setShowRbacModal] = useState(false);
+  const [showBatchCleanModal, setShowBatchCleanModal] = useState(false);
+  const [modalOrders, setModalOrders] = useState<OrderDispatchItem[]>([]);
+
+  // 載入本地訂單資料以供批次清理預覽
+  React.useEffect(() => {
+    if (showBatchCleanModal) {
+      localforage.getItem<any[]>('nm_cache_orders').then((cached) => {
+        if (Array.isArray(cached)) {
+          const mapped: OrderDispatchItem[] = cached.map((o) => ({
+            id: String(o.id || o.order_id || ''),
+            order_id: String(o.order_id || o.id || ''),
+            customerName: String(o.customerName || '未註記客戶'),
+            deliveryDate: o.deliveryDate || o.date || '',
+            status: String(o.status || 'PENDING')
+          }));
+          setModalOrders(mapped);
+        }
+      });
+    }
+  }, [showBatchCleanModal]);
+
+  const currentUser = (() => {
+    try {
+      const u = localStorage.getItem('APP_USER');
+      if (u) return JSON.parse(u);
+    } catch {}
+    return {
+      name: localStorage.getItem('APP_USER_NAME') || '系統使用者',
+      role: localStorage.getItem('APP_USER_ROLE') || 'admin',
+      userId: localStorage.getItem('APP_USER_ID') || 'admin',
+      username: localStorage.getItem('APP_USER_ID') || 'admin'
+    };
+  })();
 
   const handleLogout = () => {
     ui.openConfirm({
       title: '登出系統',
-      message: '確定要登出嗎？',
+      message: '確定要登出嗎？登出後將返回登入畫面。',
       onConfirm: () => {
         localStorage.removeItem('nm_auth_status');
+        localStorage.removeItem('APP_TOKEN');
         localStorage.removeItem('APP_SESSION_TOKEN');
+        localStorage.removeItem('APP_USER');
         localStorage.removeItem('APP_USER_ROLE');
         localStorage.removeItem('APP_USER_NAME');
+        localStorage.removeItem('APP_USER_ID');
+        sessionStorage.removeItem('temp_unlock_key');
         window.location.reload();
       }
     });
@@ -138,7 +179,35 @@ export const SettingsModal: React.FC<{
                 transition={{ duration: 0.2 }}
                 className="space-y-6"
               >
+                {/* 目前登入身份卡片 */}
+                <div className="bg-gradient-to-r from-slate-50 to-slate-100/60 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-800 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+                      {currentUser.name?.[0] || '職'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-800 text-sm">{currentUser.name}</span>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                          currentUser.role === 'admin'
+                            ? 'bg-rose-100 text-rose-700'
+                            : currentUser.role === 'manager'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {currentUser.role === 'admin' ? '最高管理員' : currentUser.role === 'manager' ? '工廠主管' : '現場人員'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 font-mono mt-0.5">工號 / 帳號: @{currentUser.username || currentUser.userId}</p>
+                    </div>
+                  </div>
+                </div>
+
                 <div>
+                  <SettingsRow icon={Users} label="職位權限與帳號管理" onClick={() => setShowRbacModal(true)} />
+                  {(currentUser.role === 'admin' || currentUser.role === 'manager') && (
+                    <SettingsRow icon={Trash2} label="批次清理訂單工具" onClick={() => setShowBatchCleanModal(true)} />
+                  )}
                   <SettingsRow icon={Maximize} label="畫面顯示模式" onClick={() => setCurrentView('layout')} />
                   <SettingsRow icon={Lock} label="安全性設定" onClick={() => setCurrentView('security')} />
                   <SettingsRow icon={LinkIcon} label="伺服器連線" onClick={() => setCurrentView('connection')} />
@@ -275,6 +344,28 @@ export const SettingsModal: React.FC<{
           </AnimatePresence>
         </div>
       </motion.div>
+
+      {/* RBAC 職位權限與帳號管理面板 */}
+      <AnimatePresence>
+        {showRbacModal && (
+          <PermissionSettingsModal onClose={() => setShowRbacModal(false)} />
+        )}
+      </AnimatePresence>
+
+      {/* 條件式快速批次清理訂單工具 (管理員專用) */}
+      <AnimatePresence>
+        {showBatchCleanModal && (
+          <BatchCleanOrdersModal
+            isOpen={showBatchCleanModal}
+            onClose={() => setShowBatchCleanModal(false)}
+            orders={modalOrders}
+            onSuccess={() => {
+              onSync();
+              onClose();
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

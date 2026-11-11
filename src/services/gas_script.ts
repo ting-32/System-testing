@@ -5,6 +5,39 @@ const SS = SpreadsheetApp.getActiveSpreadsheet();
 
 let cachedTimeZone = null;
 
+// ==========================================
+// 🛡️ RBAC 職位權限矩陣定義 (易於日後增刪維護)
+// ==========================================
+const PERMISSIONS = {
+  admin: {
+    canViewAllOrders: true,
+    canAssignOrders: true,
+    canUpdateAnyOrderStatus: true,
+    canDeleteOrders: true,
+    canEditOrderContent: true
+  },
+  manager: {
+    canViewAllOrders: true,
+    canAssignOrders: true,
+    canUpdateAnyOrderStatus: true,
+    canDeleteOrders: false,
+    canEditOrderContent: true
+  },
+  staff: {
+    canViewAllOrders: false,        // 嚴格限制：只能讀取 assigned_to === 自己的單
+    canAssignOrders: false,         // 無權指派
+    canUpdateAnyOrderStatus: false, // 只能更新 assigned_to === 自己的單
+    canDeleteOrders: false,
+    canEditOrderContent: false
+  }
+};
+
+function hasPermission(role, permKey) {
+  const normRole = String(role || 'staff').trim().toLowerCase();
+  const perms = PERMISSIONS[normRole] || PERMISSIONS.staff;
+  return !!perms[permKey];
+}
+
 function safeFormatDate(sheetValue, format = "yyyy-MM-dd HH:mm:ss") {
   if (!sheetValue) return '';
   
@@ -73,10 +106,10 @@ function setSystemConfig(sheet, keyName, value) {
 // Helper to get fresh references (avoiding top-level const caching issues)
 function getSheets() {
   return {
-    ORDERS: SS.getSheetByName("Orders") || SS.insertSheet("Orders"),
-    CUSTOMERS: SS.getSheetByName("Customers") || SS.insertSheet("Customers"),
-    PRODUCTS: SS.getSheetByName("Products") || SS.insertSheet("Products"),
-    TRIPS: SS.getSheetByName("Trips") || SS.insertSheet("Trips"),
+    ORDERS: SS.getSheetByName("Orders") || SS.getSheetByName("ORDERS") || SS.insertSheet("Orders"),
+    CUSTOMERS: SS.getSheetByName("Customers") || SS.getSheetByName("CUSTOMERS") || SS.insertSheet("Customers"),
+    PRODUCTS: SS.getSheetByName("Products") || SS.getSheetByName("PRODUCTS") || SS.insertSheet("Products"),
+    TRIPS: SS.getSheetByName("Trips") || SS.getSheetByName("TRIPS") || SS.insertSheet("Trips"),
     CONFIG: getConfigSheet() // Use the helper
   };
 }
@@ -105,7 +138,7 @@ function doGet(e) {
 
     const startDateStr = params.startDate;
     const since = Number(params.since) || 0;
-    const data = getData(startDateStr, since);
+    const data = getData(startDateStr, since, tokenPayload);
     return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
@@ -126,10 +159,11 @@ function doPost(e) {
     }
     
     const action = params.action;
+    let tokenPayload = null;
     
     // 【核心防護】除了 login 以外的所有操作，全部要驗證 Token (使用伺服器獨立 256-bit 高強度密鑰)
     if (action !== "login") {
-      const tokenPayload = verifyTokenAndGetPayload(params.token);
+      tokenPayload = verifyTokenAndGetPayload(params.token);
       if (!tokenPayload) {
         // 優化：背景 checkUpdates 的過期視為正常 Session 結束，不寫入紅色 SYSTEM_UNAUTHORIZED_ACCESS
         if (action !== "checkUpdates") {
@@ -141,15 +175,39 @@ function doPost(e) {
         })).setMimeType(ContentService.MimeType.JSON);
       }
       
-      const userRole = tokenPayload.role;
-      const adminOnlyActions = ["saveSettings", "deleteOrder", "deleteCustomer", "deleteProduct", "changePassword", "getSystemLogs"];
+      const userRole = String(tokenPayload.role || 'staff').trim().toLowerCase();
 
-      // 【核心防護】如果是員工，且企圖執行老闆專屬功能
-      if (userRole === "staff" && adminOnlyActions.includes(action)) {
-        writeSystemLog("SYSTEM_FORBIDDEN", "越權操作阻擋", JSON.stringify({ action: action, employee: tokenPayload.name }));
+      // 🛡️ 1. 基於 PERMISSIONS 權限矩陣的細粒度動作阻擋
+      if (action === "deleteOrder" && !hasPermission(userRole, "canDeleteOrders")) {
+        writeSystemLog("SYSTEM_FORBIDDEN", "越權刪除訂單阻擋", JSON.stringify({ action, employee: tokenPayload.name }));
         return ContentService.createTextOutput(JSON.stringify({ 
           success: false, 
-          error: "FORBIDDEN_ACTION" 
+          error: "FORBIDDEN_ACTION: 權限不足，您無權刪除訂單" 
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      if (action === "updateOrderContent" && !hasPermission(userRole, "canEditOrderContent")) {
+        writeSystemLog("SYSTEM_FORBIDDEN", "越權修改訂單內容阻擋", JSON.stringify({ action, employee: tokenPayload.name }));
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: false, 
+          error: "FORBIDDEN_ACTION: 權限不足，您無權修改訂單內容" 
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      if (action === "assignOrder" && !hasPermission(userRole, "canAssignOrders")) {
+        writeSystemLog("SYSTEM_FORBIDDEN", "越權派工指派阻擋", JSON.stringify({ action, employee: tokenPayload.name }));
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: false, 
+          error: "FORBIDDEN_ACTION: 權限不足，您無權執行派工指派" 
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const adminOnlyActions = ["saveSettings", "deleteCustomer", "deleteProduct", "changePassword", "getSystemLogs"];
+      if (userRole === "staff" && adminOnlyActions.includes(action)) {
+        writeSystemLog("SYSTEM_FORBIDDEN", "越權管理員操作阻擋", JSON.stringify({ action: action, employee: tokenPayload.name }));
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: false, 
+          error: "FORBIDDEN_ACTION: 僅限管理員執行此項操作" 
         })).setMimeType(ContentService.MimeType.JSON);
       }
     }
@@ -172,7 +230,30 @@ function doPost(e) {
         writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({ diff: params.data }));
         break;
       case "updateOrderStatus":
-        result = updateOrderStatus(params.data);
+        result = updateOrderStatus(params.data, tokenPayload);
+        break;
+      case "assignOrder":
+        result = assignOrder(params.data || params, tokenPayload);
+        writeSystemLog("ASSIGN_ORDER", `訂單: ${params.data?.id || params.data?.orderId || params.orderId || params.id}`, JSON.stringify({
+          assignedTo: params.data?.targetUserId || params.data?.assignedTo || params.targetUserId,
+          assignedName: params.data?.targetUserName || params.data?.assignedName || params.targetUserName,
+          operator: tokenPayload ? tokenPayload.name : '未知'
+        }));
+        break;
+      case "getOrders":
+        result = handleGetOrders(tokenPayload);
+        break;
+      case "getStaffList":
+        result = handleGetStaffList(tokenPayload);
+        break;
+      case "getAllUsers":
+        result = handleGetAllUsers(tokenPayload);
+        break;
+      case "saveUser":
+        result = handleSaveUser(params.data || params, tokenPayload);
+        break;
+      case "savePermissionMatrix":
+        result = handleSavePermissionMatrix(params.data || params, tokenPayload);
         break;
       case "batchUpdateOrders":
         result = batchUpdateOrders(params.data);
@@ -187,6 +268,9 @@ function doPost(e) {
           deletedName: params.data.customerName || "未知店家",
           deletedDate: params.data.deliveryDate || ""
         }));
+        break;
+      case "batchDeleteOrders":
+        result = handleBatchDeleteOrders(params.data || params, tokenPayload);
         break;
       case "reorderProducts":
         result = reorderProducts(params.data);
@@ -267,6 +351,14 @@ function doPost(e) {
       case "triggerAutoOrders":
         result = generateTomorrowDefaultOrders(params.data?.dates);
         writeSystemLog("TRIGGER_AUTO_ORDERS", "觸發自動建單", JSON.stringify(result));
+        break;
+      case "syncLineOrders":
+        result = syncLineOrders();
+        writeSystemLog("SYNC_LINE_ORDERS", "同步 LINE 訂單", JSON.stringify(result));
+        break;
+      case "backfillMissingOrderPrices":
+        result = backfillMissingOrderPrices();
+        writeSystemLog("BACKFILL_ORDER_PRICES", "補齊訂單單價小計", JSON.stringify(result));
         break;
       default:
         throw new Error("Unknown action: " + action);
@@ -398,10 +490,87 @@ function getOrder(data) {
 function login(data) {
   const dId = String(data.deviceId || "未知裝置").trim();
   const uAgent = String(data.userAgent || "未知環境").trim();
+  const inputUsername = String(data.username || "").trim();
   const inputPassword = String(data.password || "").trim();
   const cache = CacheService.getScriptCache();
 
-  // 1. 取得資料庫密碼進行驗證
+  // 1. 優先檢查 Users 表 (帳密 + 鹽值雜湊驗證，支援中英文欄位)
+  const usersSheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (usersSheet && usersSheet.getLastRow() > 1) {
+    const values = usersSheet.getDataRange().getValues();
+    const headers = values[0];
+    const idIdx = findHeaderIndex(headers, ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]);
+    const userIdx = findHeaderIndex(headers, ["username", "user", "帳號", "登入帳號", "使用者名稱"]);
+    const hashIdx = findHeaderIndex(headers, ["password_hash", "hash", "password", "密碼雜湊", "密碼hash", "密碼"]);
+    const saltIdx = findHeaderIndex(headers, ["salt", "鹽值", "鹽", "密鑰"]);
+    const roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
+    const statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
+    const nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]);
+
+    if (hashIdx !== -1 && (userIdx !== -1 || idIdx !== -1 || nameIdx !== -1)) {
+      for (let i = 1; i < values.length; i++) {
+        const row = values[i];
+        const rowId = idIdx !== -1 ? String(row[idIdx] || '').trim() : '';
+        const rowUsername = userIdx !== -1 ? String(row[userIdx] || '').trim() : '';
+        const rowName = nameIdx !== -1 ? String(row[nameIdx] || '').trim() : '';
+        
+        // 寬容且精準比對：帳號、工號、顯示名稱任一吻合均可；若未輸入帳號（例如司機快捷 PIN）則比對密碼
+        const normInput = inputUsername.toLowerCase();
+        const matchUser = !inputUsername || 
+          (rowUsername && rowUsername.toLowerCase() === normInput) ||
+          (rowId && rowId.toLowerCase() === normInput) ||
+          (rowName && rowName.toLowerCase() === normInput);
+
+        if (matchUser) {
+          const salt = saltIdx !== -1 ? String(row[saltIdx] || '').trim() : '';
+          const expectedHash = String(row[hashIdx] || '').trim();
+          
+          // 支援三種情況：
+          // 1. 鹽值雜湊 (SHA-256 with salt)
+          // 2. 明文密碼 (例如管理員在試算表直接手動輸入 123456)
+          // 3. 無鹽雜湊 (SHA-256 without salt)
+          const computedHash = salt ? hashPassword(inputPassword, salt) : '';
+          const computedNoSalt = hashPassword(inputPassword, '');
+          
+          const isPasswordValid = (computedHash && computedHash === expectedHash) ||
+                                  (expectedHash === inputPassword) ||
+                                  (computedNoSalt === expectedHash);
+
+          if (expectedHash && isPasswordValid) {
+            const status = statusIdx !== -1 ? String(row[statusIdx] || '').trim().toUpperCase() : 'ACTIVE';
+            if (status !== 'ACTIVE' && status !== 'TRUE' && status !== '') {
+              return { success: false, error: "此帳號已被停用，請聯絡管理員" };
+            }
+
+            // 若原本是明文，自動升級為加鹽雜湊以保障安全性
+            if (expectedHash === inputPassword && saltIdx !== -1) {
+              try {
+                const autoSalt = Utilities.getUuid().substring(0, 8);
+                const autoHash = hashPassword(inputPassword, autoSalt);
+                usersSheet.getRange(i + 1, hashIdx + 1).setValue(autoHash);
+                usersSheet.getRange(i + 1, saltIdx + 1).setValue(autoSalt);
+              } catch(e) {}
+            }
+
+            const failKey = "LOGIN_FAIL_" + encodeURIComponent(dId.slice(0, 60));
+            cache.remove(failKey);
+
+            const userId = rowId || rowUsername || `U${i}`;
+            const role = roleIdx !== -1 && String(row[roleIdx] || '').trim() ? String(row[roleIdx]).trim().toLowerCase() : 'staff';
+            const name = rowName || rowUsername || rowId || '員工';
+            const finalUsername = rowUsername || rowId || name;
+
+            const payload = { userId, username: finalUsername, name, role, dId };
+            const token = generateToken(payload);
+            writeSystemLog("SYSTEM_LOGIN_SUCCESS", "Users表登入", JSON.stringify({ userId, username: finalUsername, role, name, deviceId: dId }));
+            return { success: true, token, user: payload, role, name, userId };
+          }
+        }
+      }
+    }
+  }
+
+  // 2. 取得資料庫密碼進行驗證 (相容既有 PIN / SuperAdmin)
   const sheet = getConfigSheet();
   let dbPassword = sheet.getRange("B1").getDisplayValue().trim() || "8888";
 
@@ -418,7 +587,6 @@ function login(data) {
 
   // ==========================================
   // 核心原則 1：手持正確密碼者，永遠 100% 立即放行！
-  // (有心人士惡意輸錯 100 次也絕不會影響正常人上班，根除 DoS 威脅)
   // ==========================================
   if (isCorrect) {
     const failKey = "LOGIN_FAIL_" + encodeURIComponent(dId.slice(0, 60));
@@ -427,29 +595,26 @@ function login(data) {
     if (matchedUser) {
       const role = matchedUser.Role || "staff";
       const name = matchedUser.Name || "員工";
-      const token = generateToken(dId, role, name);
+      const userId = matchedUser.ID || matchedUser.id || ('U_' + name);
+      const payload = { userId, username: name, name, role, dId };
+      const token = generateToken(payload);
       writeSystemLog("SYSTEM_LOGIN_SUCCESS", "員工登入", JSON.stringify({ name: name, role: role, deviceId: dId, userAgent: uAgent }));
-      return { success: true, token: token, role: role, name: name };
+      return { success: true, token: token, user: payload, role: role, name: name, userId };
     } else {
-      const token = generateToken(dId, "admin", "系統管理員");
+      const payload = { userId: "admin", username: "admin", name: "系統管理員", role: "admin", dId };
+      const token = generateToken(payload);
       writeSystemLog("SYSTEM_LOGIN_SUCCESS", "系統管理員登入", JSON.stringify({ deviceId: dId, userAgent: uAgent }));
-      return { success: true, token: token, role: "admin", name: "系統管理員" };
+      return { success: true, token: token, user: payload, role: "admin", name: "系統管理員", userId: "admin" };
     }
   }
 
   // ==========================================
   // 核心原則 2：若密碼錯誤，啟動焦油坑延遲與單機限流
   // ==========================================
-
-  // (A) 單機連續輸錯 5 次鎖定 15 分鐘（防止在別人電腦前亂猜）
   const failKey = "LOGIN_FAIL_" + encodeURIComponent(dId.slice(0, 60));
   const failCount = Number(cache.get(failKey)) || 0;
   const newFailCount = failCount + 1;
   cache.put(failKey, String(newFailCount), 900); // 鎖定/保留 15 分鐘
-
-  // (B) 焦油坑延遲防禦 (Tarpit Delay)：
-  // 只要密碼錯誤，強迫後端沉睡 2.5 秒才回應！
-  // 徹底截斷自動化爆破腳本速度；若多線程狂發，GAS 並發槽位會在 1 秒內被吃滿，觸發 Google Edge 429 阻斷攻擊者
   Utilities.sleep(2500);
 
   const remaining = Math.max(0, 5 - newFailCount);
@@ -461,7 +626,7 @@ function login(data) {
   }));
 
   const errorMsg = remaining > 0 
-    ? `無效的密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
+    ? `無效的帳號密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
     : "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。";
   return { success: false, error: errorMsg };
 }
@@ -521,12 +686,14 @@ function getSheetData(sheet) {
   if (lastRow <= 1) return []; // Only header or empty
   
   const values = sheet.getDataRange().getDisplayValues();
-  const headers = values[0];
+  const headers = values[0].map(h => String(h || '').trim());
   const data = [];
   for (let i = 1; i < values.length; i++) {
     let obj = {};
     for (let j = 0; j < headers.length; j++) {
-      obj[headers[j]] = values[i][j];
+      if (headers[j]) {
+        obj[headers[j]] = values[i][j];
+      }
     }
     data.push(obj);
   }
@@ -570,7 +737,7 @@ function parseLastUpdated(val) {
   return isNaN(d) ? 0 : d;
 }
 
-function getData(startDateStr, since = 0) {
+function getData(startDateStr, since = 0, currentUser = null) {
   const sheets = getSheets();
   const cache = CacheService.getScriptCache();
   const CACHE_KEY = "APP_CACHE_CPT";
@@ -635,7 +802,7 @@ function getData(startDateStr, since = 0) {
           coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
           deliveryTime: formatDeliveryTimeString(c.DeliveryTime || c.deliveryTime || c.配送時間),
           defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
-          priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
+          priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表 || c.專屬價目表 || c.專屬價格 || c.客製化價格JSON || c.客製化價格 || c.自訂價格 || c.客戶價目表,
           offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
           holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
           deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
@@ -673,7 +840,7 @@ function getData(startDateStr, since = 0) {
         coordinates: c.Coordinates || c.coordinates || c.座標位置 || c.GoogleMapUrl || c.googleMapUrl || c.GoogleMap網址 || '',
         deliveryTime: formatDeliveryTimeString(c.DeliveryTime || c.deliveryTime || c.配送時間),
         defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
-        priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表,
+        priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表 || c.專屬價目表 || c.專屬價格 || c.客製化價格JSON || c.客製化價格 || c.自訂價格 || c.客戶價目表,
         offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
         holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
         deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
@@ -747,7 +914,10 @@ function getData(startDateStr, since = 0) {
       unitPrice: Number(o.UnitPrice || o.unitPrice || o.單價) || undefined,
       subtotal: Number(o.Subtotal || o.subtotal || o.小計) || undefined,
       lastUpdated: parseLastUpdated(o.LastUpdated),
-      trip: o.Trip || o.trip || o.趟次 || ''
+      trip: o.Trip || o.trip || o.趟次 || '',
+      assignedTo: o.assigned_to || o.AssignedTo || o.指派人員ID || o.指派人員 || '',
+      assignedName: o.assigned_name || o.AssignedName || o.指派人員姓名 || '',
+      dispatchStatus: o.dispatch_status || o.DispatchStatus || o.指派狀態 || ''
     };
   });
 
@@ -788,7 +958,23 @@ function getData(startDateStr, since = 0) {
   // 1. 先把標記為 DELETED 的訂單過濾掉，不再回傳給任何裝置
   orders = orders.filter(o => String(o.status).trim().toUpperCase() !== 'DELETED');
 
-  // 2. 把目前試算表有效存活的訂單 ID 給提取出來 (只有增量同步需帶這包資料，作爲本地幽靈清掃的依據)
+  // 2. 🛡️【核心安全要求】後端嚴格資料遮蔽 (Data Masking)
+  // 若使用者不具備 canViewAllOrders 權限 (如 staff)，嚴格只回傳 assignedTo 指派給自己的訂單！
+  if (currentUser) {
+    const userRole = String(currentUser.role || 'staff').trim().toLowerCase();
+    const canViewAll = hasPermission(userRole, "canViewAllOrders");
+    if (!canViewAll) {
+      const myId = String(currentUser.userId || currentUser.dId || '').trim();
+      const myName = String(currentUser.name || '').trim();
+      orders = orders.filter(o => {
+        const aId = String(o.assignedTo || '').trim();
+        const aName = String(o.assignedName || '').trim();
+        return (myId && aId === myId) || (myName && (aName === myName || aId === myName));
+      });
+    }
+  }
+
+  // 3. 把目前試算表有效存活的訂單 ID 給提取出來 (只有增量同步需帶這包資料，作爲本地幽靈清掃的依據)
   const allActiveOrderIds = (since > 0) ? orders.map(o => String(o.id || "")).filter(id => id !== "") : [];
 
   if (since > 0) {
@@ -1358,7 +1544,7 @@ function updateOrderContent(orderData) {
   }
 }
 
-function updateOrderStatus(data) {
+function updateOrderStatus(data, currentUser = null) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
@@ -1388,11 +1574,36 @@ function updateOrderStatus(data) {
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
     const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8); 
+    const assignColIdx = headerMap["assigned_to"] !== undefined ? headerMap["assigned_to"] : headerMap["指派人員ID"];
+    const assignNameColIdx = headerMap["assigned_name"] !== undefined ? headerMap["assigned_name"] : headerMap["指派人員姓名"];
     
     const values = sheet.getDataRange().getValues();
     const targetId = String(data.id).trim();
     const newLastUpdatedTs = String(new Date().getTime());
     let newVersion = 0;
+
+    // 🛡️ 權限檢驗：若非主管/管理員，驗證此單是否屬於當前員工
+    if (currentUser) {
+      const userRole = String(currentUser.role || 'staff').trim().toLowerCase();
+      if (!hasPermission(userRole, "canUpdateAnyOrderStatus")) {
+        const myId = String(currentUser.userId || currentUser.dId || '').trim();
+        const myName = String(currentUser.name || '').trim();
+        let isMine = false;
+        for (let i = 1; i < values.length; i++) {
+          if (String(values[i][1]).trim() === targetId) {
+            const aId = assignColIdx !== undefined ? String(values[i][assignColIdx] || '').trim() : '';
+            const aName = assignNameColIdx !== undefined ? String(values[i][assignNameColIdx] || '').trim() : '';
+            if ((myId && aId === myId) || (myName && (aName === myName || aId === myName))) {
+              isMine = true;
+              break;
+            }
+          }
+        }
+        if (!isMine) {
+          throw new Error("FORBIDDEN_ACTION: 權限不足，您無權修改非指派給您的訂單狀態");
+        }
+      }
+    }
     
     let rowsToUpdate = [];
 
@@ -1422,6 +1633,60 @@ function updateOrderStatus(data) {
       throw new Error("更新過於頻繁，請稍後重試");
     }
     throw err;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 🛡️ 指派訂單 (主管/管理員) - Concurrency Lock & Versioning
+function assignOrder(data, currentUser = null) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const sheet = getSheets().ORDERS;
+    
+    if (currentUser) {
+      const userRole = String(currentUser.role || 'staff').trim().toLowerCase();
+      if (!hasPermission(userRole, "canAssignOrders")) {
+        throw new Error("FORBIDDEN_ACTION: 權限不足，您無權指派訂單");
+      }
+    }
+
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "assigned_to", "assigned_name", "dispatch_status", "Version"]);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const assignColIdx = headerMap["assigned_to"];
+    const nameColIdx = headerMap["assigned_name"];
+    const statusColIdx = headerMap["dispatch_status"];
+    const versionColIdx = headerMap["Version"];
+
+    const values = sheet.getDataRange().getValues();
+    const targetId = String(data.id || data.orderId).trim();
+    const targetUserId = String(data.targetUserId || data.assignedTo || '').trim();
+    const targetUserName = String(data.targetUserName || data.assignedName || '').trim();
+    const newLastUpdatedTs = String(new Date().getTime());
+
+    let modified = false;
+    let newVersion = 1;
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][1]).trim() === targetId) {
+        if (assignColIdx !== undefined) values[i][assignColIdx] = targetUserId;
+        if (nameColIdx !== undefined) values[i][nameColIdx] = targetUserName;
+        if (statusColIdx !== undefined) values[i][statusColIdx] = targetUserId ? "ASSIGNED" : "UNASSIGNED";
+        if (lastUpdatedColIdx !== undefined) values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+        if (versionColIdx !== undefined) {
+          newVersion = Number(values[i][versionColIdx] || 0) + 1;
+          values[i][versionColIdx] = newVersion;
+        }
+        modified = true;
+      }
+    }
+
+    if (modified) {
+      safeSetValues(sheet, 2, 1, values.slice(1));
+      return { success: true, lastUpdated: newLastUpdatedTs, version: newVersion };
+    } else {
+      throw new Error("找不到欲指派的訂單: " + targetId);
+    }
   } finally {
     lock.releaseLock();
   }
@@ -1806,10 +2071,13 @@ function generateTomorrowDefaultOrders(explicitDates) {
     const sheets = getSheets();
     const orderSheet = sheets.ORDERS;
   
-    const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip", "Status", "狀態"]);
+    const headerMap = ensureHeadersBatch(orderSheet, ["資料來源", "LastUpdated", "Trip", "Status", "狀態", "Version", "單價", "小計"]);
     const sourceColIdx = headerMap["資料來源"];
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const tripColIdx = headerMap["Trip"];
+    const versionColIdx = headerMap["Version"];
+    const unitPriceColIdx = headerMap["單價"];
+    const subtotalColIdx = headerMap["小計"];
     
     // 取得狀態欄位位置 (自動適配英中文標題，預設降級為 Index 8)
     const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : 
@@ -1916,35 +2184,33 @@ function generateTomorrowDefaultOrders(explicitDates) {
 
     // 取代原先的 getData()，避免全表(包含ORDERS)都被載入解析而導致逾時
     const customers = getSheetData(sheets.CUSTOMERS).map(c => ({
-      name: c.Name || c.name || c.客戶名稱,
-      defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項, 
-      offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期,
-      holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日,
-      deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式,
-      deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間,
-      defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
-      autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
-      isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
-      isArchived: String(c.封存 || c.isArchived).trim().toLowerCase() === 'true' || c.封存 === true,
-      priceList: c.PriceList || c.priceList || c.客製化價格JSON || c.客製化價格
+      name: c.Name || c.name || c.客戶名稱 || c.客戶名 || '',
+      defaultItems: c.DefaultItems || c.defaultItems || c.預設品項JSON || c.預設品項 || '', 
+      offDays: c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期 || '',
+      holidayDates: c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日 || '',
+      deliveryMethod: c.DeliveryMethod || c.deliveryMethod || c.配送方式 || '',
+      deliveryTime: c.DeliveryTime || c.deliveryTime || c.配送時間 || '',
+      defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數 || c.趟次 || '',
+      autoOrderEnabled: String(c.自動建單開關 || c.autoOrderEnabled || '').trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+      isPaused: String(c.暫停供貨 || c.isPaused || '').trim().toLowerCase() === 'true' || c.暫停供貨 === true,
+      isArchived: String(c.封存 || c.isArchived || '').trim().toLowerCase() === 'true' || c.封存 === true,
+      priceList: c.PriceList || c.priceList || c.價目表JSON || c.價目表 || c.專屬價目表 || c.專屬價格 || c.客製化價格JSON || c.客製化價格 || c.自訂價格 || c.客戶價目表 || ''
     }));
 
-    const products = getSheetData(sheets.PRODUCTS).map(p => ({
-      id: p.ID || p.id,
-      name: p.Name || p.name || p.品項,
-      price: Number(p.Price || p.price || p.預設單價 || p.單價) || 0
-    }));
-    
-    const globalProductMap = new Map();
-    products.forEach(p => {
-      globalProductMap.set(p.id, { name: p.name, price: p.price });
-    });
+    const prodMap = buildGlobalProductMap(sheets);
     
     const newOrderRows = [];
     const timestamp = Utilities.formatDate(new Date(), timeZone, "yyyy/MM/dd HH:mm:ss");
     const lastUpdatedTs = String(new Date().getTime());
 
-    const maxCol = Math.max(lastUpdatedColIdx, tripColIdx, sourceColIdx) + 1;
+    const maxCol = Math.max(
+      lastUpdatedColIdx, 
+      tripColIdx, 
+      sourceColIdx, 
+      versionColIdx !== undefined ? versionColIdx : 0,
+      unitPriceColIdx !== undefined ? unitPriceColIdx : 0,
+      subtotalColIdx !== undefined ? subtotalColIdx : 0
+    ) + 1;
     if (orderSheet.getMaxColumns() < maxCol) {
       orderSheet.insertColumnsAfter(orderSheet.getMaxColumns(), maxCol - orderSheet.getMaxColumns());
     }
@@ -2026,9 +2292,32 @@ function generateTomorrowDefaultOrders(explicitDates) {
             let productName = item.productName || item.productId; // Fallback
             
             // O(1) 從全域商品字典抓預設資料
-            const globalProduct = globalProductMap.get(item.productId);
+            const globalProduct = prodMap.get(String(item.productId || '').toLowerCase()) || prodMap.get(String(item.productName || '').toLowerCase());
             if (globalProduct) {
               productName = globalProduct.name;
+            }
+
+            const qty = Number(item.quantity) || 1;
+            const unit = item.unit || "斤";
+
+            // ✨ 自動計算「單價」與「小計」：優先匹配客戶專屬價目表，若無則降級套用商品預設單價
+            let custPriceList = c.priceList;
+            if (typeof custPriceList === 'string') {
+              try { 
+                custPriceList = JSON.parse(custPriceList); 
+                if (typeof custPriceList === 'string') {
+                  try { custPriceList = JSON.parse(custPriceList); } catch (e) {}
+                }
+              } catch (e) { custPriceList = null; }
+            }
+            const custInfo = { ...c, priceList: custPriceList };
+            const unitPrice = resolveItemPriceForCustomer(custInfo, item, prodMap, productName);
+
+            let subtotal = "";
+            if (unit === '元') {
+              subtotal = qty;
+            } else if (unitPrice !== "" && typeof unitPrice === 'number') {
+              subtotal = Math.round(unitPrice * qty * 100) / 100;
             }
 
             const row = new Array(maxCol).fill("");
@@ -2038,14 +2327,17 @@ function generateTomorrowDefaultOrders(explicitDates) {
             row[3] = targetDateStr;
             row[4] = timeKey;
             row[5] = productName;
-            row[6] = item.quantity || 1;
+            row[6] = qty;
             row[7] = ""; // 備註先留空
             row[8] = "PENDING";
             row[9] = c.deliveryMethod || "";
-            row[10] = item.unit || "斤";
+            row[10] = unit;
             row[lastUpdatedColIdx] = lastUpdatedTs;
-            row[tripColIdx] = tripKey;
-            row[sourceColIdx] = "🤖 自動建單";
+            if (tripColIdx !== undefined) row[tripColIdx] = tripKey;
+            if (sourceColIdx !== undefined) row[sourceColIdx] = "🤖 自動建單";
+            if (versionColIdx !== undefined) row[versionColIdx] = 1;
+            if (unitPriceColIdx !== undefined) row[unitPriceColIdx] = unitPrice;
+            if (subtotalColIdx !== undefined) row[subtotalColIdx] = subtotal;
             
             newOrderRows.push(row);
           });
@@ -2172,24 +2464,62 @@ function onSpreadsheetChange(e) {
       const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
       const lastUpdatedColIdx = headers.indexOf("LastUpdated");
       
-      // 若為 ORDERS 表，檢查是否有空缺配送時間 (例如由 LINE 搬入或外部 API 寫入)
+      // 若為 ORDERS 表，檢查是否有空缺配送時間或空缺單價/小計 (例如由 LINE 搬入或外部 API 寫入)
       if (sheetName === "ORDERS") {
-        const custColIdx = headers.findIndex(h => ["客戶名", "customerName", "CustomerName"].includes(String(h).trim()));
+        const custColIdx = headers.findIndex(h => ["客戶名", "customerName", "CustomerName", "客戶名稱"].includes(String(h).trim()));
         const timeColIdx = headers.findIndex(h => ["配送時間", "deliveryTime", "DeliveryTime"].includes(String(h).trim()));
+        const prodColIdx = headers.findIndex(h => ["品項", "品項名稱", "ProductName", "productName"].includes(String(h).trim()));
+        const qtyColIdx = headers.findIndex(h => ["數量", "Quantity", "quantity"].includes(String(h).trim()));
+        const unitColIdx = headers.findIndex(h => ["單位", "Unit", "unit"].includes(String(h).trim()));
+        const priceColIdx = headers.findIndex(h => ["單價", "UnitPrice", "unitPrice"].includes(String(h).trim()));
+        const subtotalColIdx = headers.findIndex(h => ["小計", "Subtotal", "subtotal"].includes(String(h).trim()));
         
-        if (custColIdx !== -1 && timeColIdx !== -1) {
-          const timeValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-          let timeModified = false;
-          timeValues.forEach((row, rIdx) => {
+        if (custColIdx !== -1 && (timeColIdx !== -1 || priceColIdx !== -1)) {
+          const orderValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+          let orderModified = false;
+          let prodMap = null;
+          let fullCustMap = null;
+
+          orderValues.forEach((row) => {
             const rowCust = String(row[custColIdx] || '').trim();
-            const rowTime = String(row[timeColIdx] || '').trim();
-            if (!rowTime && customerTimeMap[rowCust]) {
-              row[timeColIdx] = customerTimeMap[rowCust];
-              timeModified = true;
+            // 補配送時間
+            if (timeColIdx !== -1) {
+              const rowTime = String(row[timeColIdx] || '').trim();
+              if (!rowTime && customerTimeMap[rowCust]) {
+                row[timeColIdx] = customerTimeMap[rowCust];
+                orderModified = true;
+              }
+            }
+
+            // 補單價與小計
+            if (priceColIdx !== -1 && subtotalColIdx !== -1 && prodColIdx !== -1 && qtyColIdx !== -1) {
+              const currentPrice = row[priceColIdx];
+              const currentSubtotal = row[subtotalColIdx];
+              const rowProd = String(row[prodColIdx] || '').trim();
+              const rowQty = Number(row[qtyColIdx]) || 1;
+              const rowUnit = unitColIdx !== -1 ? String(row[unitColIdx] || '').trim() : '斤';
+
+              if ((currentPrice === "" || currentPrice === null || currentPrice === undefined) && rowProd && rowCust) {
+                if (!prodMap) {
+                  prodMap = buildGlobalProductMap(sheets);
+                  fullCustMap = buildFullCustomerMap(sheets);
+                }
+                const cInfo = fullCustMap[rowCust.toLowerCase()] || fullCustMap[rowCust] || null;
+                const price = resolveItemPriceForCustomer(cInfo, rowProd, prodMap);
+                if (price !== "" && typeof price === 'number') {
+                  row[priceColIdx] = price;
+                  row[subtotalColIdx] = (rowUnit === '元') ? rowQty : Math.round(price * rowQty * 100) / 100;
+                  orderModified = true;
+                }
+              } else if ((currentSubtotal === "" || currentSubtotal === null || currentSubtotal === undefined) && currentPrice !== "" && !isNaN(Number(currentPrice))) {
+                row[subtotalColIdx] = (rowUnit === '元') ? rowQty : Math.round(Number(currentPrice) * rowQty * 100) / 100;
+                orderModified = true;
+              }
             }
           });
-          if (timeModified) {
-            sheet.getRange(2, 1, timeValues.length, lastCol).setValues(timeValues);
+
+          if (orderModified) {
+            sheet.getRange(2, 1, orderValues.length, lastCol).setValues(orderValues);
             isUpdated = true;
           }
         }
@@ -2227,11 +2557,181 @@ function onSpreadsheetChange(e) {
 }
 
 /**
+ * 輔助函式：建立商品字典查詢表 (支援以 Product ID 或 Product Name 查詢)
+ */
+function buildGlobalProductMap(sheets) {
+  const prodMap = new Map();
+  const prodSheet = (Array.isArray(sheets) ? sheets.find(s => ["PRODUCTS", "Products"].includes(s.getName())) : sheets.PRODUCTS) ||
+                    SpreadsheetApp.getActiveSpreadsheet().getSheetByName("PRODUCTS") ||
+                    SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Products");
+  
+  if (prodSheet && prodSheet.getLastRow() > 1 && prodSheet.getLastColumn() > 0) {
+    const pHeaders = prodSheet.getRange(1, 1, 1, prodSheet.getLastColumn()).getValues()[0].map(h => String(h || '').trim());
+    const pIdIdx = pHeaders.findIndex(h => ["ID", "id", "商品ID", "產品ID"].includes(h));
+    const pNameIdx = pHeaders.findIndex(h => ["Name", "name", "品項", "商品名稱", "產品名"].includes(h));
+    const pPriceIdx = pHeaders.findIndex(h => ["Price", "price", "單價", "預設單價"].includes(h));
+    const pUnitIdx = pHeaders.findIndex(h => ["Unit", "unit", "單位"].includes(h));
+    
+    const pRows = prodSheet.getRange(2, 1, prodSheet.getLastRow() - 1, prodSheet.getLastColumn()).getValues();
+    pRows.forEach(r => {
+      const id = pIdIdx !== -1 ? String(r[pIdIdx] || '').trim() : '';
+      const name = pNameIdx !== -1 ? String(r[pNameIdx] || '').trim() : '';
+      const price = pPriceIdx !== -1 ? (Number(r[pPriceIdx]) || 0) : 0;
+      const unit = pUnitIdx !== -1 ? String(r[pUnitIdx] || '').trim() : '斤';
+      const item = { id, name, price, unit };
+      if (id) prodMap.set(id.toLowerCase(), item);
+      if (name) prodMap.set(name.toLowerCase(), item);
+    });
+  }
+  return prodMap;
+}
+
+/**
+ * 輔助函式：建立完整客戶字典查詢表 (含配送時間、方式、趟次、客製價目表)
+ */
+function buildFullCustomerMap(sheets) {
+  const custMap = {};
+  const custSheet = (Array.isArray(sheets) ? sheets.find(s => ["CUSTOMERS", "Customers"].includes(s.getName())) : sheets.CUSTOMERS) ||
+                    SpreadsheetApp.getActiveSpreadsheet().getSheetByName("CUSTOMERS") ||
+                    SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Customers");
+  
+  if (custSheet && custSheet.getLastRow() > 1 && custSheet.getLastColumn() > 0) {
+    const cHeaders = custSheet.getRange(1, 1, 1, custSheet.getLastColumn()).getValues()[0].map(h => String(h || '').trim());
+    const cNameIdx = cHeaders.findIndex(h => ["Name", "name", "客戶名", "客戶名稱"].includes(h));
+    const cTimeIdx = cHeaders.findIndex(h => ["DeliveryTime", "deliveryTime", "配送時間"].includes(h));
+    const cMethodIdx = cHeaders.findIndex(h => ["DeliveryMethod", "deliveryMethod", "配送方式"].includes(h));
+    const cTripIdx = cHeaders.findIndex(h => ["DefaultTrip", "defaultTrip", "預設趟數", "趟次"].includes(h));
+    const cPriceIdx = cHeaders.findIndex(h => ["PriceList", "priceList", "價目表JSON", "價目表", "專屬價目表", "專屬價格", "客製化價格JSON", "客製化價格", "自訂價格", "客戶價目表"].includes(h));
+    
+    const cRows = custSheet.getRange(2, 1, custSheet.getLastRow() - 1, custSheet.getLastColumn()).getValues();
+    cRows.forEach(r => {
+      const name = cNameIdx !== -1 ? String(r[cNameIdx] || '').trim() : '';
+      if (name) {
+        let priceList = null;
+        if (cPriceIdx !== -1 && r[cPriceIdx]) {
+          try {
+            priceList = typeof r[cPriceIdx] === 'string' ? JSON.parse(r[cPriceIdx]) : r[cPriceIdx];
+            if (typeof priceList === 'string') {
+              try { priceList = JSON.parse(priceList); } catch (e) {}
+            }
+          } catch (e) {
+            priceList = null;
+          }
+        }
+        custMap[name.toLowerCase()] = {
+          name: name,
+          deliveryTime: cTimeIdx !== -1 ? String(r[cTimeIdx] || '').trim() : '',
+          deliveryMethod: cMethodIdx !== -1 ? String(r[cMethodIdx] || '').trim() : '',
+          defaultTrip: cTripIdx !== -1 ? String(r[cTripIdx] || '').trim() : '',
+          priceList: priceList
+        };
+      }
+    });
+  }
+  return custMap;
+}
+
+/**
+ * 輔助函式：根據客戶與品項查詢最適單價
+ * 1. 優先查客戶專屬價目表 (priceList / 專屬價格)
+ * 2. 次查預設品項自訂單價 (item.price)
+ * 3. 最後查商品表預設單價 (PRODUCTS 零售價格)
+ */
+function resolveItemPriceForCustomer(custInfo, prodItemOrKey, prodMap, fallbackName) {
+  let cleanKey = "";
+  let itemDefaultPrice = null;
+
+  if (typeof prodItemOrKey === 'object' && prodItemOrKey !== null) {
+    cleanKey = String(prodItemOrKey.productId || prodItemOrKey.id || prodItemOrKey.productName || prodItemOrKey.name || fallbackName || '').trim();
+    if (prodItemOrKey.price !== undefined && prodItemOrKey.price !== null && prodItemOrKey.price !== '' && !isNaN(Number(prodItemOrKey.price)) && Number(prodItemOrKey.price) > 0) {
+      itemDefaultPrice = Number(prodItemOrKey.price);
+    } else if (prodItemOrKey.unitPrice !== undefined && prodItemOrKey.unitPrice !== null && prodItemOrKey.unitPrice !== '' && !isNaN(Number(prodItemOrKey.unitPrice)) && Number(prodItemOrKey.unitPrice) > 0) {
+      itemDefaultPrice = Number(prodItemOrKey.unitPrice);
+    }
+  } else {
+    cleanKey = String(prodItemOrKey || fallbackName || '').trim();
+  }
+
+  if (!cleanKey) return "";
+
+  const cleanKeyLower = cleanKey.toLowerCase();
+  const matchedProd = prodMap ? (prodMap.get(cleanKeyLower) || (fallbackName ? prodMap.get(String(fallbackName).trim().toLowerCase()) : null)) : null;
+  const prodId = matchedProd ? matchedProd.id.toLowerCase() : cleanKeyLower;
+  const prodName = matchedProd ? matchedProd.name.toLowerCase() : (fallbackName ? String(fallbackName).trim().toLowerCase() : cleanKeyLower);
+
+  let unitPrice = null;
+
+  // 1. 優先查客戶專屬價目表 (priceList)
+  if (custInfo) {
+    let pl = custInfo.priceList;
+    if (typeof pl === 'string') {
+      try {
+        pl = JSON.parse(pl);
+        if (typeof pl === 'string') {
+          try { pl = JSON.parse(pl); } catch (e) {}
+        }
+      } catch (e) {
+        pl = null;
+      }
+    }
+
+    if (Array.isArray(pl) && pl.length > 0) {
+      const found = pl.find(p => {
+        if (!p) return false;
+        const candidates = [
+          String(p.productId || ''),
+          String(p.id || ''),
+          String(p.productName || ''),
+          String(p.name || ''),
+          String(p.品項 || ''),
+          String(p.商品名稱 || '')
+        ].map(s => s.trim().toLowerCase()).filter(Boolean);
+
+        const targets = [prodId, prodName, cleanKeyLower];
+        if (fallbackName) targets.push(String(fallbackName).trim().toLowerCase());
+        
+        return candidates.some(c => targets.includes(c));
+      });
+
+      if (found) {
+        const rawP = found.price !== undefined ? found.price : (found.unitPrice !== undefined ? found.unitPrice : (found.單價 !== undefined ? found.單價 : found.專屬價格));
+        if (rawP !== undefined && rawP !== null && rawP !== '' && !isNaN(Number(rawP))) {
+          unitPrice = Number(rawP);
+        }
+      }
+    } else if (typeof pl === 'object' && pl !== null) {
+      const keysToCheck = [prodId, cleanKeyLower, prodName];
+      if (fallbackName) keysToCheck.push(String(fallbackName).trim().toLowerCase());
+      for (const k of keysToCheck) {
+        if (k && pl[k] !== undefined && pl[k] !== null && pl[k] !== '' && !isNaN(Number(pl[k]))) {
+          unitPrice = Number(pl[k]);
+          break;
+        }
+      }
+    }
+  }
+
+  // 2. 若專屬價目表未設定，但預設品項有自訂價格 (item.price)
+  if ((unitPrice === null || isNaN(unitPrice)) && itemDefaultPrice !== null) {
+    unitPrice = itemDefaultPrice;
+  }
+
+  // 3. 次查商品表預設單價 (PRODUCTS 零售價格)
+  if ((unitPrice === null || isNaN(unitPrice)) && matchedProd && matchedProd.price !== undefined && matchedProd.price !== null && matchedProd.price !== '') {
+    unitPrice = Number(matchedProd.price);
+  }
+
+  return (unitPrice !== null && !isNaN(unitPrice) && unitPrice >= 0) ? unitPrice : "";
+}
+
+/**
  * 搬移並同步 LINE 訂單至主訂單表 (ORDERS)
  * 智能判定配送時間：
  * 情況 A: LINE 訂單有指定時間 -> 保留指定時間
  * 情況 B: LINE 訂單無時間，但該店家有預設時間 -> 自動帶入店家預設時間 (如 08:00)
  * 情況 C: 皆無時間 -> 保留空白
+ * 
+ * ✨ 核心強化：自動根據客戶專屬價目表或商品預設單價，為 LINE 訂單自動添加「單價」以及「小計」！
  */
 function syncLineOrders() {
   const lock = LockService.getScriptLock();
@@ -2244,29 +2744,13 @@ function syncLineOrders() {
     }
 
     const orderSheet = ss.getSheetByName("ORDERS") || ss.getSheetByName("Orders");
-    const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+    const sheets = ss.getSheets();
 
-    // 建立客戶預設配送時間與配送方式對照表
-    const custMap = {};
-    if (custSheet && custSheet.getLastRow() > 1) {
-      const cHeaders = custSheet.getRange(1, 1, 1, custSheet.getLastColumn()).getValues()[0];
-      const cNameIdx = cHeaders.findIndex(h => ["Name", "name", "客戶名", "客戶名稱"].includes(String(h).trim()));
-      const cTimeIdx = cHeaders.findIndex(h => ["DeliveryTime", "deliveryTime", "配送時間"].includes(String(h).trim()));
-      const cMethodIdx = cHeaders.findIndex(h => ["DeliveryMethod", "deliveryMethod", "配送方式"].includes(String(h).trim()));
-      
-      const cRows = custSheet.getRange(2, 1, custSheet.getLastRow() - 1, custSheet.getLastColumn()).getValues();
-      cRows.forEach(r => {
-        const name = String(r[cNameIdx] || '').trim();
-        if (name) {
-          custMap[name] = {
-            deliveryTime: cTimeIdx !== -1 ? String(r[cTimeIdx] || '').trim() : '',
-            deliveryMethod: cMethodIdx !== -1 ? String(r[cMethodIdx] || '').trim() : ''
-          };
-        }
-      });
-    }
+    // 1. 建立商品與客戶字典
+    const prodMap = buildGlobalProductMap(sheets);
+    const custMap = buildFullCustomerMap(sheets);
 
-    // 讀取 LINE 訂單資料
+    // 2. 讀取 LINE 訂單資料
     const lineHeaders = lineSheet.getRange(1, 1, 1, lineSheet.getLastColumn()).getValues()[0];
     const getLCol = (names, fallback = -1) => {
       const idx = lineHeaders.findIndex(h => names.includes(String(h).trim()));
@@ -2300,10 +2784,25 @@ function syncLineOrders() {
         deliveryDate = Utilities.formatDate(rawDate, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
       }
 
+      const custInfo = custMap[custName.toLowerCase()] || custMap[custName] || null;
+
       // 智能判定配送時間：優先使用 LINE 指定時間，若無則套用店家預設時間
       let lineDeliveryTime = lTimeIdx !== -1 ? String(lRow[lTimeIdx] || '').trim() : '';
-      if (!lineDeliveryTime && custMap[custName]?.deliveryTime) {
-        lineDeliveryTime = custMap[custName].deliveryTime;
+      if (!lineDeliveryTime && custInfo?.deliveryTime) {
+        lineDeliveryTime = custInfo.deliveryTime;
+      }
+
+      const prodName = lProdIdx !== -1 ? String(lRow[lProdIdx] || '').trim() : '';
+      const qty = lQtyIdx !== -1 ? Number(lRow[lQtyIdx]) || 1 : 1;
+      const unit = lUnitIdx !== -1 ? (String(lRow[lUnitIdx] || '').trim() || "斤") : "斤";
+
+      // ✨ 計算單價與小計
+      const unitPrice = resolveItemPriceForCustomer(custInfo, prodName, prodMap);
+      let subtotal = "";
+      if (unit === '元') {
+        subtotal = qty;
+      } else if (unitPrice !== "" && typeof unitPrice === 'number') {
+        subtotal = Math.round(unitPrice * qty * 100) / 100;
       }
 
       const row = new Array(maxCol).fill("");
@@ -2312,15 +2811,24 @@ function syncLineOrders() {
       row[2] = custName;
       row[3] = deliveryDate;
       row[4] = lineDeliveryTime;
-      row[5] = lProdIdx !== -1 ? String(lRow[lProdIdx] || '').trim() : '';
-      row[6] = lQtyIdx !== -1 ? Number(lRow[lQtyIdx]) || 1 : 1;
+      row[5] = prodName;
+      row[6] = qty;
       row[7] = lNoteIdx !== -1 ? String(lRow[lNoteIdx] || '').trim() : '';
       row[8] = "PENDING";
-      row[9] = custMap[custName]?.deliveryMethod || "";
-      row[10] = lUnitIdx !== -1 ? (String(lRow[lUnitIdx] || '').trim() || "斤") : "斤";
+      row[9] = custInfo?.deliveryMethod || "";
+      row[10] = unit;
       row[headerMap["LastUpdated"]] = currentTs;
+      if (headerMap["Trip"] !== undefined) {
+        row[headerMap["Trip"]] = custInfo?.defaultTrip || "";
+      }
       row[headerMap["資料來源"]] = "💬 LINE 訂單";
       row[headerMap["Version"]] = 1;
+      if (headerMap["單價"] !== undefined) {
+        row[headerMap["單價"]] = unitPrice;
+      }
+      if (headerMap["小計"] !== undefined) {
+        row[headerMap["小計"]] = subtotal;
+      }
 
       newOrderRows.push(row);
     });
@@ -2336,6 +2844,74 @@ function syncLineOrders() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * 🛠️ 歷史訂單「單價」與「小計」一鍵批次補齊函式：
+ * 針對 Orders 試算表中所有單價或小計為空的歷史訂單（包含先前進來的 LINE 訂單），
+ * 自動根據客戶專屬價目表與商品表預設單價，一次性批次補齊並寫入試算表！
+ * 
+ * 使用方式：在 Apps Script 頂部函式選單選取「backfillMissingOrderPrices」並點擊「執行」即可。
+ */
+function backfillMissingOrderPrices() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const orderSheet = ss.getSheetByName("Orders") || ss.getSheetByName("ORDERS");
+  if (!orderSheet || orderSheet.getLastRow() <= 1) {
+    console.log("Orders 表無資料。");
+    return { success: true, updatedCount: 0 };
+  }
+
+  const headerMap = ensureHeadersBatch(orderSheet, ["LastUpdated", "Trip", "資料來源", "Version", "單價", "小計"]);
+  const lastRow = orderSheet.getLastRow();
+  const lastCol = orderSheet.getLastColumn();
+  const values = orderSheet.getRange(1, 1, lastRow, lastCol).getValues();
+  const headers = values[0].map(h => String(h || '').trim());
+
+  const custColIdx = headers.findIndex(h => ["客戶名", "customerName", "CustomerName", "客戶名稱"].includes(h));
+  const prodColIdx = headers.findIndex(h => ["品項", "品項名稱", "ProductName", "productName"].includes(h));
+  const qtyColIdx = headers.findIndex(h => ["數量", "Quantity", "quantity"].includes(h));
+  const unitColIdx = headers.findIndex(h => ["單位", "Unit", "unit"].includes(h));
+  const priceColIdx = headerMap["單價"];
+  const subtotalColIdx = headerMap["小計"];
+
+  const sheets = ss.getSheets();
+  const prodMap = buildGlobalProductMap(sheets);
+  const custMap = buildFullCustomerMap(sheets);
+
+  let updatedCount = 0;
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const custName = custColIdx !== -1 ? String(row[custColIdx] || '').trim() : '';
+    const prodName = prodColIdx !== -1 ? String(row[prodColIdx] || '').trim() : '';
+    const qty = qtyColIdx !== -1 ? Number(row[qtyColIdx]) || 1 : 1;
+    const unit = unitColIdx !== -1 ? String(row[unitColIdx] || '').trim() : '斤';
+    const currentPrice = row[priceColIdx];
+    const currentSubtotal = row[subtotalColIdx];
+
+    if ((currentPrice === "" || currentPrice === null || currentPrice === undefined) && custName && prodName) {
+      const cInfo = custMap[custName.toLowerCase()] || custMap[custName] || null;
+      const price = resolveItemPriceForCustomer(cInfo, prodName, prodMap);
+      if (price !== "" && typeof price === 'number') {
+        row[priceColIdx] = price;
+        row[subtotalColIdx] = (unit === '元') ? qty : Math.round(price * qty * 100) / 100;
+        updatedCount++;
+      }
+    } else if ((currentSubtotal === "" || currentSubtotal === null || currentSubtotal === undefined) && currentPrice !== "" && !isNaN(Number(currentPrice))) {
+      row[subtotalColIdx] = (unit === '元') ? qty : Math.round(Number(currentPrice) * qty * 100) / 100;
+      updatedCount++;
+    }
+  }
+
+  if (updatedCount > 0) {
+    safeSetValues(orderSheet, 2, 1, values.slice(1));
+    SpreadsheetApp.flush();
+    try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch(e) {}
+    console.log(`✅ 已成功為 ${updatedCount} 列訂單補齊單價與小計！`);
+  } else {
+    console.log("所有訂單皆已有單價與小計，無需補齊。");
+  }
+
+  return { success: true, updatedCount };
 }
 
 // 🔔 Notification Center Check (Intended for Time-Driven Trigger)
@@ -4043,25 +4619,49 @@ function rotateJwtSecret() {
   return newSecret;
 }
 
-function generateToken(deviceId, arg2, arg3, arg4) {
-  let role = arg2;
-  let name = arg3;
-  // 兼容舊簽章參數格式: generateToken(deviceId, dbPassword, role, name)
-  if (arg4 !== undefined) {
-    role = arg3;
-    name = arg4;
+function hashPassword(password, salt) {
+  const raw = String(password) + ":" + String(salt);
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+  return digest.map(byte => (byte < 0 ? byte + 256 : byte).toString(16).padStart(2, '0')).join('');
+}
+
+function generateToken(payloadOrDeviceId, arg2, arg3, arg4) {
+  let payloadObj = {};
+  if (typeof payloadOrDeviceId === 'object' && payloadOrDeviceId !== null) {
+    payloadObj = {
+      userId: String(payloadOrDeviceId.userId || payloadOrDeviceId.id || payloadOrDeviceId.dId || '').trim(),
+      username: String(payloadOrDeviceId.username || '').trim(),
+      name: String(payloadOrDeviceId.name || payloadOrDeviceId.displayName || '使用者').trim(),
+      role: String(payloadOrDeviceId.role || 'staff').trim().toLowerCase(),
+      dId: String(payloadOrDeviceId.dId || payloadOrDeviceId.deviceId || '').trim(),
+      exp: payloadOrDeviceId.exp || (Date.now() + (7 * 24 * 60 * 60 * 1000))
+    };
+  } else {
+    let deviceId = payloadOrDeviceId;
+    let role = arg2;
+    let name = arg3;
+    if (arg4 !== undefined) {
+      role = arg3;
+      name = arg4;
+    }
+    payloadObj = {
+      userId: deviceId || 'U_' + Utilities.getUuid().slice(0, 6),
+      dId: deviceId,
+      role: role || "staff",
+      name: name || "使用者",
+      exp: Date.now() + (30 * 24 * 60 * 60 * 1000)
+    };
   }
-  const header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: "HS256" }));
-  const payload = Utilities.base64EncodeWebSafe(JSON.stringify({
-    dId: deviceId,
-    role: role || "staff",
-    name: name || "使用者",
-    exp: new Date().getTime() + (30 * 24 * 60 * 60 * 1000) // 30天後過期
-  }));
-  // 使用 ScriptProperties 獨立 256-bit 高強度 Server Secret 作為 HMAC 簽章金鑰
+
+  const header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = Utilities.base64EncodeWebSafe(JSON.stringify(payloadObj));
   const secret = getJwtSecret();
   const signature = Utilities.computeHmacSha256Signature(header + "." + payload, secret);
   return header + "." + payload + "." + Utilities.base64EncodeWebSafe(signature);
+}
+
+function verifyToken(token) {
+  return verifyTokenAndGetPayload(token);
 }
 
 function verifyTokenAndGetPayload(token, fallbackKey) {
@@ -4102,6 +4702,263 @@ function verifyTokenAndGetPayload(token, fallbackKey) {
   } catch(e) {
     return null;
   }
+}
+
+function checkUserStatus(userId) {
+  const sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (!sheet || sheet.getLastRow() <= 1) return null;
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(h => String(h || '').trim());
+  const idIdx = headers.findIndex(h => ["user_id", "userId", "ID", "使用者ID", "編號"].includes(h));
+  const statusIdx = headers.findIndex(h => ["status", "Status", "狀態", "帳號狀態"].includes(h));
+  if (idIdx === -1 || statusIdx === -1) return null;
+
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idIdx]).trim() === String(userId).trim()) {
+      return String(values[i][statusIdx]).trim().toUpperCase();
+    }
+  }
+  return null;
+}
+
+function handleGetOrders(user) {
+  const data = getData(null, 0, user);
+  return { success: true, orders: data.orders };
+}
+
+function findHeaderIndex(headers, candidates) {
+  const normCandidates = candidates.map(c => String(c).toLowerCase().replace(/[\s_\-]/g, ''));
+  return headers.findIndex(h => normCandidates.includes(String(h || '').trim().toLowerCase().replace(/[\s_\-]/g, '')));
+}
+
+function handleGetStaffList(user) {
+  const role = user ? String(user.role || '').toLowerCase() : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { success: false, error: "權限不足：無權取得員工名單" };
+  }
+  
+  const staff = [];
+  const seenUserIds = new Set();
+
+  // 1. 優先從 Users 工作表讀取
+  const sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (sheet && sheet.getLastRow() > 1) {
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0];
+    const idIdx = findHeaderIndex(headers, ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]);
+    const userIdx = findHeaderIndex(headers, ["username", "user", "帳號", "登入帳號", "使用者名稱"]);
+    const roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
+    const statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
+    const nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]);
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const rawId = idIdx !== -1 ? String(row[idIdx] || '').trim() : '';
+      const rawUser = userIdx !== -1 ? String(row[userIdx] || '').trim() : '';
+      if (!rawId && !rawUser) continue; // 略過空白列
+
+      const s = statusIdx !== -1 ? String(row[statusIdx] || '').trim().toUpperCase() : 'ACTIVE';
+      if (s === 'ACTIVE' || s === 'TRUE' || s === '') {
+        const uId = rawId || rawUser;
+        const uName = nameIdx !== -1 && String(row[nameIdx] || '').trim() 
+          ? String(row[nameIdx]).trim() 
+          : (rawUser || `同仁${i}`);
+        
+        seenUserIds.add(uId);
+        staff.push({
+          userId: uId,
+          username: rawUser || uId,
+          name: uName,
+          role: roleIdx !== -1 && String(row[roleIdx] || '').trim() ? String(row[roleIdx]).trim().toLowerCase() : 'staff'
+        });
+      }
+    }
+  }
+
+  // 2. 補充 ACCOUNTS 工作表相容帳號（若未曾被 Users 定義）
+  const accSheet = SS.getSheetByName("ACCOUNTS");
+  if (accSheet && accSheet.getLastRow() > 1) {
+    const accs = getSheetData(accSheet);
+    accs.forEach((a, idx) => {
+      const aId = String(a.ID || a.id || a.Name || `A_${idx}`).trim();
+      const isActive = String(a.IsActive || 'TRUE').trim().toUpperCase() === 'TRUE';
+      if (isActive && !seenUserIds.has(aId)) {
+        seenUserIds.add(aId);
+        staff.push({
+          userId: aId,
+          username: String(a.Name || aId).trim(),
+          name: String(a.Name || aId).trim(),
+          role: String(a.Role || 'staff').trim().toLowerCase()
+        });
+      }
+    });
+  }
+
+  return { success: true, staff: staff, users: staff };
+}
+
+function handleGetAllUsers(user) {
+  const role = user ? String(user.role || '').toLowerCase() : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { success: false, error: "FORBIDDEN: 僅最高管理員有權查閱完整使用者名單" };
+  }
+
+  const list = [];
+  const seenUserIds = new Set();
+
+  // 1. 優先從 Users 工作表讀取完整名單
+  const sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (sheet && sheet.getLastRow() > 1) {
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0];
+    const idIdx = findHeaderIndex(headers, ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]);
+    const userIdx = findHeaderIndex(headers, ["username", "user", "帳號", "登入帳號", "使用者名稱"]);
+    const roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
+    const statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
+    const nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]);
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const rawId = idIdx !== -1 ? String(row[idIdx] || '').trim() : '';
+      const rawUser = userIdx !== -1 ? String(row[userIdx] || '').trim() : '';
+      if (!rawId && !rawUser) continue; // 略過空白列
+
+      const uId = rawId || rawUser;
+      const rawStatus = statusIdx !== -1 ? String(row[statusIdx] || '').trim().toUpperCase() : 'ACTIVE';
+      const status = (rawStatus === 'DISABLED' || rawStatus === 'FALSE') ? 'DISABLED' : 'ACTIVE';
+      const uName = nameIdx !== -1 && String(row[nameIdx] || '').trim() 
+        ? String(row[nameIdx]).trim() 
+        : (rawUser || `同仁${i}`);
+
+      seenUserIds.add(uId);
+      list.push({
+        userId: uId,
+        username: rawUser || uId,
+        name: uName,
+        role: roleIdx !== -1 && String(row[roleIdx] || '').trim() ? String(row[roleIdx]).trim().toLowerCase() : 'staff',
+        status: status
+      });
+    }
+  }
+
+  // 2. 補充 ACCOUNTS 既有人員
+  const accSheet = SS.getSheetByName("ACCOUNTS");
+  if (accSheet && accSheet.getLastRow() > 1) {
+    const accs = getSheetData(accSheet);
+    accs.forEach((a, idx) => {
+      const aId = String(a.ID || a.id || a.Name || `A_${idx}`).trim();
+      if (!seenUserIds.has(aId)) {
+        seenUserIds.add(aId);
+        const isActive = String(a.IsActive || 'TRUE').trim().toUpperCase() === 'TRUE';
+        list.push({
+          userId: aId,
+          username: String(a.Name || aId).trim(),
+          name: String(a.Name || aId).trim(),
+          role: String(a.Role || 'staff').trim().toLowerCase(),
+          status: isActive ? 'ACTIVE' : 'DISABLED'
+        });
+      }
+    });
+  }
+
+  return { success: true, users: list, staff: list };
+}
+
+function handleSaveUser(data, currentUser) {
+  const role = currentUser ? String(currentUser.role || '').toLowerCase() : '';
+  if (role !== 'admin') {
+    return { success: false, error: "FORBIDDEN: 僅最高管理員有權維護使用者帳號" };
+  }
+
+  let sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (!sheet) {
+    sheet = SS.insertSheet("Users");
+    sheet.appendRow(["user_id", "username", "name", "password_hash", "salt", "role", "status"]);
+    SpreadsheetApp.flush();
+  }
+
+  const values = sheet.getDataRange().getValues();
+  let headers = values[0];
+
+  // 欄位匹配 (不分大小寫與符號)
+  let idIdx = findHeaderIndex(headers, ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]);
+  let userIdx = findHeaderIndex(headers, ["username", "user", "帳號", "登入帳號", "使用者名稱"]);
+  let nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]);
+  let hashIdx = findHeaderIndex(headers, ["password_hash", "hash", "password", "密碼雜湊", "密碼hash", "密碼"]);
+  let saltIdx = findHeaderIndex(headers, ["salt", "鹽值", "鹽", "密鑰"]);
+  let roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
+  let statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
+
+  // 自動補齊 name 欄位標題（若舊表缺少）
+  if (nameIdx === -1) {
+    const nextCol = sheet.getLastColumn() + 1;
+    sheet.getRange(1, nextCol).setValue("name");
+    SpreadsheetApp.flush();
+    headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    nameIdx = nextCol - 1;
+  }
+
+  const targetId = String(data.userId || data.username || '').trim();
+  let foundRow = -1;
+  for (let i = 1; i < values.length; i++) {
+    const rowId = idIdx !== -1 ? String(values[i][idIdx] || '').trim() : '';
+    const rowUser = userIdx !== -1 ? String(values[i][userIdx] || '').trim() : '';
+    if ((rowId && rowId === targetId) || (rowUser && rowUser === targetId)) {
+      foundRow = i + 1;
+      break;
+    }
+  }
+
+  if (data.actionType === 'CREATE') {
+    if (foundRow !== -1) {
+      return { success: false, error: "該帳號或工號已存在，無法重複建立" };
+    }
+    const salt = Utilities.getUuid().substring(0, 8);
+    const hash = hashPassword(data.password, salt);
+
+    // 動態根據表頭欄位填值，避免欄位順序不同產生錯位
+    const colCount = Math.max(headers.length, 7);
+    const newRow = new Array(colCount).fill('');
+    if (idIdx !== -1) newRow[idIdx] = targetId;
+    if (userIdx !== -1) newRow[userIdx] = data.username || targetId;
+    if (nameIdx !== -1) newRow[nameIdx] = data.name || targetId;
+    if (hashIdx !== -1) newRow[hashIdx] = hash;
+    if (saltIdx !== -1) newRow[saltIdx] = salt;
+    if (roleIdx !== -1) newRow[roleIdx] = data.role || 'staff';
+    if (statusIdx !== -1) newRow[statusIdx] = data.status || 'ACTIVE';
+
+    sheet.appendRow(newRow);
+    SpreadsheetApp.flush();
+    return { success: true };
+  }
+
+  if (foundRow === -1) {
+    return { success: false, error: "查無此使用者" };
+  }
+
+  if (data.actionType === 'UPDATE_ROLE' && roleIdx !== -1) {
+    sheet.getRange(foundRow, roleIdx + 1).setValue(data.role);
+  } else if (data.actionType === 'TOGGLE_STATUS' && statusIdx !== -1) {
+    sheet.getRange(foundRow, statusIdx + 1).setValue(data.status);
+  } else if (data.actionType === 'RESET_PASSWORD' && hashIdx !== -1 && saltIdx !== -1) {
+    const salt = Utilities.getUuid().substring(0, 8);
+    const hash = hashPassword(data.newPassword, salt);
+    sheet.getRange(foundRow, hashIdx + 1).setValue(hash);
+    sheet.getRange(foundRow, saltIdx + 1).setValue(salt);
+  }
+
+  SpreadsheetApp.flush();
+  return { success: true };
+}
+
+function handleSavePermissionMatrix(data, currentUser) {
+  const role = currentUser ? String(currentUser.role || '').toLowerCase() : '';
+  if (role !== 'admin') {
+    return { success: false, error: "FORBIDDEN: 僅管理員可變更權限矩陣" };
+  }
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty("APP_ROLE_PERMISSIONS", JSON.stringify(data.matrix || {}));
+  return { success: true };
 }
 
 // ==========================================
@@ -4192,6 +5049,179 @@ function authorizeDriveAppPermission() {
   console.log("正在驗證 Google Drive 存取權限...");
   const root = DriveApp.getRootFolder();
   console.log("✅ Google Drive 權限已成功授權！根目錄名稱：" + root.getName());
+}
+
+/**
+ * 🛠️ Orders 欄位結構自動整理函式：
+ * 1. 刪除重複的「狀態」欄（位於 S 欄，保留原本 I 欄的狀態）
+ * 2. 移除多餘的第 16 欄（P 欄空欄或舊欄位）
+ * 3. 確保「單價」落在 P1（第 16 欄），「小計」落在 Q1（第 17 欄）
+ * 4. 自動清空快取避免舊結構影響
+ * 
+ * 使用方式：在 Apps Script 頂部函式選單選取「cleanupOrdersColumns」並點擊「執行」即可。
+ */
+function cleanupOrdersColumns() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Orders") || ss.getSheetByName("ORDERS");
+  if (!sheet) {
+    throw new Error("找不到 Orders 工作表！");
+  }
+
+  const lastCol = sheet.getLastColumn();
+  const lastRow = sheet.getLastRow();
+  if (lastCol === 0 || lastRow === 0) {
+    console.log("工作表為空，無需整理。");
+    return;
+  }
+
+  console.log("--- 開始執行 Orders 欄位整理 ---");
+  const initialHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || "").trim());
+  console.log("整理前欄位標題:", JSON.stringify(initialHeaders));
+
+  // 步驟 1：由右往左檢查並刪除重複的「狀態」欄位（確保保留第 9 欄/I 欄的原始狀態）
+  let statusCount = 0;
+  for (let i = 0; i < initialHeaders.length; i++) {
+    const h = initialHeaders[i];
+    if (h === "狀態" || h.toLowerCase() === "status") {
+      statusCount++;
+    }
+  }
+
+  if (statusCount > 1) {
+    // 從最後一欄往前找多出來的狀態欄進行刪除
+    for (let c = sheet.getLastColumn(); c >= 10; c--) {
+      const headerVal = String(sheet.getRange(1, c).getValue() || "").trim();
+      if (headerVal === "狀態" || headerVal.toLowerCase() === "status") {
+        console.log(`發現重複狀態欄位位於第 ${c} 欄，正在刪除...`);
+        sheet.deleteColumn(c);
+        break; // 刪除最後一個重複的狀態欄
+      }
+    }
+  }
+
+  // 步驟 2：檢查第 16 欄 (P 欄)
+  // 重新取得表頭
+  const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h || "").trim());
+  const col16Val = currentHeaders[15] || ""; // 0-based 15 = 第 16 欄 (P 欄)
+  
+  if (col16Val !== "單價" && col16Val !== "UnitPrice") {
+    console.log(`第 16 欄 (P 欄) 目前為「${col16Val}」，並非「單價」，正在刪除第 16 欄以讓後續欄位左移...`);
+    sheet.deleteColumn(16);
+  }
+
+  // 步驟 3：確保表頭標籤正確寫入「單價」與「小計」
+  sheet.getRange(1, 16).setValue("單價");
+  sheet.getRange(1, 17).setValue("小計");
+
+  SpreadsheetApp.flush();
+
+  const finalHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h || "").trim());
+  console.log("整理後欄位標題:", JSON.stringify(finalHeaders));
+
+  // 步驟 4：清除暫存快取
+  try {
+    CacheService.getScriptCache().remove("APP_CACHE_CPT");
+    console.log("快取已清除。");
+  } catch (e) {
+    console.warn("快取清除提示:", e);
+  }
+
+  console.log("🎉 Orders 工作表整理成功！P1 = 單價，Q1 = 小計，多餘狀態欄已移除。");
+}
+
+function handleBatchDeleteOrders(data, user) {
+  // 1. RBAC 權限防護：僅允許 admin 或 manager 執行批次清理
+  const role = user ? String(user.role || '').toLowerCase() : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { success: false, error: "FORBIDDEN: 僅管理員具備批次清理訂單權限" };
+  }
+
+  const orderIds = Array.isArray(data.orderIds) 
+    ? data.orderIds.map(id => String(id).trim()).filter(Boolean)
+    : [];
+
+  if (orderIds.length === 0) {
+    return { success: false, error: "未提供欲刪除之訂單 ID 列表" };
+  }
+
+  const targetIdSet = new Set(orderIds);
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    const sheet = getSheets().ORDERS;
+    const lastRow = sheet.getLastRow();
+    if (lastRow <= 1) {
+      return { success: true, deletedCount: 0, message: "無訂單資料可供清理" };
+    }
+
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version", "Status"]);
+    const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const versionColIdx = headerMap["Version"];
+    const values = sheet.getDataRange().getValues();
+
+    const headers = values[0];
+    const dataRows = values.slice(1);
+    const idIdx = 1; // Col 2 (B欄) 通常為 Order ID
+
+    const deletedOrdersBackup = [];
+    let updatedCount = 0;
+    const nowTs = String(new Date().getTime());
+
+    // 軟刪除：將符合條件的訂單標記為 DELETED，更新版本號與時間戳
+    for (let i = 0; i < dataRows.length; i++) {
+      const rowId = String(dataRows[i][idIdx] || '').trim();
+      if (targetIdSet.has(rowId)) {
+        deletedOrdersBackup.push({
+          id: rowId,
+          customer: dataRows[i][2] || '未知客戶',
+          date: dataRows[i][0] || '',
+          prevStatus: dataRows[i][statusColIdx] || ''
+        });
+
+        // 標記狀態為 DELETED
+        dataRows[i][8] = 'DELETED';
+        if (statusColIdx !== 8 && statusColIdx !== undefined) {
+          dataRows[i][statusColIdx] = 'DELETED';
+        }
+        if (lastUpdatedColIdx !== undefined) {
+          dataRows[i][lastUpdatedColIdx] = nowTs;
+        }
+        if (versionColIdx !== undefined) {
+          dataRows[i][versionColIdx] = Number(dataRows[i][versionColIdx] || 0) + 1;
+        }
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      safeSetValues(sheet, 2, 1, dataRows);
+
+      // 寫入系統日誌 Audit Log，留下備份以供緊急救回
+      writeSystemLog(
+        "BATCH_DELETE_ORDERS",
+        `批次清理 ${updatedCount} 筆訂單 (執行者: ${user ? (user.name || user.username) : '管理員'})`,
+        JSON.stringify({
+          operator: user ? (user.name || user.username) : 'admin',
+          operatorRole: role,
+          deletedCount: updatedCount,
+          targetIds: orderIds,
+          deletedDetails: deletedOrdersBackup.slice(0, 50) // 保留前 50 筆摘要
+        })
+      );
+    }
+
+    return { 
+      success: true, 
+      deletedCount: updatedCount,
+      message: `已成功批次清理 ${updatedCount} 筆訂單` 
+    };
+  } catch (err) {
+    console.error("Batch delete error:", err);
+    return { success: false, error: err.message || "批次刪除失敗" };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 

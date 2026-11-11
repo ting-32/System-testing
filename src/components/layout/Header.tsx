@@ -4,6 +4,7 @@ import { Unlock, Lock, BellRing, Settings, Loader2, RefreshCw, CloudCheck, Cloud
 import { buttonTap } from '../animations';
 import { useUIStore } from '../../store/useUIStore';
 import { useLogStore } from '../../store/useLogStore';
+import { usePermission } from '../../hooks/usePermission';
 
 interface HeaderProps {
   isBackgroundSyncing: boolean;
@@ -26,11 +27,19 @@ export function Header({
 }: HeaderProps) {
   const ui = useUIStore();
   const { hasUnreadLogs } = useLogStore();
+  const { userName } = usePermission();
 
   return (
     <header className="px-4 py-3 bg-white border-b border-gray-100 flex justify-between items-center sticky top-0 z-40">
       <div>
-        <h1 className="text-xl font-extrabold text-morandi-charcoal tracking-tight">麵廠職人</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-extrabold text-morandi-charcoal tracking-tight">麵廠職人</h1>
+          {userName && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
+              {userName}
+            </span>
+          )}
+        </div>
         <p className="text-[10px] text-morandi-pebble font-bold uppercase tracking-widest mt-0.5">專業訂單管理系統</p>
       </div>
       <div className="flex gap-2 items-center">

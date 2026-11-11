@@ -6,6 +6,7 @@ import { ProductsPage } from '../../pages/ProductsPage';
 import { SchedulePage } from '../../pages/SchedulePage';
 import { FinancePage } from '../../pages/FinancePage';
 import { WorkPage } from '../../pages/WorkPage';
+import { OrderDispatchPage } from '../../pages/OrderDispatchPage';
 
 interface ViewManagerProps {
   activeTab: string;
@@ -90,6 +91,19 @@ export function ViewManager({ activeTab, ...props }: ViewManagerProps) {
           className="space-y-6 relative"
         >
           <WorkPage {...props as any} />
+        </motion.div>
+      )}
+
+      {activeTab === 'dispatch' && (
+        <motion.div
+          key="dispatch-page"
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0, zIndex: 10 }}
+          exit={{ opacity: 0, x: 10, zIndex: 0, pointerEvents: 'none' }}
+          transition={{ duration: 0.2 }}
+          className="space-y-6 relative"
+        >
+          <OrderDispatchPage />
         </motion.div>
       )}
     </AnimatePresence>

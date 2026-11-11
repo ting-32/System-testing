@@ -10,8 +10,8 @@ interface AppState {
   setProducts: (products: Product[] | ((prev: Product[]) => Product[])) => void;
 
   // Global UI State
-  activeTab: 'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance';
-  setActiveTab: (tab: 'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance') => void;
+  activeTab: 'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance' | 'dispatch';
+  setActiveTab: (tab: 'orders' | 'customers' | 'products' | 'work' | 'schedule' | 'finance' | 'dispatch') => void;
 
   isInitialLoading: boolean;
   setIsInitialLoading: (loading: boolean) => void;

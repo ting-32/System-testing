@@ -529,11 +529,32 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
   }, [apiEndpoint, addToast]);
 
   // Auth Functions
-  const handleLogin = async (pwd: string) => { 
+  const handleLogin = async (usernameOrPwd: string, maybePwd?: string) => { 
+    let username = '';
+    let pwd = '';
+    if (maybePwd !== undefined) {
+      username = usernameOrPwd.trim();
+      pwd = maybePwd;
+    } else {
+      pwd = usernameOrPwd;
+    }
+
     if (!apiEndpoint || apiEndpoint === 'https://mock-api.local') { 
-      if (pwd === '8888') { 
+      if (pwd === '8888' || (username === 'admin' && pwd === '8888') || (pwd.length >= 4 && !apiEndpoint)) { 
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
+        const role = username === 'manager' ? 'manager' : (username === 'staff' ? 'staff' : 'admin');
+        const name = username ? `測試同仁 (${username})` : '系統管理員';
+        const userId = username || 'admin';
+        localStorage.setItem('APP_USER_ROLE', role);
+        localStorage.setItem('APP_USER_NAME', name);
+        localStorage.setItem('APP_USER_ID', userId);
+        localStorage.setItem('APP_USER', JSON.stringify({
+          userId,
+          username: userId,
+          name,
+          role
+        }));
         sessionStorage.setItem('temp_unlock_key', btoa(pwd));
         sessionStorage.removeItem('mock_login_fail');
         return { success: true }; 
@@ -542,7 +563,7 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
       sessionStorage.setItem('mock_login_fail', String(failCount));
       const remaining = Math.max(0, 5 - failCount);
       const errorMsg = remaining > 0 
-        ? `無效的密碼或 PIN 碼 (剩餘嘗試次數: ${remaining})`
+        ? `無效的帳號或密碼 / PIN 碼 (剩餘嘗試次數: ${remaining})`
         : "密碼錯誤次數過多，該裝置已暫時鎖定 15 分鐘，請稍後再試。";
       addToast(errorMsg, 'error');
       return { success: false, error: errorMsg }; 
@@ -551,19 +572,39 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
       const deviceId = getOrCreateDeviceId();
       const userAgent = navigator.userAgent;
       
-      const isOk = await container.authRepo.login(pwd, deviceId, userAgent); 
+      const isOk = await container.authRepo.login({
+        username,
+        password: pwd,
+        deviceId,
+        userAgent
+      }); 
       if (isOk && isOk.success !== false && (isOk === true || isOk.token || isOk.success === true)) { // 兼容舊版與新版的 true 及物件
-        if (isOk.token) {
-          localStorage.setItem('APP_SESSION_TOKEN', isOk.token);
-          localStorage.setItem('APP_USER_ROLE', isOk.role || 'admin');
-          localStorage.setItem('APP_USER_NAME', isOk.name || '系統管理員');
+        const userToken = isOk.token || '';
+        const userRole = isOk.role || isOk.user?.role || 'admin';
+        const userName = isOk.name || isOk.user?.name || (username || '系統管理員');
+        const userId = isOk.userId || isOk.user?.userId || (username || 'admin');
+
+        if (userToken) {
+          localStorage.setItem('APP_TOKEN', userToken);
+          localStorage.setItem('APP_SESSION_TOKEN', userToken);
         }
+        localStorage.setItem('APP_USER_ROLE', userRole);
+        localStorage.setItem('APP_USER_NAME', userName);
+        localStorage.setItem('APP_USER_ID', userId);
+        localStorage.setItem('APP_USER', JSON.stringify({
+          userId,
+          username: isOk.user?.username || username || userId,
+          name: userName,
+          role: userRole
+        }));
+
         setIsAuthenticated(true); 
         localStorage.setItem('nm_auth_status', 'true'); 
         sessionStorage.setItem('temp_unlock_key', btoa(pwd));
-        return { success: true }; 
+        window.dispatchEvent(new Event('app-auth-changed'));
+        return { success: true, user: { userId, username: isOk.user?.username || username || userId, name: userName, role: userRole } }; 
       } 
-      const errorMsg = (isOk && isOk.error) || "無效的密碼或連線異常";
+      const errorMsg = (isOk && isOk.error) || "無效的帳號密碼或 PIN 碼";
       addToast(errorMsg, 'error');
       return { success: false, error: errorMsg }; 
     } catch (e: any) { 

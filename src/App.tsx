@@ -65,6 +65,7 @@ import { useCompactMode } from './hooks/useCompactMode';
 import { useSyncQueue } from './hooks/useSyncQueue';
 import { useUIStore } from './store/useUIStore';
 import { fetchWithRetry } from './utils/fetchUtils';
+import { escapeHtml } from './utils/sanitize';
 import { broadcastDataChange } from './services/firebaseSync';
 import { OrdersPage } from './pages/OrdersPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -921,7 +922,9 @@ const App: React.FC = () => {
         <!-- 新增這行 -->
         <button class="no-print close-btn" onclick="window.close(); if(!window.closed){window.history.back();}">
           ╳ 關閉 / 返回
-        </button>`; 
+        </button>
+        <h1>麵廠職人 - 生產總表</h1>
+        <p class="date">${escapeHtml(dateRangeDisplay)}</p>`; 
         
     workSheetData.forEach(group => { 
       htmlContent += `
@@ -935,10 +938,10 @@ const App: React.FC = () => {
             <tbody>
               ${group.items.map(item => `
                 <tr class="print-row"> 
-                  <td class="item-name">${item.name}</td>
-                  <td class="text-center total-cell">${item.totalQty}</td>
-                  <td class="text-center">${item.unit}</td>
-                  <td>${item.details.map(d => `<span class="badge">${d.customerName} <b>${d.qty}</b></span>`).join('')}</td>
+                  <td class="item-name">${escapeHtml(item.name)}</td>
+                  <td class="text-center total-cell">${Number(item.totalQty) || 0}</td>
+                  <td class="text-center">${escapeHtml(item.unit)}</td>
+                  <td>${item.details.map(d => `<span class="badge">${escapeHtml(d.customerName)} <b>${Number(d.qty) || 0}</b></span>`).join('')}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -959,8 +962,8 @@ const App: React.FC = () => {
           {!isAuthenticated ? (
             <LoginScreen 
               key="login-screen" 
-              onLogin={async (pwd) => {
-                const res = await handleLogin(pwd);
+              onLogin={async (usernameOrPwd, maybePwd) => {
+                const res = await handleLogin(usernameOrPwd, maybePwd);
                 const ok = typeof res === 'boolean' ? res : (res && res.success);
                 if (ok) setSessionExpiredNotice(null);
                 return res;
