@@ -15,7 +15,10 @@ import {
   LogOut, 
   ShieldAlert,
   ArrowUpDown,
-  X
+  X,
+  MessageCircle,
+  Send,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BatchCleanOrdersModal } from '../components/BatchCleanOrdersModal';
@@ -33,12 +36,14 @@ export interface OrderDispatchItem {
   status: string;
   deliveryDate?: string;
   deliveryTime?: string;
+  note?: string;
 }
 
 export interface StaffMember {
   userId: string;
   name: string;
   role: UserRole | string;
+  line_user_id?: string;
 }
 
 // 狀態設定與樣式定義（便於集中維護與色彩語意化）
@@ -128,10 +133,13 @@ export const OrderDispatchPage: React.FC = () => {
     loadStaff();
   }, [loadOrders, loadStaff]);
 
+  const [isPushingDispatch, setIsPushingDispatch] = useState(false);
+
   // 3. 指派訂單（樂觀更新 Optimistic Update 提升介面即時流暢感）
   const handleAssign = async (orderId: string, targetUserId: string) => {
     const target = staffList.find(s => s.userId === targetUserId);
     const targetUserName = target?.name || (targetUserId ? targetUserId : '');
+    const currentOrder = orders.find(o => o.order_id === orderId);
 
     // 樂觀更新
     const previousOrders = [...orders];
@@ -145,7 +153,27 @@ export const OrderDispatchPage: React.FC = () => {
       });
 
       if (res.success) {
-        showToast(`訂單 ${orderId} 已指派給 ${targetUserName || '未指派'}`, 'success');
+        if (target?.line_user_id) {
+          // 同步定向推送派工明細至該同仁 LINE
+          const itemsSummary = currentOrder?.items && currentOrder.items.length > 0
+            ? currentOrder.items.map(it => `• ${it.productName || it.name} × ${it.quantity} ${it.unit || ''}`).join('\n')
+            : (currentOrder?.productName ? `• ${currentOrder.productName} × ${currentOrder.quantity || 1}` : '• 出貨品項請見單據');
+
+          apiFetch('sendStaffDispatchNotification', {
+            staffUserId: targetUserId,
+            staffName: targetUserName,
+            customerName: currentOrder?.customerName,
+            deliveryDate: currentOrder?.deliveryDate,
+            deliveryTime: currentOrder?.deliveryTime,
+            itemSummary: itemsSummary
+          }).catch(e => console.warn('Push dispatch error', e));
+
+          showToast(`已指派給 ${targetUserName}（已自動發送 LINE 配送明細 💬）`, 'success');
+        } else if (targetUserId) {
+          showToast(`已指派給 ${targetUserName}（該同仁尚未綁定 LINE，未發送推播）`, 'info');
+        } else {
+          showToast(`訂單 ${orderId} 已取消指派`, 'info');
+        }
         loadOrders(true); // 背景靜默重整確認
       } else {
         // 失敗復原
@@ -155,6 +183,68 @@ export const OrderDispatchPage: React.FC = () => {
     } catch (err: any) {
       setOrders(previousOrders);
       showToast('網路逾時，指派未成功', 'error');
+    }
+  };
+
+  // 4. 一鍵推播今日派工明細至已綁定 LINE 之各司機同仁
+  const handleBatchPushDispatch = async () => {
+    const boundStaffMap = new Map<string, StaffMember>();
+    staffList.forEach(s => {
+      if (s.line_user_id) boundStaffMap.set(s.userId, s);
+    });
+
+    const assignedActiveOrders = orders.filter(o => 
+      o.assigned_to && 
+      boundStaffMap.has(o.assigned_to) && 
+      o.status !== 'CANCELLED' && 
+      o.status !== 'COMPLETED'
+    );
+
+    if (assignedActiveOrders.length === 0) {
+      showToast('目前無指派給「已綁定 LINE 同仁」的待配送訂單', 'info');
+      return;
+    }
+
+    setIsPushingDispatch(true);
+    try {
+      const ordersByStaff: Record<string, OrderDispatchItem[]> = {};
+      assignedActiveOrders.forEach(o => {
+        if (!ordersByStaff[o.assigned_to!]) ordersByStaff[o.assigned_to!] = [];
+        ordersByStaff[o.assigned_to!].push(o);
+      });
+
+      const staffIds = Object.keys(ordersByStaff);
+      let successCount = 0;
+      const notifiedNames: string[] = [];
+
+      for (const sId of staffIds) {
+        const staffMember = boundStaffMap.get(sId);
+        const staffOrders = ordersByStaff[sId];
+        const summaryText = staffOrders.map((o, idx) => {
+          const itemSummary = o.items && o.items.length > 0
+            ? o.items.map(it => `${it.productName || it.name} × ${it.quantity}${it.unit || ''}`).join(', ')
+            : (o.productName ? `${o.productName} × ${o.quantity || 1}` : '品項見單據');
+          return `${idx + 1}. 【${o.customerName}】${o.deliveryTime ? `(${o.deliveryTime}) ` : ''}- ${itemSummary}`;
+        }).join('\n');
+
+        const res = await apiFetch('sendStaffDispatchNotification', {
+          staffUserId: sId,
+          staffName: staffMember?.name || sId,
+          customerName: `今日出車彙整 (${staffOrders.length} 家客戶)`,
+          deliveryDate: staffOrders[0]?.deliveryDate || '今日',
+          itemSummary: summaryText
+        });
+        if (res.success) {
+          successCount++;
+          if (staffMember?.name) notifiedNames.push(staffMember.name);
+        }
+      }
+
+      showToast(`已向 ${successCount} 位同仁 (${notifiedNames.join('、')}) 發送今日派工彙整通知！`, 'success');
+    } catch (err) {
+      showToast('推播過程中發生異常', 'error');
+    } finally {
+      setIsPushingDispatch(false);
     }
   };
 
@@ -283,6 +373,19 @@ export const OrderDispatchPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 self-end sm:self-center">
+          {/* 管理員/主管：一鍵推播今日派工明細至已綁定 LINE 司機 */}
+          {(role === 'admin' || role === 'manager') && (
+            <button
+              onClick={handleBatchPushDispatch}
+              disabled={isPushingDispatch}
+              className="px-3 py-2 text-xs font-semibold text-[#4A6356] bg-[#E3ECE6] hover:bg-[#D4E3D8] border border-[#CBDCD2] rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs disabled:opacity-50"
+              title="將今日指派之各店家配送明細，個別發送至各負責司機的 LINE"
+            >
+              <Send className={`w-3.5 h-3.5 ${isPushingDispatch ? 'animate-pulse' : ''}`} />
+              <span>{isPushingDispatch ? '推播中...' : '推播今日派工'}</span>
+            </button>
+          )}
+
           {/* 管理員專用：條件式快速批次清理工具 (嚴格限 admin 與 manager，一般同仁完全不顯示) */}
           {(role === 'admin' || role === 'manager') && (
             <button
@@ -452,19 +555,26 @@ export const OrderDispatchPage: React.FC = () => {
                           do="assign_order"
                           fallback={
                             order.assigned_name ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
-                                <UserCheck className="w-3.5 h-3.5" />
-                                {order.assigned_name}
-                              </span>
+                              <div className="flex flex-col gap-1 items-start">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-xs">
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                  {order.assigned_name}
+                                </span>
+                                {staffList.find(s => s.userId === order.assigned_to)?.line_user_id && (
+                                  <span className="text-[10px] text-[#4A6356] bg-[#E3ECE6] px-1.5 py-0.5 rounded flex items-center gap-0.5 font-medium">
+                                    <MessageCircle className="w-2.5 h-2.5" /> LINE 派工已連線
+                                  </span>
+                                )}
+                              </div>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 font-semibold">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 font-semibold text-xs">
                                 待主管指派
                               </span>
                             )
                           }
                         >
                           {/* 主管/管理員：互動式指派下拉選單 */}
-                          <div className="relative inline-block w-44">
+                          <div className="relative inline-block w-48">
                             <select
                               value={order.assigned_to || ''}
                               onChange={(e) => handleAssign(order.order_id, e.target.value)}
@@ -477,10 +587,23 @@ export const OrderDispatchPage: React.FC = () => {
                               <option value="">⚠️ 未指派責任人</option>
                               {staffList.map(s => (
                                 <option key={s.userId} value={s.userId}>
-                                  {s.name} ({s.role})
+                                  {s.name} {s.line_user_id ? '💬 [LINE已連線]' : ''}
                                 </option>
                               ))}
                             </select>
+                            {order.assigned_to && (
+                              <div className="mt-1 flex items-center gap-1 text-[10px]">
+                                {staffList.find(s => s.userId === order.assigned_to)?.line_user_id ? (
+                                  <span className="text-[#4A6356] bg-[#E3ECE6] px-1.5 py-0.5 rounded-md flex items-center gap-0.5 font-medium">
+                                    <MessageCircle className="w-2.5 h-2.5" /> LINE 派工已連線
+                                  </span>
+                                ) : (
+                                  <span className="text-[#8C8984] bg-[#F2F0E9] px-1.5 py-0.5 rounded-md font-medium">
+                                    未綁定 LINE
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </Can>
                       </td>

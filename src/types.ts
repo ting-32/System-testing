@@ -66,6 +66,7 @@ export interface Customer {
   offDays: number[]; // 0-6 (Sun-Sat) - 週期性公休
   holidayDates: string[]; // ['2026-01-20', ...] - 特定日期公休
   autoOrderEnabled?: boolean; // 新增：自動建單開關
+  isWatchlist?: boolean; // 新增：易漏盯哨重點店家開關
   lastUpdated?: number; // 版本控制時間戳
   // --- 暫態屬性 (僅限前端使用) ---
   _syncStatus?: 'pending' | 'synced' | 'error';
@@ -146,11 +147,23 @@ export const PERMISSIONS: Record<UserRole, UserPermissionMatrix> = {
   }
 };
 
+export type ReminderDateMode = 'TODAY' | 'TOMORROW' | 'WEEKDAYS';
+export type ReminderOutputFormat = 'SUMMARY_NAMES' | 'DELIVERY_MANIFEST';
+export type ReminderRecipientMode = 'DEFAULT_ADMIN' | 'ASSIGNED_DRIVER' | 'SPECIFIC_STAFF';
+export type ReminderConditionStatus =
+  | OrderStatus
+  | 'UNORDERED'
+  | 'PENDING'
+  | 'ACTIVE_ORDERS'
+  | 'READY_OR_PENDING'
+  | 'UNASSIGNED'
+  | 'HAS_PRODUCT';
+
 export interface ReminderCondition {
   id?: string;
   operator?: 'AND' | 'OR';
   customers: string[]; // Customer IDs, empty means all
-  status: OrderStatus | 'UNORDERED' | 'PENDING'; // Added PENDING based on previous code
+  status: ReminderConditionStatus;
   products: string[]; // Product names or IDs, empty means all
 }
 
@@ -158,11 +171,41 @@ export interface ReminderRule {
   id: string;
   name: string;
   schedule: string[]; // e.g. ["0", "1", "2"]
+  targetDateMode?: ReminderDateMode;
   targetOrderDays?: string[]; // e.g. ["0", "1", "2"] checking orders for next matching day
   conditions: ReminderCondition[];
   timeToNotify: string; 
   isActive: boolean;
   customMessage?: string;
+  outputFormat?: ReminderOutputFormat;
+  includeItemTotals?: boolean;
+  recipientMode?: ReminderRecipientMode;
+  targetStaffIds?: string[];
+  fallbackToAdminIfUnassigned?: boolean;
+  priorityCustomerIds?: string[];
+}
+
+export interface DailyBriefingConfig {
+  id?: string;
+  name?: string;
+  enabled: boolean;
+  schedule: string[]; // ['1','2','3','4','5','6']
+  timeToNotify: string; // e.g. '06:00'
+  groupBy: 'BY_DRIVER' | 'BY_TRIP' | 'SPECIFIC_STAFF';
+  targetStaffIds?: string[]; // 指定系統用戶 userId 列表
+  targetStaffNames?: Record<string, string>; // 紀錄指派用戶名稱快取（卡片標籤顯示用）
+  includeItemTotals: boolean;
+  includeWatchlistMissingCheck: boolean;
+  watchlistMissingOnlyRegular: boolean;
+  fallbackToAdminIfUnassigned: boolean;
+  // --- 方案 B：白名單標籤池 ＋ 拖拉標籤客製化模板 ---
+  briefingMode?: 'STANDARD_ALL' | 'CUSTOM_TEMPLATE';
+  includedCustomerIds?: string[]; // 僅通知這些已添加為標籤的店家
+  customTemplate?: string; // e.g. "早安！\n{{店家:誠石|cust_1}}\n{{總備貨小計}}"
+  emptyStoreBehavior?: 'HIDE_LINE' | 'SHOW_NO_ORDER';
+  customIncludeItemTotals?: boolean; // 選配：是否自動於訊息最底部附上白名單店家的總備貨小計（預設 false，非必選）
+  includeTripInfo?: boolean; // 選配：是否在出車簡報顯示趟數資訊（預設 false，非必選）
+  includeDeliveryTime?: boolean; // 選配：是否在出車簡報顯示配送時間（預設 false，非必選）
 }
 
 export type LogStatus = 'SUCCESS' | 'SKIPPED' | 'ERROR';

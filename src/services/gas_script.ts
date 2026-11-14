@@ -94,6 +94,7 @@ function setSystemConfig(sheet, keyName, value) {
   for (let i = 0; i < values.length; i++) {
     if (values[i][0] === keyName) {
       sheet.getRange(i + 1, 2).setValue(value);
+      SpreadsheetApp.flush();
       return;
     }
   }
@@ -101,6 +102,7 @@ function setSystemConfig(sheet, keyName, value) {
   const lastRow = Math.max(sheet.getLastRow(), 1);
   sheet.getRange(lastRow + 1, 1).setValue(keyName);
   sheet.getRange(lastRow + 1, 2).setValue(value);
+  SpreadsheetApp.flush();
 }
 
 // Helper to get fresh references (avoiding top-level const caching issues)
@@ -255,6 +257,9 @@ function doPost(e) {
       case "savePermissionMatrix":
         result = handleSavePermissionMatrix(params.data || params, tokenPayload);
         break;
+      case "sendStaffDispatchNotification":
+        result = handleSendStaffDispatchNotification(params.data || params, tokenPayload);
+        break;
       case "batchUpdateOrders":
         result = batchUpdateOrders(params.data);
         break;
@@ -342,6 +347,13 @@ function doPost(e) {
       case "dryRunRule":
         result = checkReminders(params.data.ruleId, true);
         break;
+      case "dryRunBriefing":
+        result = runDailyBriefingCheck(true, true, params.data?.briefing || null);
+        break;
+      case "sendBriefingNow":
+        result = runDailyBriefingCheck(false, true, params.data?.briefing || null);
+        writeSystemLog("SEND_DAILY_BRIEFING", "手動發送每日出車簡報", JSON.stringify({ action: "sendBriefingNow" }));
+        break;
       case "getNotificationLogs":
         result = getNotificationLogs();
         break;
@@ -382,6 +394,7 @@ function doPost(e) {
 
     const unneededNotifyActions = ["login", "checkUpdates", "getOrder", "testLineMessage", "dryRunRule", "getNotificationLogs", "getSystemLogs", "createOrder"];
     if (!unneededNotifyActions.includes(action)) {
+      SpreadsheetApp.flush(); // 先強制寫入 Sheets 再觸發 Firebase 推播，避免前端搶先抓到舊快照
       notifyFirebase();
     }
 
@@ -809,6 +822,7 @@ function getData(startDateStr, since = 0, currentUser = null) {
           paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
           defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
           autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+          isWatchlist: String(c.易漏盯哨 || c.isWatchlist || '').trim().toLowerCase() === 'true' || c.易漏盯哨 === true || c.isWatchlist === true,
           isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
           isArchived: String(c.封存 || c.isArchived).trim().toLowerCase() === 'true' || c.封存 === true,
           lastUpdated: parseLastUpdated(c.LastUpdated)
@@ -847,6 +861,7 @@ function getData(startDateStr, since = 0, currentUser = null) {
         paymentTerm: c.PaymentTerm || c.paymentTerm || c.付款週期,
         defaultTrip: c.DefaultTrip || c.defaultTrip || c.預設趟數,
         autoOrderEnabled: String(c.自動建單開關).trim().toLowerCase() === 'true' || c.自動建單開關 === true,
+        isWatchlist: String(c.易漏盯哨 || c.isWatchlist || '').trim().toLowerCase() === 'true' || c.易漏盯哨 === true || c.isWatchlist === true,
         isPaused: String(c.暫停供貨 || c.isPaused).trim().toLowerCase() === 'true' || c.暫停供貨 === true,
         isArchived: String(c.封存 || c.isArchived).trim().toLowerCase() === 'true' || c.封存 === true,
         lastUpdated: parseLastUpdated(c.LastUpdated)
@@ -1009,14 +1024,18 @@ function getRemindRulesSheet() {
   let sheet = SS.getSheetByName("RemindRules");
   if (!sheet) {
     sheet = SS.insertSheet("RemindRules");
-    sheet.appendRow(["規則ID", "規則名稱", "檢查週期", "檢查訂單日期", "提醒時間", "是否啟用", "自訂提醒內容", "判斷條件(包含AND/OR等詳細設定)", "LastUpdated"]);
-    sheet.getRange(1, 1, 1, 9).setFontWeight("bold");
+    sheet.appendRow(["規則ID", "規則名稱", "檢查週期", "檢查訂單日期", "提醒時間", "是否啟用", "自訂提醒內容", "判斷條件(包含AND/OR等詳細設定)", "LastUpdated", "規則擴充設定JSON"]);
+    sheet.getRange(1, 1, 1, 10).setFontWeight("bold");
     sheet.setFrozenRows(1);
   } else {
-    // 確保有 LastUpdated 欄位
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    // 確保有 LastUpdated 與 規則擴充設定JSON 欄位
+    let headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     if (!headers.includes("LastUpdated")) {
       sheet.getRange(1, headers.length + 1).setValue("LastUpdated").setFontWeight("bold");
+      headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    }
+    if (!headers.includes("規則擴充設定JSON")) {
+      sheet.getRange(1, headers.length + 1).setValue("規則擴充設定JSON").setFontWeight("bold");
     }
   }
   return sheet;
@@ -1027,7 +1046,7 @@ function saveRemindRulesToSheet(rules) {
   
   // Clear existing content except header
   const lastRow = Math.max(1, sheet.getLastRow()); // ensure we don't crash
-  const lastCol = Math.max(9, sheet.getLastColumn());
+  const lastCol = Math.max(10, sheet.getLastColumn());
   if (lastRow > 1) {
     sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
   }
@@ -1035,30 +1054,40 @@ function saveRemindRulesToSheet(rules) {
   if (!rules || rules.length === 0) return;
   
   const currentTs = new Date().getTime();
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const lastUpdatedColIdx = headers.indexOf("LastUpdated");
+  const extConfigColIdx = headers.indexOf("規則擴充設定JSON");
+  const totalCols = Math.max(headers.length, 10);
   
   const dataToRows = rules.map(rule => {
-    let row = [
-      rule.id || "",
-      rule.name || "",
-      Array.isArray(rule.schedule) ? rule.schedule.join(',') : (rule.schedule || ""),
-      Array.isArray(rule.targetOrderDays) ? rule.targetOrderDays.join(',') : (rule.targetOrderDays || ""),
-      rule.timeToNotify ? `'${String(rule.timeToNotify)}` : "",
-      rule.isActive === false ? false : true,
-      rule.customMessage || "",
-      JSON.stringify(rule.conditions || [])
-    ];
-    // Fill until LastUpdated column
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    const lastUpdatedColIdx = headers.indexOf("LastUpdated");
-    while (row.length < lastUpdatedColIdx) {
-      row.push("");
-    }
-    row[lastUpdatedColIdx] = currentTs;
+    let row = new Array(totalCols).fill("");
+    row[0] = rule.id || "";
+    row[1] = rule.name || "";
+    row[2] = Array.isArray(rule.schedule) ? rule.schedule.join(',') : (rule.schedule || "");
+    row[3] = Array.isArray(rule.targetOrderDays) ? rule.targetOrderDays.join(',') : (rule.targetOrderDays || "");
+    row[4] = rule.timeToNotify ? `'${String(rule.timeToNotify)}` : "";
+    row[5] = rule.isActive === false ? false : true;
+    row[6] = rule.customMessage || "";
+    row[7] = JSON.stringify(rule.conditions || []);
+
+    const extConfig = {
+      targetDateMode: rule.targetDateMode || undefined,
+      outputFormat: rule.outputFormat || 'SUMMARY_NAMES',
+      includeItemTotals: rule.includeItemTotals !== undefined ? Boolean(rule.includeItemTotals) : true,
+      recipientMode: rule.recipientMode || 'DEFAULT_ADMIN',
+      targetStaffIds: Array.isArray(rule.targetStaffIds) ? rule.targetStaffIds : [],
+      fallbackToAdminIfUnassigned: rule.fallbackToAdminIfUnassigned !== false,
+      priorityCustomerIds: Array.isArray(rule.priorityCustomerIds) ? rule.priorityCustomerIds : []
+    };
+
+    if (lastUpdatedColIdx !== -1) row[lastUpdatedColIdx] = currentTs;
+    if (extConfigColIdx !== -1) row[extConfigColIdx] = JSON.stringify(extConfig);
     return row;
   });
   
   safeSetValues(sheet, 2, 1, dataToRows);
   sheet.getRange(2, 5, dataToRows.length, 1).setNumberFormat("@");
+  SpreadsheetApp.flush();
 }
 
 function getRemindRulesFromSheet() {
@@ -1066,8 +1095,12 @@ function getRemindRulesFromSheet() {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return [];
   
-  const values = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
-  const displayValues = sheet.getRange(2, 1, lastRow - 1, 8).getDisplayValues();
+  const colCount = Math.max(8, sheet.getLastColumn());
+  const headers = sheet.getRange(1, 1, 1, colCount).getValues()[0];
+  const extConfigColIdx = headers.indexOf("規則擴充設定JSON");
+
+  const values = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
+  const displayValues = sheet.getRange(2, 1, lastRow - 1, colCount).getDisplayValues();
   const rules = [];
   
   for (let i = 0; i < values.length; i++) {
@@ -1080,16 +1113,33 @@ function getRemindRulesFromSheet() {
     try {
       conditions = row[7] ? JSON.parse(row[7]) : [];
     } catch (e) {}
+
+    let extConfig = {};
+    if (extConfigColIdx !== -1 && row[extConfigColIdx]) {
+      try {
+        extConfig = JSON.parse(row[extConfigColIdx]) || {};
+      } catch (e) {}
+    }
+
+    const rawTargetDays = row[3] ? String(row[3]).split(',').filter(Boolean) : [];
+    const defaultDateMode = extConfig.targetDateMode || (rawTargetDays.length > 0 ? 'WEEKDAYS' : 'TOMORROW');
     
     rules.push({
       id: String(id),
       name: String(row[1] || ""),
-      schedule: row[2] ? String(row[2]).split(',') : [],
-      targetOrderDays: row[3] ? String(row[3]).split(',') : [],
+      schedule: row[2] ? String(row[2]).split(',').filter(Boolean) : [],
+      targetDateMode: defaultDateMode,
+      targetOrderDays: rawTargetDays,
       timeToNotify: String(displayRow[4] || "").replace(/^'/, ""), // Use display value for time to avoid Date object issues
       isActive: row[5] === "" ? true : Boolean(row[5]),
       customMessage: String(row[6] || ""),
-      conditions: conditions
+      conditions: conditions,
+      outputFormat: extConfig.outputFormat || 'SUMMARY_NAMES',
+      includeItemTotals: extConfig.includeItemTotals !== undefined ? Boolean(extConfig.includeItemTotals) : true,
+      recipientMode: extConfig.recipientMode || 'DEFAULT_ADMIN',
+      targetStaffIds: Array.isArray(extConfig.targetStaffIds) ? extConfig.targetStaffIds : [],
+      fallbackToAdminIfUnassigned: extConfig.fallbackToAdminIfUnassigned !== false,
+      priorityCustomerIds: Array.isArray(extConfig.priorityCustomerIds) ? extConfig.priorityCustomerIds : []
     });
   }
   
@@ -1098,6 +1148,7 @@ function getRemindRulesFromSheet() {
 
 function saveSettings(data) {
   const configSheet = getConfigSheet();
+  const cleanData = Object.assign({}, data || {});
   
   // === 【資料分離邏輯說明】 =======================================
   // 目的：避免 Config 分頁的 AppSettings 儲存格因寫入不斷增加的「提醒規則」而導致資料過長或難以維護。
@@ -1107,13 +1158,21 @@ function saveSettings(data) {
   //      保存完畢後，使用 delete 刪除該屬性，使得後續寫入 AppSettings 
   //      的 JSON 設定中，只會留下輕量的一般參數 (例如 lineUserId、Token 等)。
   // =============================================================
-  if (data.rules !== undefined) {
-    saveRemindRulesToSheet(data.rules); 
-    delete data.rules; // 抽離：將 rules 從原物件中剔除
+  if (cleanData.rules !== undefined) {
+    saveRemindRulesToSheet(cleanData.rules); 
+    delete cleanData.rules; // 抽離：將 rules 從原物件中剔除
   }
   
-  // 將「已剔除 rules」的剩餘一般設定覆寫回 Config 分頁
-  setSystemConfig(configSheet, "AppSettings", JSON.stringify(data));
+  // 讀取既有 AppSettings 做淺合併，避免只傳部分設定時意外洗掉 dailyBriefing 或 LINE Token
+  let existingSettings = {};
+  try {
+    const existingStr = getSystemConfig(configSheet, "AppSettings");
+    if (existingStr) existingSettings = JSON.parse(existingStr) || {};
+  } catch (e) {}
+  const mergedSettings = Object.assign({}, existingSettings, cleanData);
+
+  setSystemConfig(configSheet, "AppSettings", JSON.stringify(mergedSettings));
+  SpreadsheetApp.flush();
   
   // === 強制清除快取 ===
   // 確保背景輪詢時，不會一直抓到被快取的舊設定
@@ -1122,17 +1181,16 @@ function saveSettings(data) {
     cache.remove("APP_CACHE_CPT");
   }
   
-  notifyFirebase();
-  
   return true;
 }
 
 function testLineMessage(data) {
-  const channelToken = String(data.lineChannelToken || '').trim();
-  const userIdStr = String(data.lineUserId || '').trim();
+  const payloadData = data || {};
+  const channelToken = String(payloadData.lineChannelToken || getLineMessagingToken() || '').trim();
+  const userIdStr = String(payloadData.lineUserId || payloadData.line_user_id || '').trim();
   
   if (!channelToken || !userIdStr) {
-    throw new Error("Missing credentials for LINE API");
+    throw new Error("Missing credentials for LINE API (請確認 Channel Token 與 User ID)");
   }
 
   const userIds = userIdStr.split(',').map(id => id.trim()).filter(id => id);
@@ -1155,7 +1213,7 @@ function testLineMessage(data) {
       },
       payload: JSON.stringify({
         to: payloadTo,
-        messages: [{ type: "text", text: "✅ 這是來自智能訂單系統的測試發送！您的 LINE (多群發送) 串接已成功。" }]
+        messages: [{ type: "text", text: "✅ 這是來自智能訂單系統的測試發送！您的 LINE 串接已成功。" }]
       }),
       muteHttpExceptions: true
     });
@@ -1907,6 +1965,7 @@ function updateCustomer(data) {
   const colPaused = getColIndex(["isPaused", "暫停供貨", "Paused"], "暫停供貨");
   const colArchived = getColIndex(["isArchived", "封存", "Archived"], "封存");
   const colAuto = getColIndex(["自動建單開關", "autoOrderEnabled"], "自動建單開關");
+  const colWatchlist = getColIndex(["isWatchlist", "易漏盯哨", "重點盯哨"], "易漏盯哨");
   const colLast = getColIndex(["LastUpdated"], "LastUpdated");
 
   const values = sheet.getDataRange().getValues();
@@ -1953,6 +2012,7 @@ function updateCustomer(data) {
   if(data.isPaused !== undefined) newRow[colPaused] = data.isPaused;
   if(data.isArchived !== undefined) newRow[colArchived] = data.isArchived;
   if(data.autoOrderEnabled !== undefined) newRow[colAuto] = data.autoOrderEnabled;
+  if(data.isWatchlist !== undefined) newRow[colWatchlist] = data.isWatchlist;
   newRow[colLast] = newLastUpdatedTs;
   
   // 將動態組裝好的精確列寫入試算表
@@ -2914,6 +2974,168 @@ function backfillMissingOrderPrices() {
   return { success: true, updatedCount };
 }
 
+function isCancelledOrderStatus(status) {
+  const s = String(status || '').trim().toUpperCase();
+  return s === 'CANCELLED' || s === '已取消' || s === '作廢';
+}
+
+function isCompletedOrderStatus(status) {
+  const s = String(status || '').trim().toUpperCase();
+  return s === 'COMPLETED' || s === 'PAID' || s === '已送達' || s === '已結清' || s === '已完成';
+}
+
+function isPositiveOrderCondition(status) {
+  return status === 'ACTIVE_ORDERS' || status === 'READY_OR_PENDING' || status === 'UNASSIGNED' || status === 'HAS_PRODUCT';
+}
+
+function getStaffInfoMap() {
+  const map = {};
+  try {
+    const res = handleGetStaffList({ role: 'admin' });
+    const list = (res && res.staff) ? res.staff : [];
+    list.forEach(s => {
+      if (s.userId) map[String(s.userId).trim().toLowerCase()] = s;
+      if (s.username) map[String(s.username).trim().toLowerCase()] = s;
+    });
+  } catch (e) {}
+  return map;
+}
+
+function splitLineMessageChunks(text, maxLen) {
+  const limit = maxLen || 3800;
+  if (!text || text.length <= limit) return [text];
+  const sections = text.split('\n──────────\n');
+  const chunks = [];
+  let current = '';
+
+  sections.forEach((sec, idx) => {
+    const piece = idx === 0 ? sec : '\n──────────\n' + sec;
+    if ((current + piece).length > limit && current.length > 0) {
+      chunks.push(current);
+      current = sec;
+    } else {
+      current += piece;
+    }
+  });
+  if (current) chunks.push(current);
+
+  if (chunks.length > 1) {
+    return chunks.map((c, i) => `(${i + 1}/${chunks.length})\n` + c);
+  }
+  return chunks;
+}
+
+function buildDeliveryManifestText(rule, ordersList, customerByNameMap, targetDatesText, formattedTimeStr, recipientSubHeader) {
+  const priorityIds = new Set((rule.priorityCustomerIds || []).map(String));
+  const groupedMap = {};
+
+  ordersList.forEach(o => {
+    const cName = String(o.customerName || '未命名店家').trim();
+    const cust = customerByNameMap[cName];
+    const custId = cust ? String(cust.id || '') : '';
+    const isPriority = priorityIds.has(custId);
+    const key = `${o.deliveryDate || ''}__${cName}`;
+
+    if (!groupedMap[key]) {
+      groupedMap[key] = {
+        customerName: cName,
+        customerId: custId,
+        isPriority: isPriority,
+        deliveryDate: o.deliveryDate || '',
+        deliveryTime: o.deliveryTime || (cust ? cust.deliveryTime : '') || '',
+        trip: o.trip || (cust ? cust.defaultTrip : '') || '',
+        deliveryMethod: o.deliveryMethod || (cust ? cust.deliveryMethod : '') || '',
+        items: [],
+        notes: []
+      };
+    }
+
+    const pName = o.productName || (o.product && o.product.name) || '未命名品項';
+    const qty = Number(o.quantity) || 0;
+    const unit = o.unit || '';
+    groupedMap[key].items.push({ productName: pName, quantity: qty, unit: unit });
+
+    const noteStr = String(o.note || '').trim();
+    if (noteStr && !groupedMap[key].notes.includes(noteStr)) {
+      groupedMap[key].notes.push(noteStr);
+    }
+  });
+
+  const customerBlocks = Object.values(groupedMap).sort((a, b) => {
+    if (a.isPriority !== b.isPriority) return a.isPriority ? -1 : 1;
+    const tripCompare = String(a.trip || 'zzz').localeCompare(String(b.trip || 'zzz'), 'zh-Hant');
+    if (tripCompare !== 0) return tripCompare;
+    const timeCompare = String(a.deliveryTime || '99:99').localeCompare(String(b.deliveryTime || '99:99'));
+    if (timeCompare !== 0) return timeCompare;
+    return a.customerName.localeCompare(b.customerName, 'zh-Hant');
+  });
+
+  const itemTotalsMap = {};
+  const lines = [];
+
+  customerBlocks.forEach(block => {
+    const prefix = block.isPriority ? '🚨【重點必送】' : '▸ ';
+    const metaParts = [];
+    if (block.trip) metaParts.push(block.trip);
+    if (block.deliveryTime) metaParts.push(block.deliveryTime);
+    if (block.deliveryMethod && block.deliveryMethod !== '外送') metaParts.push(block.deliveryMethod);
+    const metaStr = metaParts.length > 0 ? ` (${metaParts.join(' ')})` : '';
+
+    // 合併同店家相同品項
+    const mergedItems = {};
+    block.items.forEach(it => {
+      const iKey = `${it.productName}__${it.unit}`;
+      if (!mergedItems[iKey]) {
+        mergedItems[iKey] = { productName: it.productName, quantity: 0, unit: it.unit };
+      }
+      mergedItems[iKey].quantity += it.quantity;
+
+      if (!itemTotalsMap[iKey]) {
+        itemTotalsMap[iKey] = { productName: it.productName, quantity: 0, unit: it.unit };
+      }
+      itemTotalsMap[iKey].quantity += it.quantity;
+    });
+
+    let blockText = `${prefix}${block.customerName}${metaStr}`;
+    Object.values(mergedItems).forEach(it => {
+      blockText += `\n  • ${it.productName} × ${it.quantity}${it.unit}`;
+    });
+    if (block.notes.length > 0) {
+      blockText += `\n  📝 備註：${block.notes.join(' / ')}`;
+    }
+    lines.push(blockText);
+  });
+
+  let header = `【${rule.name}】\n`;
+  header += `📅 配送日：${targetDatesText}（共 ${customerBlocks.length} 家 / ${ordersList.length} 筆明細）\n`;
+  if (recipientSubHeader) {
+    header += `${recipientSubHeader}\n`;
+  }
+  header += `🕒 通知時間：${formattedTimeStr}\n`;
+  header += `━━━━━━━━━━━━━━\n`;
+
+  let body = lines.join('\n──────────\n');
+
+  let footer = '';
+  if (rule.includeItemTotals !== false) {
+    const totalsArr = Object.values(itemTotalsMap).map(it => `${it.productName} ${it.quantity}${it.unit}`);
+    if (totalsArr.length > 0) {
+      footer += `\n━━━━━━━━━━━━━━\n📦 總備貨小計：\n${totalsArr.join('、')}`;
+    }
+  }
+
+  if (rule.customMessage) {
+    let msg = rule.customMessage
+      .replace(/{日期}/g, targetDatesText)
+      .replace(/{{日期}}/g, targetDatesText)
+      .replace(/{總店數}/g, String(customerBlocks.length))
+      .replace(/{總單數}/g, String(ordersList.length));
+    footer += `\n\n${msg}`;
+  }
+
+  return header + body + footer;
+}
+
 // 🔔 Notification Center Check (Intended for Time-Driven Trigger)
 // Runs periodically (e.g. hourly) to evaluate rules and send notifications
 function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
@@ -2937,36 +3159,34 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
 
   const configSheet = getConfigSheet();
   const settingsDataStr = getSystemConfig(configSheet, "AppSettings");
-  if (!settingsDataStr) return;
+  if (!settingsDataStr) return [];
   
   let settings = null;
   try {
     settings = JSON.parse(settingsDataStr);
   } catch (e) {
-    return;
+    return [];
   }
   
   const rules = getRemindRulesFromSheet();
   const channelToken = String(settings.lineChannelToken || '').trim();
-  const userId = String(settings.lineUserId || '').trim();
-  if (!rules.length || !channelToken || !userId) return;
+  const adminUserIdStr = String(settings.lineUserId || '').trim();
+  const adminUserIds = adminUserIdStr.split(',').map(id => id.trim()).filter(Boolean);
+  if (!rules.length || !channelToken) return [];
 
   const now = new Date();
-  
   const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
-  // === 新增以下這段轉換時間的邏輯 ===
   const year = Utilities.formatDate(now, timeZone, "yyyy");
   const month = Utilities.formatDate(now, timeZone, "MM");
   const dateStr = Utilities.formatDate(now, timeZone, "dd");
   
   const currentDayNum = parseInt(Utilities.formatDate(now, timeZone, "u"), 10) % 7; 
   const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
-  const dayName = shortDays[currentDayNum]; // 短星期的字眼
+  const dayName = shortDays[currentDayNum];
   
   const currentHour = Utilities.formatDate(now, timeZone, "HH");
   const m = Utilities.formatDate(now, timeZone, "mm");
   const currentDayStr = String(currentDayNum);
-  const currentTimeStr = `${currentHour}:00`; 
   
   let h = parseInt(currentHour, 10);
   let period = '凌晨';
@@ -2978,7 +3198,6 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
   
   // 組合出格式如：2026-05-17(日)晚上7:00
   const formattedTimeStr = `${year}-${month}-${dateStr}(${dayName})${period}${displayHour}:${m}`;
-  // =================================
   
   // 以昨天作為起點，避免遺漏
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -2986,93 +3205,119 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
   
   const data = getData(startFetchDateStr, 0); 
   const customers = data.customers || [];
+  const customerByNameMap = {};
+  customers.forEach(c => {
+    if (c.name) customerByNameMap[String(c.name).trim()] = c;
+  });
+
+  const staffMap = getStaffInfoMap();
+  const scriptCache = CacheService.getScriptCache();
   
-  // =================================
-  // 打擊範圍縮圈 (Data Bounding)
-  // 解決配額提早耗盡 (Quota Drain)，只抓出貨日與今天相差 3 天內的訂單進迴圈
-  // =================================
+  // 打擊範圍縮圈 (Data Bounding)：只抓出貨日與今天相差 3 天內的訂單
   if (data.orders && Array.isArray(data.orders)) {
-    // 過濾前的數量，如果很大，這一步可以省下巨量運算時間
     data.orders = data.orders.filter(order => {
       let dStr = order.deliveryDate;
       if (!dStr) return false;
       let d = (dStr instanceof Date) ? dStr : new Date(String(dStr).split(' ')[0].replace(/\//g, '-'));
       if (isNaN(d.getTime())) return true;
       const diffDays = Math.abs((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      return diffDays <= 3; // 取前後 3 天
+      return diffDays <= 3;
     });
   }
 
-  let notifications = [];
+  const normalizeGasDate = (dStr) => {
+    if (!dStr) return "";
+    if (dStr instanceof Date) {
+      return Utilities.formatDate(dStr, timeZone, "yyyy-MM-dd");
+    }
+    return String(dStr).split(' ')[0].replace(/\//g, '-');
+  };
+
+  let ruleDeliveries = [];
   
   for (let r = 0; r < rules.length; r++) {
-    // 2. 迴圈每一圈都看錶，超過 4.6 分鐘直接停手
     if (Date.now() - START_TIME > TIME_LIMIT) {
       console.warn("即將超時，主動中斷規則檢查以確保寫入 Log！");
       break; 
     }
 
     const rule = rules[r];
-    // 定義初始偵測包
-    let trace = { step: "INIT", message: "開始評估", customersEvaluated: 0, customersMatched: 0 };
+    let trace = {
+      step: "INIT",
+      message: "開始評估",
+      customersEvaluated: 0,
+      customersMatched: 0,
+      ordersMatched: 0,
+      driverPushCount: 0,
+      previewSamples: []
+    };
 
     const logAndReturn = (status, details) => {
-        if (!isDryRun) {
-            const currentTs = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
-            const safeDetails = details ? JSON.stringify(details) : "{}";
-            batchLogs.push([currentTs, triggerSource, rule.id, rule.name, status, safeDetails]);
-        }
-        if (isDryRun) dryRunResults.push({ ruleId: rule.id, ruleName: rule.name, status, details });
+      if (!isDryRun) {
+        const currentTs = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+        const safeDetails = details ? JSON.stringify(details) : "{}";
+        batchLogs.push([currentTs, triggerSource, rule.id, rule.name, status, safeDetails]);
+      }
+      if (isDryRun) dryRunResults.push({ ruleId: rule.id, ruleName: rule.name, status, details });
     };
 
     if (forceRuleId && rule.id !== forceRuleId) continue;
 
     if (!rule.isActive && rule.id !== forceRuleId) {
-       logAndReturn("SKIPPED", { reason: "規則已停用" });
-       continue;
+      logAndReturn("SKIPPED", { reason: "規則已停用" });
+      continue;
     }
-    
+
     // Check Date & Time match
     let isTimeMatched = false;
     if (forceRuleId === rule.id) {
-      isTimeMatched = true; // Bypass time check when forcing a test
+      isTimeMatched = true;
     } else if (Array.isArray(rule.schedule)) {
-      isTimeMatched = (rule.schedule.includes(currentDayStr) || rule.schedule.includes('每天')) && rule.timeToNotify.startsWith(currentHour);
+      isTimeMatched = (rule.schedule.includes(currentDayStr) || rule.schedule.includes('每天')) && String(rule.timeToNotify || '').startsWith(currentHour);
     } else {
       if (rule.schedule === '每天') {
-        isTimeMatched = rule.timeToNotify.startsWith(currentHour); // rough match
+        isTimeMatched = String(rule.timeToNotify || '').startsWith(currentHour);
       } else {
-        isTimeMatched = (rule.schedule === currentDayStr) && (rule.timeToNotify.startsWith(currentHour));
+        isTimeMatched = (rule.schedule === currentDayStr) && String(rule.timeToNotify || '').startsWith(currentHour);
       }
     }
     
     if (!isTimeMatched) {
-        // 時間未到或非指定星期，直接略過，不寫入試算表避免塞爆
+      if (forceRuleId === rule.id) {
+        logAndReturn("SKIPPED", { reason: "非排程時間" });
+      }
+      continue;
+    }
+
+    // 防止同小時內重複執行 CRON 造成洗版
+    const cacheLockKey = `RULE_SENT_${rule.id}_${year}${month}${dateStr}_${currentHour}`;
+    if (triggerSource === "SYSTEM_CRON" && !isDryRun) {
+      if (scriptCache.get(cacheLockKey)) {
         continue;
+      }
     }
     
-    // === 支援多天檢查未來的訂單 ===
+    // === 計算目標配送日 (支援 TODAY i=0 / TOMORROW i=1 / WEEKDAYS i=1..7) ===
     let targetDatesInfo = [];
     const shortDaysArr = ['日', '一', '二', '三', '四', '五', '六'];
-    
-    if (rule.targetOrderDays && rule.targetOrderDays.length > 0) {
+    const dateMode = rule.targetDateMode || ((rule.targetOrderDays && rule.targetOrderDays.length > 0) ? 'WEEKDAYS' : 'TOMORROW');
+
+    if (dateMode === 'TODAY') {
+      targetDatesInfo.push(now);
+    } else if (dateMode === 'TOMORROW') {
+      targetDatesInfo.push(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+    } else if (rule.targetOrderDays && rule.targetOrderDays.length > 0) {
       for (let i = 1; i <= 7; i++) {
         let checkDay = (currentDayNum + i) % 7;
         if (rule.targetOrderDays.includes(String(checkDay))) {
-          const tDate = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
-          targetDatesInfo.push(tDate);
+          targetDatesInfo.push(new Date(now.getTime() + i * 24 * 60 * 60 * 1000));
         }
       }
     } else {
-      targetDatesInfo.push(new Date(now.getTime() + 24 * 60 * 60 * 1000)); // 預設檢查明天
+      targetDatesInfo.push(new Date(now.getTime() + 24 * 60 * 60 * 1000));
     }
 
-    // 將目標日期轉換成 YYYY-MM-DD 以便篩選訂單
-    const targetDateStrings = targetDatesInfo.map(d => {
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    });
-
-    // 格式化所有的短日期 (用於推播訊息中的文字：例如 5-19(二))
+    const targetDateStrings = targetDatesInfo.map(d => Utilities.formatDate(d, timeZone, "yyyy-MM-dd"));
     const targetShortStrings = targetDatesInfo.map(d => {
       const md = Utilities.formatDate(d, timeZone, "M-d");
       const dNum = parseInt(Utilities.formatDate(d, timeZone, "u"), 10) % 7;
@@ -3080,53 +3325,62 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     });
     const targetDatesText = targetShortStrings.join('、');
     
-    // 取得「包含這些目標日期」的所有訂單
-    // 新增一個清洗字串的小工具 (將 2026/05/23 00:00:00 強制轉換回 2026-05-23)
-    const normalizeGasDate = (dStr) => {
-      if (!dStr) return "";
-      if (dStr instanceof Date) {
-        return Utilities.formatDate(dStr, timeZone, "yyyy-MM-dd");
-      }
-      return String(dStr).split(' ')[0].replace(/\//g, '-');
-    };
-
-    const targetOrders = data.orders.filter(o => {
-      return targetDateStrings.includes(normalizeGasDate(o.deliveryDate));
-    });
+    // 取得目標日期內所有「非取消」訂單，並依客戶名分組
+    const targetOrdersAll = (data.orders || []).filter(o => targetDateStrings.includes(normalizeGasDate(o.deliveryDate)));
+    const targetActiveOrders = targetOrdersAll.filter(o => !isCancelledOrderStatus(o.status));
     
-    // ★ 新增：預先將訂單依照 customerName 進行分組 (O(N) 的一次性操作)
     const ordersByCustomer = {};
-    for (let i = 0; i < targetOrders.length; i++) {
-      const order = targetOrders[i];
-      const cName = order.customerName;
-      if (!ordersByCustomer[cName]) {
-        ordersByCustomer[cName] = [];
-      }
+    for (let i = 0; i < targetActiveOrders.length; i++) {
+      const order = targetActiveOrders[i];
+      const cName = String(order.customerName || '').trim();
+      if (!ordersByCustomer[cName]) ordersByCustomer[cName] = [];
       ordersByCustomer[cName].push(order);
     }
+
+    const ruleHasPositiveCondition = (rule.conditions || []).some(c => isPositiveOrderCondition(c.status));
     
-    // 過濾客戶 (如果客戶已封存、暫停供貨，或在"所有"勾選的目標日期都是休息或特休，才略過他)
+    // 若為正向出貨檢查，只要客戶當天有有效單（即使當天是公休日）也不可漏掉！
+    // 若為未訂購/待處理警戒，才過濾掉封存、暫停或休假客戶
     const activeCustomers = customers.filter(c => {
+      const cName = String(c.name || '').trim();
+      const hasOrderToday = (ordersByCustomer[cName] || []).length > 0;
+      if (ruleHasPositiveCondition && hasOrderToday && !c.isArchived) {
+        return true;
+      }
       if (c.isArchived || c.isPaused) return false;
       const hasWorkingDay = targetDatesInfo.some(d => {
-        const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const isOff = (c.offDays && c.offDays.includes(d.getDay())) || (c.holidayDates && c.holidayDates.includes(dStr));
-        return !isOff; // 有任何一天不是休假，就把他加進檢查名單
+        const dStr = Utilities.formatDate(d, timeZone, "yyyy-MM-dd");
+        const dayNum = parseInt(Utilities.formatDate(d, timeZone, "u"), 10) % 7;
+        const isOff = (c.offDays && c.offDays.includes(dayNum)) || (c.holidayDates && c.holidayDates.includes(dStr));
+        return !isOff;
       });
       return hasWorkingDay;
     });
-    // =================================
+
+    // 若訂單裡的客戶不在 customers 主檔裡（例如臨時散客）且規則未指定特定店家且含正向條件，也一併納入
+    if (ruleHasPositiveCondition) {
+      Object.keys(ordersByCustomer).forEach(cName => {
+        if (!customerByNameMap[cName]) {
+          activeCustomers.push({ id: `ADHOC_${cName}`, name: cName, offDays: [], holidayDates: [] });
+        }
+      });
+    }
+
     trace.customersEvaluated = activeCustomers.length;
 
     if (activeCustomers.length === 0) {
-        logAndReturn("SKIPPED", { reason: "今日所有目標客戶皆為休假日", targetDatesText });
-        continue;
+      logAndReturn("SKIPPED", { reason: "今日無符合檢查對象（目標客戶皆休假或無訂單）", targetDatesText });
+      continue;
     }
+
+    const matchedOrdersCollected = [];
+    const matchedOrderIdSet = new Set();
 
     const triggeredCustomers = activeCustomers.filter(customer => {
       let isRuleMatched = null;
+      const candidateOrdersForCustomer = [];
 
-      rule.conditions.forEach(cond => {
+      (rule.conditions || []).forEach(cond => {
         let condAppliesToCustomer = true;
         if (cond.customers && cond.customers.length > 0 && !cond.customers.includes(customer.id)) {
           condAppliesToCustomer = false;
@@ -3134,142 +3388,296 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
 
         let condMatched = false;
         if (condAppliesToCustomer) {
-          const targetProducts = (cond.products && cond.products.length) ? cond.products : data.products.map(p => p.name);
-          
-          // ★ 修改後：直接從剛剛建好的索引表中 O(1) 提取
-          const customerOrders = ordersByCustomer[customer.name] || [];
-          const relevantOrders = customerOrders.filter(o => 
-            targetProducts.includes(o.productName || o.product?.name)
-          );
+          const hasProductFilter = cond.products && cond.products.length > 0;
+          const targetProducts = hasProductFilter ? cond.products : (data.products || []).map(p => p.name);
+          const customerOrders = ordersByCustomer[String(customer.name || '').trim()] || [];
+          const relevantOrders = hasProductFilter
+            ? customerOrders.filter(o => targetProducts.includes(o.productName || o.product?.name))
+            : customerOrders;
 
           if (cond.status === 'UNORDERED') {
             condMatched = relevantOrders.length === 0;
           } else if (cond.status === 'PENDING') {
-            condMatched = relevantOrders.some(o => o.status === 'PENDING' || o.status === '待處理');
+            const matched = relevantOrders.filter(o => o.status === 'PENDING' || o.status === '待處理');
+            condMatched = matched.length > 0;
+            if (condMatched) candidateOrdersForCustomer.push(...matched);
+          } else if (cond.status === 'ACTIVE_ORDERS' || cond.status === 'HAS_PRODUCT') {
+            condMatched = relevantOrders.length > 0;
+            if (condMatched) candidateOrdersForCustomer.push(...relevantOrders);
+          } else if (cond.status === 'READY_OR_PENDING') {
+            const matched = relevantOrders.filter(o => !isCompletedOrderStatus(o.status));
+            condMatched = matched.length > 0;
+            if (condMatched) candidateOrdersForCustomer.push(...matched);
+          } else if (cond.status === 'UNASSIGNED') {
+            const matched = relevantOrders.filter(o => !String(o.assignedTo || '').trim());
+            condMatched = matched.length > 0;
+            if (condMatched) candidateOrdersForCustomer.push(...matched);
           }
         }
         
         if (isRuleMatched === null) {
           isRuleMatched = condMatched;
+        } else if (cond.operator === 'AND') {
+          isRuleMatched = isRuleMatched && condMatched;
         } else {
-          if (cond.operator === 'AND') {
-            isRuleMatched = isRuleMatched && condMatched;
-          } else { // 'OR' or default
-            isRuleMatched = isRuleMatched || condMatched;
-          }
+          isRuleMatched = isRuleMatched || condMatched;
         }
       });
 
-      return isRuleMatched;
+      if (isRuleMatched) {
+        candidateOrdersForCustomer.forEach((o, idx) => {
+          const uniqKey = o.id ? String(o.id) : `${o.customerName}_${o.deliveryDate}_${o.productName}_${idx}`;
+          if (!matchedOrderIdSet.has(uniqKey)) {
+            matchedOrderIdSet.add(uniqKey);
+            matchedOrdersCollected.push(o);
+          }
+        });
+      }
+
+      return Boolean(isRuleMatched);
     });
 
     trace.step = "CONDITION_EVALUATED";
     trace.customersMatched = triggeredCustomers.length;
+    trace.ordersMatched = matchedOrdersCollected.length;
 
     if (triggeredCustomers.length === 0) {
-        logAndReturn("SKIPPED", { reason: "客戶有營業，但條件未達成 (例如客戶已下單)", targetDatesText });
-        continue;
+      logAndReturn("SKIPPED", { reason: "條件未達成，無需發送提醒", targetDatesText });
+      continue;
     }
 
-    if (triggeredCustomers.length > 0) {
-      // 將觸發提醒的客戶名稱串接
-      const names = triggeredCustomers.map(c => c.name).join('、');
-      
-      trace.step = "SENT";
-      trace.recipients = names;
-      
-      // 嘗試組合「發生+品項」的文字，因為條件可能有多個，我們需要簡潔表達
-      // 您可以將所有條件的產品名稱與狀態彙整起來
-      const conditionTexts = rule.conditions.map(cond => {
+    // 組裝發送封包（依 recipientMode 分流）
+    const outputFormat = rule.outputFormat || 'SUMMARY_NAMES';
+    const recipientMode = rule.recipientMode || 'DEFAULT_ADMIN';
+    const outboundMessages = []; // { targetLineIds, recipientName, text }
+
+    const statusLabelMap = {
+      'UNORDERED': '未訂購',
+      'PENDING': '狀態為待處理',
+      'ACTIVE_ORDERS': '今日有效配送單',
+      'READY_OR_PENDING': '尚待出貨/處理中',
+      'UNASSIGNED': '尚未指派司機',
+      'HAS_PRODUCT': '包含指定品項'
+    };
+
+    const buildSummaryText = (custList, subHeader) => {
+      const prioritySet = new Set((rule.priorityCustomerIds || []).map(String));
+      const sortedCusts = [...custList].sort((a, b) => {
+        const aPri = prioritySet.has(String(a.id)) ? 1 : 0;
+        const bPri = prioritySet.has(String(b.id)) ? 1 : 0;
+        return bPri - aPri;
+      });
+      const names = sortedCusts.map(c => prioritySet.has(String(c.id)) ? `🚨${c.name}` : c.name).join('、');
+      const conditionTexts = (rule.conditions || []).map(cond => {
         const targetProducts = (cond.products && cond.products.length) ? cond.products.join('、') : '任何品項';
-        let statusStr = cond.status === 'UNORDERED' ? '沒有訂購' : '狀態為待處理';
-        
-        // === 將 targetDatesText 組裝進來 ===
+        const statusStr = statusLabelMap[cond.status] || cond.status;
         return `${statusStr} ${targetDatesText} ${targetProducts}`;
       });
-      
-      const formattedCondition = conditionTexts.join(' / ');
-
-      // === 修改這裡的組合順序 ===
-      // 1. 【規則名稱】:
       let message = `【${rule.name}】:\n`;
-      // 2. 當下時間
+      if (subHeader) message += `${subHeader}\n`;
       message += `${formattedTimeStr}\n`;
-      // 3. 對象+發生+品項
-      message += `${names} ${formattedCondition}`;
-      
-      // 4. 提醒內容(純文字)
+      message += `${names} ${conditionTexts.join(' / ')}`;
       if (rule.customMessage) {
-        let msg = rule.customMessage.replace(/{日期}/g, targetDatesText).replace(/{{日期}}/g, targetDatesText);
-        message += `\n\n${msg}`; // 加一個空行區隔會比較乾淨
+        let msg = rule.customMessage
+          .replace(/{日期}/g, targetDatesText)
+          .replace(/{{日期}}/g, targetDatesText)
+          .replace(/{總店數}/g, String(custList.length))
+          .replace(/{總單數}/g, String(matchedOrdersCollected.length));
+        message += `\n\n${msg}`;
       }
-      
-      notifications.push({
-        message: message,
-        logSuccess: () => logAndReturn("SUCCESS", trace),
-        logError: (err) => logAndReturn("ERROR", { ...trace, Error: err.message || err.toString() })
+      return message;
+    };
+
+    if (recipientMode === 'ASSIGNED_DRIVER' && matchedOrdersCollected.length > 0) {
+      const driverGroups = {};
+      const unassignedOrUnboundOrders = [];
+
+      matchedOrdersCollected.forEach(o => {
+        const aId = String(o.assignedTo || '').trim();
+        const staffLineId = aId ? getStaffLineId(aId) : null;
+        if (aId && staffLineId) {
+          if (!driverGroups[aId]) {
+            const staffObj = staffMap[aId.toLowerCase()];
+            driverGroups[aId] = {
+              staffId: aId,
+              staffName: o.assignedName || (staffObj ? staffObj.name : aId),
+              lineId: staffLineId,
+              orders: []
+            };
+          }
+          driverGroups[aId].orders.push(o);
+        } else {
+          unassignedOrUnboundOrders.push(o);
+        }
       });
-    }
-  }
-  
-  // Actually send
-  if (notifications.length > 0) {
-    const userIds = userId.split(',').map(id => id.trim()).filter(id => id);
-    
-    if (userIds.length > 0) {
-      const endpoint = userIds.length === 1 
-        ? "https://api.line.me/v2/bot/message/push" 
-        : "https://api.line.me/v2/bot/message/multicast";
-        
-      const payloadTo = userIds.length === 1 ? userIds[0] : userIds;
-      
-      if (!isDryRun) {
-        // 【修改點】針對每一則通知獨立發動 API 請求，使其成為獨立對話泡泡
-        // 準備一個發射清單，採用 UrlFetchApp.fetchAll (非同步併發) 解決網路等待延遲
-        const requests = [];
-        for (let j = 0; j < notifications.length; j++) {
-           const n = notifications[j];
-           requests.push({
-             url: endpoint,
-             method: "post",
-             contentType: "application/json",
-             headers: { 
-               "Authorization": "Bearer " + channelToken 
-             },
-             payload: JSON.stringify({
-               to: payloadTo,
-               messages: [{ type: "text", text: n.message }]
-             }),
-             muteHttpExceptions: true
-           });
-        }
-        
-        try {
-          // 全部一起發射！
-          const responses = UrlFetchApp.fetchAll(requests);
-          
-          // 發射完再來統一整理 Log
-          responses.forEach((res, index) => {
-            const n = notifications[index];
-            if (res.getResponseCode() === 200) {
-              n.logSuccess();
-            } else {
-              n.logError(new Error(`API failed with ${res.getResponseCode()}: ${res.getContentText()}`));
-            }
+
+      Object.values(driverGroups).forEach(group => {
+        const subHeader = `👤 負責司機：${group.staffName}`;
+        const rawText = outputFormat === 'DELIVERY_MANIFEST'
+          ? buildDeliveryManifestText(rule, group.orders, customerByNameMap, targetDatesText, formattedTimeStr, subHeader)
+          : buildSummaryText(
+              Array.from(new Set(group.orders.map(o => o.customerName))).map(n => customerByNameMap[n] || { id: n, name: n }),
+              subHeader
+            );
+        splitLineMessageChunks(rawText).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: [group.lineId],
+            recipientName: `${group.staffName} (司機)`,
+            text: chunk
           });
-        } catch (err) {
-           console.log("LINE Messaging API fetchAll failed: " + err.message);
-           notifications.forEach(n => n.logError(err));
+        });
+      });
+
+      if (unassignedOrUnboundOrders.length > 0 && rule.fallbackToAdminIfUnassigned !== false && adminUserIds.length > 0) {
+        const subHeader = `⚠️ 以下訂單尚未指派司機或司機尚未綁定 LINE（共 ${unassignedOrUnboundOrders.length} 筆）`;
+        const rawText = outputFormat === 'DELIVERY_MANIFEST'
+          ? buildDeliveryManifestText(rule, unassignedOrUnboundOrders, customerByNameMap, targetDatesText, formattedTimeStr, subHeader)
+          : buildSummaryText(
+              Array.from(new Set(unassignedOrUnboundOrders.map(o => o.customerName))).map(n => customerByNameMap[n] || { id: n, name: n }),
+              subHeader
+            );
+        splitLineMessageChunks(rawText).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: adminUserIds,
+            recipientName: "管理員 (未指派單補送)",
+            text: chunk
+          });
+        });
+      }
+    } else if (recipientMode === 'SPECIFIC_STAFF') {
+      const staffIds = rule.targetStaffIds || [];
+      const resolvedLineIds = [];
+      const resolvedNames = [];
+      staffIds.forEach(sId => {
+        const lid = getStaffLineId(sId);
+        if (lid && !resolvedLineIds.includes(lid)) {
+          resolvedLineIds.push(lid);
+          const staffObj = staffMap[String(sId).trim().toLowerCase()];
+          resolvedNames.push(staffObj ? staffObj.name : sId);
         }
-      } else {
-         notifications.forEach(n => n.logSuccess());
+      });
+
+      if (resolvedLineIds.length > 0) {
+        const rawText = (outputFormat === 'DELIVERY_MANIFEST' && matchedOrdersCollected.length > 0)
+          ? buildDeliveryManifestText(rule, matchedOrdersCollected, customerByNameMap, targetDatesText, formattedTimeStr, '')
+          : buildSummaryText(triggeredCustomers, '');
+        splitLineMessageChunks(rawText).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: resolvedLineIds,
+            recipientName: resolvedNames.join('、'),
+            text: chunk
+          });
+        });
       }
     } else {
-        notifications.forEach(n => n.logError(new Error("未設定 LINE userId")));
+      // DEFAULT_ADMIN
+      if (adminUserIds.length > 0) {
+        const rawText = (outputFormat === 'DELIVERY_MANIFEST' && matchedOrdersCollected.length > 0)
+          ? buildDeliveryManifestText(rule, matchedOrdersCollected, customerByNameMap, targetDatesText, formattedTimeStr, '')
+          : buildSummaryText(triggeredCustomers, '');
+        splitLineMessageChunks(rawText).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: adminUserIds,
+            recipientName: "預設管理員",
+            text: chunk
+          });
+        });
+      }
+    }
+
+    if (outboundMessages.length === 0) {
+      logAndReturn("SKIPPED", {
+        reason: recipientMode === 'DEFAULT_ADMIN'
+          ? "未設定預設 LINE User ID"
+          : "找不到任何已綁定 LINE 的對應司機／接收同仁",
+        targetDatesText,
+        customersEvaluated: trace.customersEvaluated,
+        customersMatched: trace.customersMatched,
+        ordersMatched: trace.ordersMatched
+      });
+      continue;
+    }
+
+    trace.step = "SENT";
+    const uniqueRecipientNames = Array.from(new Set(outboundMessages.map(m => m.recipientName)));
+    trace.recipients = uniqueRecipientNames.join('、');
+    trace.driverPushCount = uniqueRecipientNames.length;
+    trace.previewSamples = outboundMessages.slice(0, 5).map(m => ({
+      recipientName: m.recipientName,
+      previewText: m.text
+    }));
+
+    ruleDeliveries.push({
+      rule,
+      cacheLockKey,
+      outboundMessages,
+      logSuccess: () => logAndReturn("SUCCESS", trace),
+      logError: (err) => logAndReturn("ERROR", { ...trace, Error: err.message || err.toString() })
+    });
+  }
+  
+  // 統一發射所有 HTTP 請求
+  if (ruleDeliveries.length > 0) {
+    if (!isDryRun) {
+      const flatRequests = [];
+      const requestMeta = [];
+
+      ruleDeliveries.forEach((delivery, dIdx) => {
+        delivery.outboundMessages.forEach(msg => {
+          const ids = msg.targetLineIds;
+          const endpoint = ids.length === 1
+            ? "https://api.line.me/v2/bot/message/push"
+            : "https://api.line.me/v2/bot/message/multicast";
+          const payloadTo = ids.length === 1 ? ids[0] : ids;
+
+          flatRequests.push({
+            url: endpoint,
+            method: "post",
+            contentType: "application/json",
+            headers: { "Authorization": "Bearer " + channelToken },
+            payload: JSON.stringify({
+              to: payloadTo,
+              messages: [{ type: "text", text: msg.text }]
+            }),
+            muteHttpExceptions: true
+          });
+          requestMeta.push(dIdx);
+        });
+      });
+
+      const deliverySuccessFlags = ruleDeliveries.map(() => true);
+      const deliveryErrors = ruleDeliveries.map(() => []);
+
+      try {
+        const responses = UrlFetchApp.fetchAll(flatRequests);
+        responses.forEach((res, idx) => {
+          const dIdx = requestMeta[idx];
+          if (res.getResponseCode() !== 200) {
+            deliverySuccessFlags[dIdx] = false;
+            deliveryErrors[dIdx].push(`HTTP ${res.getResponseCode()}: ${res.getContentText()}`);
+          }
+        });
+
+        ruleDeliveries.forEach((delivery, dIdx) => {
+          if (deliverySuccessFlags[dIdx]) {
+            if (triggerSource === "SYSTEM_CRON") {
+              try { scriptCache.put(delivery.cacheLockKey, "1", 3600); } catch (e) {}
+            }
+            delivery.logSuccess();
+          } else {
+            delivery.logError(new Error(deliveryErrors[dIdx].join(' | ')));
+          }
+        });
+      } catch (err) {
+        console.log("LINE Messaging API fetchAll failed: " + err.message);
+        ruleDeliveries.forEach(d => d.logError(err));
+      }
+    } else {
+      ruleDeliveries.forEach(d => d.logSuccess());
     }
   }
 
-  // 4. 安全下莊：統一一次性寫入 Log
+  // 寫入 Log
   if (batchLogs.length > 0) {
     try {
       const logSheet = getNotificationLogSheet();
@@ -3277,11 +3685,9 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       let startRow = lastRow > 0 ? lastRow + 1 : 2;
       safeSetValues(logSheet, startRow, 1, batchLogs);
       
-      // 效能防禦：Rolling Window (保留最新 800 筆)
       const afterLastRow = logSheet.getLastRow();
       const MAX_LOGS = 1000;
       const DELETE_COUNT = 200;
-      
       if (afterLastRow > MAX_LOGS) {
         logSheet.deleteRows(2, DELETE_COUNT);
       }
@@ -3290,7 +3696,794 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     }
   }
 
+  // 每日出車簡報排程檢查（共用同一個 Cron Trigger，免額外設定觸發器）
+  if (triggerSource === "SYSTEM_CRON" && !isDryRun && !forceRuleId) {
+    try {
+      runDailyBriefingCheck(false, false, null);
+    } catch (briefErr) {
+      console.warn("runDailyBriefingCheck error: " + briefErr.toString());
+    }
+  }
+
   return dryRunResults;
+}
+
+/**
+ * 組裝「三段式」每日出車簡報文案
+ */
+function buildThreeSectionBriefingText(options) {
+  const titleDate = options.titleDate || '';
+  const subHeader = options.subHeader || '';
+  const orders = options.orders || [];
+  const customerByNameMap = options.customerByNameMap || {};
+  const groupBy = options.groupBy || 'BY_DRIVER';
+  const includeItemTotals = options.includeItemTotals !== false;
+  const includeTripInfo = options.includeTripInfo === true;
+  const includeDeliveryTime = options.includeDeliveryTime === true;
+  const missingWatchlistCustomers = options.missingWatchlistCustomers || [];
+  const unscheduledNotice = options.unscheduledNotice || '';
+
+  const custOrderMap = {};
+  const itemTotalsMap = {};
+
+  orders.forEach(o => {
+    const cName = String(o.customerName || '未命名店家').trim();
+    const cust = customerByNameMap[cName];
+    const isWatchlist = Boolean(cust && cust.isWatchlist);
+    if (!custOrderMap[cName]) {
+      custOrderMap[cName] = {
+        customerName: cName,
+        isWatchlist: isWatchlist,
+        trip: o.trip || (cust ? cust.defaultTrip : '') || '未分配',
+        deliveryTime: o.deliveryTime || (cust ? cust.deliveryTime : '') || '',
+        deliveryMethod: o.deliveryMethod || (cust ? cust.deliveryMethod : '') || '',
+        items: [],
+        notes: []
+      };
+    }
+
+    const pName = o.productName || (o.product && o.product.name) || '未命名品項';
+    const qty = Number(o.quantity) || 0;
+    const unit = o.unit || '';
+    custOrderMap[cName].items.push({ productName: pName, quantity: qty, unit: unit });
+
+    const iKey = `${pName}__${unit}`;
+    if (!itemTotalsMap[iKey]) {
+      itemTotalsMap[iKey] = { productName: pName, quantity: 0, unit: unit };
+    }
+    itemTotalsMap[iKey].quantity += qty;
+
+    const noteStr = String(o.note || '').trim();
+    if (noteStr && !custOrderMap[cName].notes.includes(noteStr)) {
+      custOrderMap[cName].notes.push(noteStr);
+    }
+  });
+
+  const formatCustomerBlock = (block, isPrioritySection) => {
+    // 合併同店家相同品項
+    const merged = {};
+    block.items.forEach(it => {
+      const k = `${it.productName}__${it.unit}`;
+      if (!merged[k]) merged[k] = { productName: it.productName, quantity: 0, unit: it.unit };
+      merged[k].quantity += it.quantity;
+    });
+    const metaParts = [];
+    if (includeTripInfo && block.trip && block.trip !== '未分配') metaParts.push(block.trip);
+    if (includeDeliveryTime && block.deliveryTime) metaParts.push(block.deliveryTime);
+    if (block.deliveryMethod && block.deliveryMethod !== '外送') metaParts.push(block.deliveryMethod);
+    const metaStr = metaParts.length > 0 ? ` (${metaParts.join(' ')})` : '';
+
+    let text = `${isPrioritySection ? '🚨 ' : '▸ '}${block.customerName}${metaStr}`;
+    Object.values(merged).forEach(it => {
+      text += `\n  • ${it.productName} × ${it.quantity}${it.unit}`;
+    });
+    if (block.notes.length > 0) {
+      text += `\n  📝 備註：${block.notes.join(' / ')}`;
+    }
+    return text;
+  };
+
+  const sortBlocks = (arr) => arr.sort((a, b) => {
+    const tripCmp = String(a.trip || 'zzz').localeCompare(String(b.trip || 'zzz'), 'zh-Hant');
+    if (tripCmp !== 0) return tripCmp;
+    const timeCmp = String(a.deliveryTime || '99:99').localeCompare(String(b.deliveryTime || '99:99'));
+    if (timeCmp !== 0) return timeCmp;
+    return a.customerName.localeCompare(b.customerName, 'zh-Hant');
+  });
+
+  const allBlocks = Object.values(custOrderMap);
+  const watchlistBlocks = sortBlocks(allBlocks.filter(b => b.isWatchlist));
+  const normalBlocks = sortBlocks(allBlocks.filter(b => !b.isWatchlist));
+
+  let msg = `【每日出車簡報｜${titleDate}】\n`;
+  if (subHeader) msg += `${subHeader}\n`;
+  msg += `總計：${allBlocks.length} 家（${orders.length} 筆品項明細）\n`;
+  if (unscheduledNotice) msg += `${unscheduledNotice}\n`;
+
+  // 第一段：🚨 易漏重點必送
+  if (watchlistBlocks.length > 0) {
+    msg += `━━━━━━━━━━━━━━\n`;
+    msg += `🚨【第一段｜易漏重點必送】(${watchlistBlocks.length} 家)\n`;
+    msg += watchlistBlocks.map(b => formatCustomerBlock(b, true)).join('\n──────────\n');
+    msg += '\n';
+  }
+
+  // 第二段：🚚 今日一般配送
+  if (normalBlocks.length > 0) {
+    msg += `━━━━━━━━━━━━━━\n`;
+    msg += `🚚【第二段｜今日一般配送】(${normalBlocks.length} 家)\n`;
+    if (groupBy === 'BY_TRIP') {
+      const byTrip = {};
+      normalBlocks.forEach(b => {
+        const t = b.trip || '未分配';
+        if (!byTrip[t]) byTrip[t] = [];
+        byTrip[t].push(b);
+      });
+      const tripSections = Object.keys(byTrip).sort((a, b) => a.localeCompare(b, 'zh-Hant')).map(t => {
+        return `【${t}】\n` + byTrip[t].map(b => formatCustomerBlock(b, false)).join('\n──────────\n');
+      });
+      msg += tripSections.join('\n\n');
+    } else {
+      msg += normalBlocks.map(b => formatCustomerBlock(b, false)).join('\n──────────\n');
+    }
+    msg += '\n';
+  }
+
+  // 總備貨量小計
+  if (includeItemTotals && orders.length > 0) {
+    const totalsArr = Object.values(itemTotalsMap).map(it => `${it.productName} ${it.quantity}${it.unit}`);
+    if (totalsArr.length > 0) {
+      msg += `━━━━━━━━━━━━━━\n📦 總備貨小計：\n${totalsArr.join('、')}\n`;
+    }
+  }
+
+  // 第三段：❓ 盯哨店家今日無單確認（僅管理員/總表附帶）
+  if (missingWatchlistCustomers.length > 0) {
+    msg += `━━━━━━━━━━━━━━\n`;
+    msg += `❓【第三段｜盯哨店家今日無單確認】(${missingWatchlistCustomers.length} 家)\n`;
+    msg += `以下重點店家今日非公休但 0 筆訂單，請確認是否漏打單：\n`;
+    msg += missingWatchlistCustomers.map(c => `• ${c.name}`).join('\n');
+  }
+
+  return msg.trim();
+}
+
+/**
+ * 方案 B 核心：依白名單店家標籤與客製化模板渲染 LINE 出車簡報
+ */
+function renderCustomBriefingTemplate(options) {
+  const template = String(options.template || '');
+  if (!template.trim()) return '';
+
+  const titleDate = options.titleDate || '';
+  const ordersSlice = options.orders || [];
+  const customerByIdMap = options.customerByIdMap || {};
+  const customerByNameMap = options.customerByNameMap || {};
+  const emptyStoreBehavior = options.emptyStoreBehavior || 'HIDE_LINE';
+  const appendItemTotals = options.appendItemTotals === true;
+  const includeTripInfo = options.includeTripInfo === true;
+  const includeDeliveryTime = options.includeDeliveryTime === true;
+  const missingCustomers = options.missingCustomers || [];
+
+  const custOrderMap = {};
+  const itemTotalsMap = {};
+
+  ordersSlice.forEach(o => {
+    const cName = String(o.customerName || '').trim();
+    if (!cName) return;
+    const cust = customerByNameMap[cName];
+    if (!custOrderMap[cName]) {
+      custOrderMap[cName] = {
+        customerName: cName,
+        isWatchlist: Boolean(cust && cust.isWatchlist),
+        trip: o.trip || (cust ? cust.defaultTrip : '') || '未分配',
+        deliveryTime: o.deliveryTime || (cust ? cust.deliveryTime : '') || '',
+        deliveryMethod: o.deliveryMethod || (cust ? cust.deliveryMethod : '') || '',
+        items: [],
+        notes: []
+      };
+    }
+
+    const pName = o.productName || (o.product && o.product.name) || '未命名品項';
+    const qty = Number(o.quantity) || 0;
+    const unit = o.unit || '';
+    custOrderMap[cName].items.push({ productName: pName, quantity: qty, unit: unit });
+
+    const iKey = `${pName}__${unit}`;
+    if (!itemTotalsMap[iKey]) {
+      itemTotalsMap[iKey] = { productName: pName, quantity: 0, unit: unit };
+    }
+    itemTotalsMap[iKey].quantity += qty;
+
+    const noteStr = String(o.note || '').trim();
+    if (noteStr && !custOrderMap[cName].notes.includes(noteStr)) {
+      custOrderMap[cName].notes.push(noteStr);
+    }
+  });
+
+  const formatCustomerTokenBlock = (cName, block) => {
+    const merged = {};
+    block.items.forEach(it => {
+      const k = `${it.productName}__${it.unit}`;
+      if (!merged[k]) merged[k] = { productName: it.productName, quantity: 0, unit: it.unit };
+      merged[k].quantity += it.quantity;
+    });
+    const metaParts = [];
+    if (includeTripInfo && block.trip && block.trip !== '未分配') metaParts.push(block.trip);
+    if (includeDeliveryTime && block.deliveryTime) metaParts.push(block.deliveryTime);
+    if (block.deliveryMethod && block.deliveryMethod !== '外送') metaParts.push(block.deliveryMethod);
+    const metaStr = metaParts.length > 0 ? ` (${metaParts.join(' ')})` : '';
+
+    let text = `${block.isWatchlist ? '🚨 ' : '▸ '}${cName}${metaStr}`;
+    Object.values(merged).forEach(it => {
+      text += `\n  • ${it.productName} × ${it.quantity}${it.unit}`;
+    });
+    if (block.notes.length > 0) {
+      text += `\n  📝 備註：${block.notes.join(' / ')}`;
+    }
+    return text;
+  };
+
+  const totalsArr = Object.values(itemTotalsMap).map(it => `${it.productName} ${it.quantity}${it.unit}`);
+  const subtotalText = totalsArr.length > 0
+    ? `📦 總備貨小計：\n${totalsArr.join('、')}`
+    : (emptyStoreBehavior === 'SHOW_NO_ORDER' ? '📦 總備貨小計：\n（無出貨品項）' : '__REMOVE_LINE__');
+
+  const missingText = missingCustomers.length > 0
+    ? `❓ 以下標籤店家今日非公休但 0 筆訂單：\n${missingCustomers.map(c => `• ${c.name}`).join('\n')}`
+    : '__REMOVE_LINE__';
+
+  const hasManualTotalsToken = template.indexOf('{{總備貨小計}}') !== -1;
+
+  let rendered = template
+    .replace(/\{\{今日日期\}\}/g, titleDate)
+    .replace(/\{\{總備貨小計\}\}/g, subtotalText)
+    .replace(/\{\{無單確認名單\}\}/g, missingText)
+    .replace(/\{\{店家:([^|}]+)(?:\|([^}]+))?\}\}/g, (_, rawName, rawId) => {
+      const custObj = (rawId && customerByIdMap[String(rawId).trim()]) || customerByNameMap[String(rawName).trim()];
+      const targetName = custObj ? String(custObj.name).trim() : String(rawName).trim();
+      const block = custOrderMap[targetName];
+      if (!block) {
+        return emptyStoreBehavior === 'SHOW_NO_ORDER'
+          ? `▸ ${targetName}（⭕ 今日無單）`
+          : '__REMOVE_LINE__';
+      }
+      return formatCustomerTokenBlock(targetName, block);
+    });
+
+  rendered = rendered
+    .split('\n')
+    .filter(line => line.trim() !== '__REMOVE_LINE__')
+    .map(line => line.replace(/__REMOVE_LINE__/g, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (appendItemTotals && !hasManualTotalsToken && totalsArr.length > 0) {
+    rendered += `\n━━━━━━━━━━━━━━\n📦 總備貨小計：\n${totalsArr.join('、')}`;
+  }
+
+  return rendered.trim();
+}
+
+/**
+ * 方案二核心：每日出車簡報排程與手動推演/發送
+ */
+function runDailyBriefingCheck(isDryRun = false, forceRun = false, overrideConfig = null) {
+  const configSheet = getConfigSheet();
+  const settingsStr = getSystemConfig(configSheet, "AppSettings");
+  let settings = {};
+  if (settingsStr) {
+    try { settings = JSON.parse(settingsStr) || {}; } catch (e) {}
+  }
+
+  const channelToken = String(settings.lineChannelToken || '').trim();
+  const adminUserIds = String(settings.lineUserId || '').split(',').map(s => s.trim()).filter(Boolean);
+
+  let briefingList = [];
+  if (overrideConfig) {
+    briefingList = [overrideConfig];
+  } else if (Array.isArray(settings.dailyBriefings)) {
+    briefingList = settings.dailyBriefings;
+  } else if (settings.dailyBriefing) {
+    briefingList = [settings.dailyBriefing];
+  }
+
+  if (briefingList.length === 0) {
+    return [];
+  }
+
+  const now = new Date();
+  const timeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const year = Utilities.formatDate(now, timeZone, "yyyy");
+  const month = Utilities.formatDate(now, timeZone, "MM");
+  const dateNumStr = Utilities.formatDate(now, timeZone, "dd");
+  const todayStr = `${year}-${month}-${dateNumStr}`;
+  const currentHour = Utilities.formatDate(now, timeZone, "HH");
+  const currentDayNum = parseInt(Utilities.formatDate(now, timeZone, "u"), 10) % 7;
+  const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
+  const titleDate = `${Number(month)}/${Number(dateNumStr)}(${shortDays[currentDayNum]})`;
+  const scriptCache = CacheService.getScriptCache();
+
+  // 先檢查是否有任何需要執行的簡報（避免全部未啟用／非排程時段卻重複讀取工作表）
+  const activeCandidates = [];
+  for (let bIdx = 0; bIdx < briefingList.length; bIdx++) {
+    const b = briefingList[bIdx];
+    if (!b) continue;
+    const bId = String(b.id || (bIdx === 0 ? 'DAILY_BRIEFING' : `BRIEFING_${bIdx}`));
+    const bName = String(b.name || '每日出車簡報');
+
+    if (!channelToken) {
+      if (forceRun) {
+        const details = { reason: "未設定 LINE Channel Access Token" };
+        if (!isDryRun) {
+          try {
+            const ts = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+            getNotificationLogSheet().appendRow([ts, "MANUAL_TEST", bId, bName, "SKIPPED", JSON.stringify(details)]);
+          } catch (e) {}
+        }
+        return [{ ruleId: bId, ruleName: bName, status: "SKIPPED", details }];
+      }
+      continue;
+    }
+
+    if (!b.enabled && !forceRun) {
+      continue;
+    }
+
+    const scheduleArr = Array.isArray(b.schedule) ? b.schedule.map(String) : ['1', '2', '3', '4', '5', '6'];
+    const timeStr = String(b.timeToNotify || '06:00');
+    const safeBid = bId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cacheKey = `BRIEFING_SENT_${safeBid}_${year}${month}${dateNumStr}_${currentHour}`;
+
+    if (!forceRun) {
+      if (!scheduleArr.includes(String(currentDayNum)) || !timeStr.startsWith(currentHour)) {
+        continue;
+      }
+      if (!isDryRun && scriptCache.get(cacheKey)) {
+        continue;
+      }
+    }
+
+    activeCandidates.push({ briefing: b, bId, bName, cacheKey });
+  }
+
+  if (activeCandidates.length === 0) {
+    if (forceRun && briefingList[0]) {
+      const b0 = briefingList[0];
+      const b0Id = String(b0.id || 'DAILY_BRIEFING');
+      const b0Name = String(b0.name || '每日出車簡報');
+      const details = { reason: "每日出車簡報尚未啟用" };
+      if (!isDryRun) {
+        try {
+          const ts = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+          getNotificationLogSheet().appendRow([ts, "MANUAL_TEST", b0Id, b0Name, "SKIPPED", JSON.stringify(details)]);
+        } catch (e) {}
+      }
+      return [{ ruleId: b0Id, ruleName: b0Name, status: "SKIPPED", details }];
+    }
+    return [];
+  }
+
+  const data = getData(todayStr, 0);
+  const customers = data.customers || [];
+  const customerByNameMap = {};
+  const customerByIdMap = {};
+  customers.forEach(c => {
+    if (c.name) customerByNameMap[String(c.name).trim()] = c;
+    if (c.id) customerByIdMap[String(c.id).trim()] = c;
+  });
+
+  const normalizeGasDate = (dStr) => {
+    if (!dStr) return "";
+    if (dStr instanceof Date) return Utilities.formatDate(dStr, timeZone, "yyyy-MM-dd");
+    return String(dStr).split(' ')[0].replace(/\//g, '-');
+  };
+
+  const todayOrders = (data.orders || []).filter(o =>
+    normalizeGasDate(o.deliveryDate) === todayStr && !isCancelledOrderStatus(o.status)
+  );
+
+  const orderedCustNamesSet = new Set(todayOrders.map(o => String(o.customerName || '').trim()));
+  const staffMap = getStaffInfoMap();
+  const allResults = [];
+
+  for (let cIdx = 0; cIdx < activeCandidates.length; cIdx++) {
+    const { briefing, bId, bName, cacheKey } = activeCandidates[cIdx];
+
+    const returnSkip = (reason, extra) => {
+      const details = Object.assign({ reason }, extra || {});
+      if (!isDryRun) {
+        try {
+          const ts = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+          getNotificationLogSheet().appendRow([ts, forceRun ? "MANUAL_TEST" : "SYSTEM_CRON", bId, bName, "SKIPPED", JSON.stringify(details)]);
+        } catch (e) {}
+      }
+      return { ruleId: bId, ruleName: bName, status: "SKIPPED", details };
+    };
+
+    const outboundMessages = [];
+    const groupBy = briefing.groupBy || 'BY_DRIVER';
+
+    let statsEvaluated = customers.length;
+    let statsMatchedCust = orderedCustNamesSet.size;
+    let statsMatchedOrders = todayOrders.length;
+
+  if (briefing.briefingMode === 'CUSTOM_TEMPLATE') {
+    const includedIds = Array.isArray(briefing.includedCustomerIds) ? briefing.includedCustomerIds.map(id => String(id).trim()).filter(Boolean) : [];
+    const allowedNameSet = new Set();
+    includedIds.forEach(id => {
+      const custObj = customerByIdMap[id];
+      if (custObj && !custObj.isArchived && custObj.name) {
+        allowedNameSet.add(String(custObj.name).trim());
+      }
+    });
+
+    const scopedOrders = todayOrders.filter(o => allowedNameSet.has(String(o.customerName || '').trim()));
+    const missingIncluded = includedIds
+      .map(id => customerByIdMap[id])
+      .filter(c => {
+        if (!c || c.isArchived || c.isPaused) return false;
+        const isOff = (Array.isArray(c.offDays) && c.offDays.includes(currentDayNum)) ||
+                      (Array.isArray(c.holidayDates) && c.holidayDates.includes(todayStr));
+        return !isOff && !orderedCustNamesSet.has(String(c.name || '').trim());
+      });
+
+    statsEvaluated = includedIds.length;
+    statsMatchedCust = new Set(scopedOrders.map(o => String(o.customerName || '').trim())).size;
+    statsMatchedOrders = scopedOrders.length;
+
+    if (scopedOrders.length === 0 && missingIncluded.length === 0 && briefing.emptyStoreBehavior !== 'SHOW_NO_ORDER') {
+      allResults.push(returnSkip("今日白名單標籤店家尚無有效配送訂單", {
+        customersEvaluated: statsEvaluated,
+        customersMatched: 0,
+        ordersMatched: 0
+      }));
+      continue;
+    }
+
+    const renderOptsBase = {
+      template: briefing.customTemplate || '',
+      titleDate,
+      customerByIdMap,
+      customerByNameMap,
+      emptyStoreBehavior: briefing.emptyStoreBehavior || 'HIDE_LINE',
+      appendItemTotals: briefing.customIncludeItemTotals === true,
+      includeTripInfo: briefing.includeTripInfo === true,
+      includeDeliveryTime: briefing.includeDeliveryTime === true
+    };
+
+    if (groupBy === 'BY_DRIVER') {
+      const driverGroups = {};
+      const unassignedOrders = [];
+
+      scopedOrders.forEach(o => {
+        const aId = String(o.assignedTo || '').trim();
+        const staffObj = aId ? staffMap[aId.toLowerCase()] : null;
+        const lineId = staffObj?.line_user_id || (aId ? getStaffLineId(aId) : null);
+        if (aId && lineId) {
+          if (!driverGroups[aId]) {
+            driverGroups[aId] = {
+              staffName: o.assignedName || staffObj?.name || aId,
+              lineId: lineId,
+              orders: []
+            };
+          }
+          driverGroups[aId].orders.push(o);
+        } else {
+          unassignedOrders.push(o);
+        }
+      });
+
+      Object.values(driverGroups).forEach(g => {
+        const text = renderCustomBriefingTemplate(Object.assign({}, renderOptsBase, {
+          orders: g.orders,
+          missingCustomers: []
+        }));
+        if (text) {
+          splitLineMessageChunks(text).forEach(chunk => {
+            outboundMessages.push({
+              targetLineIds: [g.lineId],
+              recipientName: `${g.staffName} (司機)`,
+              text: chunk
+            });
+          });
+        }
+      });
+
+      const shouldSendAdminMonitor =
+        adminUserIds.length > 0 &&
+        ((unassignedOrders.length > 0 && briefing.fallbackToAdminIfUnassigned !== false) ||
+          (scopedOrders.length === 0 && briefing.emptyStoreBehavior === 'SHOW_NO_ORDER') ||
+          missingIncluded.length > 0);
+
+      if (shouldSendAdminMonitor) {
+        const adminOrders = briefing.fallbackToAdminIfUnassigned !== false ? unassignedOrders : [];
+        const adminText = renderCustomBriefingTemplate(Object.assign({}, renderOptsBase, {
+          orders: adminOrders,
+          missingCustomers: missingIncluded
+        }));
+        if (adminText) {
+          splitLineMessageChunks(adminText).forEach(chunk => {
+            outboundMessages.push({
+              targetLineIds: adminUserIds,
+              recipientName: "管理員 (監控／未指派補送)",
+              text: chunk
+            });
+          });
+        }
+      }
+    } else if (groupBy === 'SPECIFIC_STAFF') {
+      const staffIds = Array.isArray(briefing.targetStaffIds) ? briefing.targetStaffIds : [];
+      const resolvedLineIds = [];
+      const resolvedNames = [];
+      staffIds.forEach(sId => {
+        const staffObj = staffMap[String(sId).trim().toLowerCase()];
+        const lid = (staffObj && staffObj.line_user_id) || getStaffLineId(sId);
+        if (lid) {
+          if (!resolvedLineIds.includes(lid)) resolvedLineIds.push(lid);
+          resolvedNames.push(staffObj ? staffObj.name : sId);
+        }
+      });
+
+      if (resolvedLineIds.length > 0) {
+        const text = renderCustomBriefingTemplate(Object.assign({}, renderOptsBase, {
+          orders: scopedOrders,
+          missingCustomers: missingIncluded
+        }));
+        if (text) {
+          splitLineMessageChunks(text).forEach(chunk => {
+            outboundMessages.push({
+              targetLineIds: resolvedLineIds,
+              recipientName: `指定用戶：${resolvedNames.join('、')}`,
+              text: chunk
+            });
+          });
+        }
+      }
+    } else {
+      if (adminUserIds.length > 0) {
+        const text = renderCustomBriefingTemplate(Object.assign({}, renderOptsBase, {
+          orders: scopedOrders,
+          missingCustomers: missingIncluded
+        }));
+        if (text) {
+          splitLineMessageChunks(text).forEach(chunk => {
+            outboundMessages.push({
+              targetLineIds: adminUserIds,
+              recipientName: "預設管理員 (客製化標籤模板)",
+              text: chunk
+            });
+          });
+        }
+      }
+    }
+  } else {
+    // 標準三段式簡報
+    let missingWatchlistCustomers = [];
+    if (briefing.includeWatchlistMissingCheck !== false) {
+      missingWatchlistCustomers = customers.filter(c => {
+        if (!c.isWatchlist || c.isArchived || c.isPaused) return false;
+        if (briefing.watchlistMissingOnlyRegular !== false) {
+          const term = String(c.paymentTerm || 'regular').toLowerCase();
+          if (term === 'occasional' || term === 'adhoc') return false;
+        }
+        const isOff = (Array.isArray(c.offDays) && c.offDays.includes(currentDayNum)) ||
+                      (Array.isArray(c.holidayDates) && c.holidayDates.includes(todayStr));
+        if (isOff) return false;
+        return !orderedCustNamesSet.has(String(c.name || '').trim());
+      });
+    }
+
+    if (todayOrders.length === 0 && missingWatchlistCustomers.length === 0) {
+      allResults.push(returnSkip("今日尚無有效配送訂單，且無漏單盯哨異常", { customersEvaluated: customers.length, customersMatched: 0, ordersMatched: 0 }));
+      continue;
+    }
+
+    if (groupBy === 'BY_DRIVER') {
+      const driverGroups = {};
+      const unassignedOrders = [];
+
+      todayOrders.forEach(o => {
+        const aId = String(o.assignedTo || '').trim();
+        const staffObj = aId ? staffMap[aId.toLowerCase()] : null;
+        const lineId = staffObj?.line_user_id || (aId ? getStaffLineId(aId) : null);
+        if (aId && lineId) {
+          if (!driverGroups[aId]) {
+            driverGroups[aId] = {
+              staffName: o.assignedName || staffObj?.name || aId,
+              lineId: lineId,
+              orders: []
+            };
+          }
+          driverGroups[aId].orders.push(o);
+        } else {
+          unassignedOrders.push(o);
+        }
+      });
+
+      Object.values(driverGroups).forEach(g => {
+        const text = buildThreeSectionBriefingText({
+          titleDate,
+          subHeader: `👤 負責司機：${g.staffName}`,
+          orders: g.orders,
+          customerByNameMap,
+          groupBy: 'BY_DRIVER',
+          includeItemTotals: briefing.includeItemTotals !== false,
+          includeTripInfo: briefing.includeTripInfo === true,
+          includeDeliveryTime: briefing.includeDeliveryTime === true,
+          missingWatchlistCustomers: [] // 司機只看自己要送的貨，無單檢查統一給內勤/管理員
+        });
+        splitLineMessageChunks(text).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: [g.lineId],
+            recipientName: `${g.staffName} (司機)`,
+            text: chunk
+          });
+        });
+      });
+
+      const shouldSendAdminMonitor =
+        adminUserIds.length > 0 &&
+        ((unassignedOrders.length > 0 && briefing.fallbackToAdminIfUnassigned !== false) || missingWatchlistCustomers.length > 0);
+
+      if (shouldSendAdminMonitor) {
+        const text = buildThreeSectionBriefingText({
+          titleDate,
+          subHeader: '🛡️ 內勤／管理員監控摘要',
+          orders: briefing.fallbackToAdminIfUnassigned !== false ? unassignedOrders : [],
+          customerByNameMap,
+          groupBy: 'BY_TRIP',
+          includeItemTotals: briefing.includeItemTotals !== false,
+          includeTripInfo: briefing.includeTripInfo === true,
+          includeDeliveryTime: briefing.includeDeliveryTime === true,
+          missingWatchlistCustomers,
+          unscheduledNotice: unassignedOrders.length > 0 && briefing.fallbackToAdminIfUnassigned !== false
+            ? `⚠️ 以下 ${unassignedOrders.length} 筆訂單尚未指派司機或司機未綁定 LINE：`
+            : ''
+        });
+        splitLineMessageChunks(text).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: adminUserIds,
+            recipientName: "管理員 (監控／未指派補送)",
+            text: chunk
+          });
+        });
+      }
+    } else if (groupBy === 'SPECIFIC_STAFF') {
+      const staffIds = Array.isArray(briefing.targetStaffIds) ? briefing.targetStaffIds : [];
+      const resolvedLineIds = [];
+      const resolvedNames = [];
+      staffIds.forEach(sId => {
+        const staffObj = staffMap[String(sId).trim().toLowerCase()];
+        const lid = (staffObj && staffObj.line_user_id) || getStaffLineId(sId);
+        if (lid) {
+          if (!resolvedLineIds.includes(lid)) resolvedLineIds.push(lid);
+          resolvedNames.push(staffObj ? staffObj.name : sId);
+        }
+      });
+
+      if (resolvedLineIds.length > 0) {
+        const text = buildThreeSectionBriefingText({
+          titleDate,
+          subHeader: `👥 指定接收：${resolvedNames.join('、')}`,
+          orders: todayOrders,
+          customerByNameMap,
+          groupBy: 'BY_TRIP',
+          includeItemTotals: briefing.includeItemTotals !== false,
+          includeTripInfo: briefing.includeTripInfo === true,
+          includeDeliveryTime: briefing.includeDeliveryTime === true,
+          missingWatchlistCustomers
+        });
+        splitLineMessageChunks(text).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: resolvedLineIds,
+            recipientName: `指定用戶：${resolvedNames.join('、')}`,
+            text: chunk
+          });
+        });
+      }
+    } else {
+      // BY_TRIP：依車趟彙整發送給預設管理員/群組
+      if (adminUserIds.length > 0) {
+        const text = buildThreeSectionBriefingText({
+          titleDate,
+          subHeader: '🚚 全廠依車趟出車總表',
+          orders: todayOrders,
+          customerByNameMap,
+          groupBy: 'BY_TRIP',
+          includeItemTotals: briefing.includeItemTotals !== false,
+          includeTripInfo: briefing.includeTripInfo === true,
+          includeDeliveryTime: briefing.includeDeliveryTime === true,
+          missingWatchlistCustomers
+        });
+        splitLineMessageChunks(text).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: adminUserIds,
+            recipientName: "預設管理員 (全車趟總表)",
+            text: chunk
+          });
+        });
+      }
+    }
+  }
+
+  if (outboundMessages.length === 0) {
+    allResults.push(returnSkip("無可用的 LINE 接收對象或模板替換後為空（請確認管理員 User ID、司機 LINE 綁定與模板內容）", {
+      customersEvaluated: statsEvaluated,
+      customersMatched: statsMatchedCust,
+      ordersMatched: statsMatchedOrders
+    }));
+    continue;
+  }
+
+  const uniqueRecipientNames = Array.from(new Set(outboundMessages.map(m => m.recipientName)));
+  const trace = {
+    step: "SENT",
+    customersEvaluated: statsEvaluated,
+    customersMatched: statsMatchedCust,
+    ordersMatched: statsMatchedOrders,
+    driverPushCount: uniqueRecipientNames.length,
+    recipients: uniqueRecipientNames.join('、'),
+    previewSamples: outboundMessages.slice(0, 5).map(m => ({
+      recipientName: m.recipientName,
+      previewText: m.text
+    }))
+  };
+
+  if (!isDryRun) {
+    const requests = outboundMessages.map(msg => {
+      const ids = msg.targetLineIds;
+      const endpoint = ids.length === 1
+        ? "https://api.line.me/v2/bot/message/push"
+        : "https://api.line.me/v2/bot/message/multicast";
+      return {
+        url: endpoint,
+        method: "post",
+        contentType: "application/json",
+        headers: { "Authorization": "Bearer " + channelToken },
+        payload: JSON.stringify({
+          to: ids.length === 1 ? ids[0] : ids,
+          messages: [{ type: "text", text: msg.text }]
+        }),
+        muteHttpExceptions: true
+      };
+    });
+
+    try {
+      const responses = UrlFetchApp.fetchAll(requests);
+      const errors = [];
+      responses.forEach(res => {
+        if (res.getResponseCode() !== 200) {
+          errors.push(`HTTP ${res.getResponseCode()}: ${res.getContentText()}`);
+        }
+      });
+
+      const ts = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+      if (errors.length === 0) {
+        if (!forceRun) {
+          try { scriptCache.put(cacheKey, "1", 3600); } catch (e) {}
+        }
+        try {
+          getNotificationLogSheet().appendRow([ts, forceRun ? "MANUAL_TEST" : "SYSTEM_CRON", bId, bName, "SUCCESS", JSON.stringify(trace)]);
+        } catch (e) {}
+        allResults.push({ ruleId: bId, ruleName: bName, status: "SUCCESS", details: trace });
+      } else {
+        const errTrace = Object.assign({}, trace, { Error: errors.join(' | ') });
+        try {
+          getNotificationLogSheet().appendRow([ts, forceRun ? "MANUAL_TEST" : "SYSTEM_CRON", bId, bName, "ERROR", JSON.stringify(errTrace)]);
+        } catch (e) {}
+        allResults.push({ ruleId: bId, ruleName: bName, status: "ERROR", details: errTrace });
+      }
+    } catch (err) {
+      allResults.push({ ruleId: bId, ruleName: bName, status: "ERROR", details: Object.assign({}, trace, { Error: err.toString() }) });
+    }
+  } else {
+    allResults.push({ ruleId: bId, ruleName: bName, status: "SUCCESS", details: trace });
+  }
+  } // end activeCandidates loop
+
+  return allResults;
 }
 
 function handleLineWebhook(payload) {
@@ -3318,12 +4511,26 @@ function handleLineWebhook(payload) {
       
       // 1. 查詢自己的 LINE User ID
       if (text === "查ID" || text === "我的ID" || text === "id" || text === "ID") {
-        replyText = "您的 User ID 是：\n" + userId;
+        replyText = "您的 LINE User ID 是：\n" + userId + "\n\n💡 若要綁定派工通知，請輸入：\n#綁定 您的工號\n（例如：#綁定 staff3）";
       } 
-      // 2. 說明選單 / 幫助
+      // 2. 司機/同仁自助綁定工號 (#綁定 工號 或 #bind 工號)
+      else if (/^(?:#?綁定|#?bind)\s*([a-zA-Z0-9_\-]+)$/i.test(text)) {
+        const match = text.match(/^(?:#?綁定|#?bind)\s*([a-zA-Z0-9_\-]+)$/i);
+        const targetStaffId = match ? match[1].trim() : '';
+        const bindResult = handleLineSelfBind(userId, targetStaffId);
+        if (bindResult.success) {
+          replyText = `✅ 綁定成功！\n同仁【${bindResult.staffName} (${targetStaffId})】已成功綁定此 LINE 帳號。\n日後若有指派給您的配送訂單，系統將自動推播明細給您！`;
+        } else {
+          replyText = `❌ 綁定失敗：${bindResult.error || "查無此工號，請確認工號是否正確（例如：#綁定 staff3）"}`;
+        }
+      }
+      // 3. 說明選單 / 幫助
       else if (text === "說明" || text === "幫助" || text === "help" || text === "功能" || text === "?") {
         replyText = "🤖【系統查詢指令說明】\n" +
                     "━━━━━━━━━━━━━━\n" +
+                    "🚚 司機派工專屬綁定：\n" +
+                    "👉「#綁定 staff3」（綁定您的員工工號）\n" +
+                    "👉「查ID」（查詢您個人的 LINE User ID）\n\n" +
                     "1️⃣ 店家營業與公休：\n" +
                     "👉「鵝肉亭今天有營業嗎？」\n" +
                     "👉「鵝肉亭什麼時候公休？」\n\n" +
@@ -4750,6 +5957,7 @@ function handleGetStaffList(user) {
     const roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
     const statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
     const nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]);
+    const lineIdx = findHeaderIndex(headers, ["line_user_id", "lineuserid", "line_id", "lineid", "line綁定id", "line"]);
 
     for (let i = 1; i < values.length; i++) {
       const row = values[i];
@@ -4763,13 +5971,15 @@ function handleGetStaffList(user) {
         const uName = nameIdx !== -1 && String(row[nameIdx] || '').trim() 
           ? String(row[nameIdx]).trim() 
           : (rawUser || `同仁${i}`);
+        const lineId = lineIdx !== -1 ? String(row[lineIdx] || '').trim() : '';
         
         seenUserIds.add(uId);
         staff.push({
           userId: uId,
           username: rawUser || uId,
           name: uName,
-          role: roleIdx !== -1 && String(row[roleIdx] || '').trim() ? String(row[roleIdx]).trim().toLowerCase() : 'staff'
+          role: roleIdx !== -1 && String(row[roleIdx] || '').trim() ? String(row[roleIdx]).trim().toLowerCase() : 'staff',
+          line_user_id: lineId
         });
       }
     }
@@ -4788,7 +5998,8 @@ function handleGetStaffList(user) {
           userId: aId,
           username: String(a.Name || aId).trim(),
           name: String(a.Name || aId).trim(),
-          role: String(a.Role || 'staff').trim().toLowerCase()
+          role: String(a.Role || 'staff').trim().toLowerCase(),
+          line_user_id: ''
         });
       }
     });
@@ -4816,6 +6027,7 @@ function handleGetAllUsers(user) {
     const roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
     const statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
     const nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]);
+    const lineIdx = findHeaderIndex(headers, ["line_user_id", "lineuserid", "line_id", "lineid", "line綁定id", "line"]);
 
     for (let i = 1; i < values.length; i++) {
       const row = values[i];
@@ -4829,6 +6041,7 @@ function handleGetAllUsers(user) {
       const uName = nameIdx !== -1 && String(row[nameIdx] || '').trim() 
         ? String(row[nameIdx]).trim() 
         : (rawUser || `同仁${i}`);
+      const lineId = lineIdx !== -1 ? String(row[lineIdx] || '').trim() : '';
 
       seenUserIds.add(uId);
       list.push({
@@ -4836,7 +6049,8 @@ function handleGetAllUsers(user) {
         username: rawUser || uId,
         name: uName,
         role: roleIdx !== -1 && String(row[roleIdx] || '').trim() ? String(row[roleIdx]).trim().toLowerCase() : 'staff',
-        status: status
+        status: status,
+        line_user_id: lineId
       });
     }
   }
@@ -4855,7 +6069,8 @@ function handleGetAllUsers(user) {
           username: String(a.Name || aId).trim(),
           name: String(a.Name || aId).trim(),
           role: String(a.Role || 'staff').trim().toLowerCase(),
-          status: isActive ? 'ACTIVE' : 'DISABLED'
+          status: isActive ? 'ACTIVE' : 'DISABLED',
+          line_user_id: ''
         });
       }
     });
@@ -4873,7 +6088,7 @@ function handleSaveUser(data, currentUser) {
   let sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
   if (!sheet) {
     sheet = SS.insertSheet("Users");
-    sheet.appendRow(["user_id", "username", "name", "password_hash", "salt", "role", "status"]);
+    sheet.appendRow(["user_id", "username", "name", "password_hash", "salt", "role", "status", "line_user_id"]);
     SpreadsheetApp.flush();
   }
 
@@ -4888,6 +6103,7 @@ function handleSaveUser(data, currentUser) {
   let saltIdx = findHeaderIndex(headers, ["salt", "鹽值", "鹽", "密鑰"]);
   let roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
   let statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
+  let lineIdx = findHeaderIndex(headers, ["line_user_id", "lineuserid", "line_id", "lineid", "line綁定id", "line"]);
 
   // 自動補齊 name 欄位標題（若舊表缺少）
   if (nameIdx === -1) {
@@ -4896,6 +6112,15 @@ function handleSaveUser(data, currentUser) {
     SpreadsheetApp.flush();
     headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     nameIdx = nextCol - 1;
+  }
+
+  // 自動補齊 line_user_id 欄位標題（若舊表缺少）
+  if (lineIdx === -1) {
+    const nextCol = sheet.getLastColumn() + 1;
+    sheet.getRange(1, nextCol).setValue("line_user_id");
+    SpreadsheetApp.flush();
+    headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    lineIdx = nextCol - 1;
   }
 
   const targetId = String(data.userId || data.username || '').trim();
@@ -4917,7 +6142,7 @@ function handleSaveUser(data, currentUser) {
     const hash = hashPassword(data.password, salt);
 
     // 動態根據表頭欄位填值，避免欄位順序不同產生錯位
-    const colCount = Math.max(headers.length, 7);
+    const colCount = Math.max(headers.length, 8);
     const newRow = new Array(colCount).fill('');
     if (idIdx !== -1) newRow[idIdx] = targetId;
     if (userIdx !== -1) newRow[userIdx] = data.username || targetId;
@@ -4926,6 +6151,7 @@ function handleSaveUser(data, currentUser) {
     if (saltIdx !== -1) newRow[saltIdx] = salt;
     if (roleIdx !== -1) newRow[roleIdx] = data.role || 'staff';
     if (statusIdx !== -1) newRow[statusIdx] = data.status || 'ACTIVE';
+    if (lineIdx !== -1) newRow[lineIdx] = data.line_user_id || data.lineUserId || '';
 
     sheet.appendRow(newRow);
     SpreadsheetApp.flush();
@@ -4940,6 +6166,9 @@ function handleSaveUser(data, currentUser) {
     sheet.getRange(foundRow, roleIdx + 1).setValue(data.role);
   } else if (data.actionType === 'TOGGLE_STATUS' && statusIdx !== -1) {
     sheet.getRange(foundRow, statusIdx + 1).setValue(data.status);
+  } else if (data.actionType === 'UPDATE_LINE_ID' && lineIdx !== -1) {
+    const newLineId = String(data.line_user_id !== undefined ? data.line_user_id : (data.lineUserId || '')).trim();
+    sheet.getRange(foundRow, lineIdx + 1).setValue(newLineId);
   } else if (data.actionType === 'RESET_PASSWORD' && hashIdx !== -1 && saltIdx !== -1) {
     const salt = Utilities.getUuid().substring(0, 8);
     const hash = hashPassword(data.newPassword, salt);
@@ -4949,6 +6178,220 @@ function handleSaveUser(data, currentUser) {
 
   SpreadsheetApp.flush();
   return { success: true };
+}
+
+/**
+ * 司機/同仁自助綁定：將 LINE User ID 關聯至 Users 試算表對應工號
+ */
+function handleLineSelfBind(lineUserId, staffUserId) {
+  if (!lineUserId || !staffUserId) {
+    return { success: false, error: "缺少必要參數" };
+  }
+
+  const sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (!sheet || sheet.getLastRow() <= 1) {
+    return { success: false, error: "系統尚未建立使用者名單資料表" };
+  }
+
+  let values = sheet.getDataRange().getValues();
+  let headers = values[0];
+  let idIdx = findHeaderIndex(headers, ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]);
+  let userIdx = findHeaderIndex(headers, ["username", "user", "帳號", "登入帳號", "使用者名稱"]);
+  let nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "同仁姓名"]);
+  let lineIdx = findHeaderIndex(headers, ["line_user_id", "lineuserid", "line_id", "lineid", "line綁定id", "line"]);
+
+  // 若尚無 line_user_id 欄位，自動擴充
+  if (lineIdx === -1) {
+    const nextCol = sheet.getLastColumn() + 1;
+    sheet.getRange(1, nextCol).setValue("line_user_id");
+    SpreadsheetApp.flush();
+    headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    lineIdx = nextCol - 1;
+  }
+
+  const targetNorm = String(staffUserId).trim().toLowerCase();
+  let foundRow = -1;
+  let staffName = '';
+
+  for (let i = 1; i < values.length; i++) {
+    const rowId = idIdx !== -1 ? String(values[i][idIdx] || '').trim().toLowerCase() : '';
+    const rowUser = userIdx !== -1 ? String(values[i][userIdx] || '').trim().toLowerCase() : '';
+    const rowName = nameIdx !== -1 ? String(values[i][nameIdx] || '').trim().toLowerCase() : '';
+
+    if (rowId === targetNorm || rowUser === targetNorm || rowName === targetNorm) {
+      foundRow = i + 1;
+      staffName = nameIdx !== -1 ? String(values[i][nameIdx] || '').trim() : String(values[i][idIdx] || '');
+      break;
+    }
+  }
+
+  if (foundRow === -1) {
+    return { success: false, error: "查無此工號或帳號：" + staffUserId };
+  }
+
+  sheet.getRange(foundRow, lineIdx + 1).setValue(String(lineUserId).trim());
+  SpreadsheetApp.flush();
+  return { success: true, staffName: staffName || staffUserId };
+}
+
+/**
+ * 取得指定同仁的 LINE User ID
+ */
+function getStaffLineId(staffUserId) {
+  if (!staffUserId) return null;
+  const sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (!sheet || sheet.getLastRow() <= 1) return null;
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const idIdx = findHeaderIndex(headers, ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]);
+  const userIdx = findHeaderIndex(headers, ["username", "user", "帳號", "登入帳號", "使用者名稱"]);
+  const lineIdx = findHeaderIndex(headers, ["line_user_id", "lineuserid", "line_id", "lineid", "line綁定id", "line"]);
+  if (lineIdx === -1) return null;
+
+  const targetNorm = String(staffUserId).trim().toLowerCase();
+  for (let i = 1; i < values.length; i++) {
+    const rowId = idIdx !== -1 ? String(values[i][idIdx] || '').trim().toLowerCase() : '';
+    const rowUser = userIdx !== -1 ? String(values[i][userIdx] || '').trim().toLowerCase() : '';
+    if (rowId === targetNorm || rowUser === targetNorm) {
+      const lid = String(values[i][lineIdx] || '').trim();
+      return lid || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * 取得 LINE Channel Access Token
+ */
+function getLineMessagingToken() {
+  const props = PropertiesService.getScriptProperties();
+  let token = props.getProperty("LINE_CHANNEL_ACCESS_TOKEN") || props.getProperty("lineChannelToken") || "";
+  if (!token) {
+    const settingsStr = props.getProperty("LINE_SETTINGS");
+    if (settingsStr) {
+      try {
+        const s = JSON.parse(settingsStr);
+        token = s.lineChannelToken || "";
+      } catch (e) {}
+    }
+  }
+  if (!token) {
+    try {
+      const configSheet = getConfigSheet();
+      if (configSheet) {
+        const appSettingsStr = getSystemConfig(configSheet, "AppSettings");
+        if (appSettingsStr) {
+          try {
+            const appSettings = JSON.parse(appSettingsStr);
+            token = appSettings.lineChannelToken || "";
+          } catch (e) {}
+        }
+        if (!token) {
+          token = getSystemConfig(configSheet, "LineChannelToken") || getSystemConfig(configSheet, "LINE_CHANNEL_ACCESS_TOKEN") || "";
+        }
+      }
+    } catch (e) {}
+  }
+  return token;
+}
+
+/**
+ * 測試發送 LINE 訊息給特定同仁
+ */
+function handleTestLineMessage(data, currentUser) {
+  const lineUserId = String(data.lineUserId || data.line_user_id || '').trim();
+  if (!lineUserId) {
+    return { success: false, error: "未提供 LINE User ID" };
+  }
+
+  const token = getLineMessagingToken();
+  if (!token) {
+    return { success: false, error: "系統未設定 LINE Channel Access Token，請先在 LINE 設定頁配置金鑰" };
+  }
+
+  const endpoint = "https://api.line.me/v2/bot/message/push";
+  const payload = {
+    to: lineUserId,
+    messages: [{
+      type: "text",
+      text: "🔔【麵廠職人：LINE 派工通知測試】\n連線成功！您的帳號已順利與系統綁定，日後訂單配送明細將由此專屬頻道即時發送給您。"
+    }]
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(endpoint, {
+      method: "post",
+      contentType: "application/json",
+      headers: { "Authorization": "Bearer " + token },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      return { success: true, message: "測試訊息已成功送達同仁 LINE！" };
+    } else {
+      return { success: false, error: `LINE API 回傳錯誤 (${res.getResponseCode()}): ${res.getContentText()}` };
+    }
+  } catch (err) {
+    return { success: false, error: "連線至 LINE 失敗: " + err.toString() };
+  }
+}
+
+/**
+ * 針對特定同仁推播訂單配送明細
+ */
+function handleSendStaffDispatchNotification(data, currentUser) {
+  const staffUserId = String(data.staffUserId || data.targetUserId || '').trim();
+  if (!staffUserId) {
+    return { success: false, error: "未指定指派人員" };
+  }
+
+  const lineUserId = getStaffLineId(staffUserId);
+  if (!lineUserId) {
+    return { success: false, reason: "NOT_BOUND", error: `同仁（${staffUserId}）尚未綁定 LINE ID，未發送推播` };
+  }
+
+  const token = getLineMessagingToken();
+  if (!token) {
+    return { success: false, error: "系統未設定 LINE Channel Token" };
+  }
+
+  const staffName = data.staffName || staffUserId;
+  const customerName = data.customerName || '未註記店家';
+  const deliveryDate = data.deliveryDate || '今日';
+  const deliveryTime = data.deliveryTime ? ` (${data.deliveryTime})` : '';
+  const itemSummary = data.itemSummary || data.itemsText || '依出貨單據';
+  const note = data.note ? `\n備註：${data.note}` : '';
+
+  const msgText = `🚚【麵廠訂單派工通知】\n` +
+                  `━━━━━━━━━━━━━━\n` +
+                  `負責同仁：${staffName}\n` +
+                  `配送客戶：${customerName}\n` +
+                  `配送時段：${deliveryDate}${deliveryTime}\n` +
+                  `品項內容：\n${itemSummary}${note}\n` +
+                  `━━━━━━━━━━━━━━\n` +
+                  `請同仁確認出貨車次與準時送達，感謝辛勞！`;
+
+  try {
+    const res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+      method: "post",
+      contentType: "application/json",
+      headers: { "Authorization": "Bearer " + token },
+      payload: JSON.stringify({
+        to: lineUserId,
+        messages: [{ type: "text", text: msgText }]
+      }),
+      muteHttpExceptions: true
+    });
+
+    if (res.getResponseCode() === 200) {
+      return { success: true, message: `已成功將配送明細推播至 ${staffName} 的 LINE` };
+    } else {
+      return { success: false, error: `推播失敗 (${res.getResponseCode()}): ${res.getContentText()}` };
+    }
+  } catch (err) {
+    return { success: false, error: "推播連線異常: " + err.toString() };
+  }
 }
 
 function handleSavePermissionMatrix(data, currentUser) {

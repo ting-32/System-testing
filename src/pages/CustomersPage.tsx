@@ -74,6 +74,7 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
   availableTrips
 }) => {
   const [customerSearch, setCustomerSearch] = useState('');
+  const [onlyWatchlist, setOnlyWatchlist] = useState(false);
 
   
   const [viewingCustomerProfile, setViewingCustomerProfile] = useState<string | null>(null);
@@ -105,14 +106,21 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
     }, {} as Record<string, Order[]>);
   }, [orders, todayDate]);
 
+  const watchlistCount = useMemo(() => {
+    return customers.filter(c => !c.isArchived && c.isWatchlist).length;
+  }, [customers]);
+
   const filteredCustomers = useMemo(() => {
     let result = customers.filter(c => !c.isArchived);
+    if (onlyWatchlist) {
+      result = result.filter(c => Boolean(c.isWatchlist));
+    }
     if (customerSearch) {
       const q = customerSearch.toLowerCase();
       result = result.filter(c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q)));
     }
     return result;
-  }, [customers, customerSearch]);
+  }, [customers, customerSearch, onlyWatchlist]);
 
   const executeDeleteCustomer = async (customerId: string) => { 
     setConfirmConfig((prev: any) => ({ ...prev, isOpen: false })); 
@@ -153,9 +161,25 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
         <div className="sticky top-0 z-30 bg-morandi-oatmeal pt-4 pb-4 -mx-4 px-4 shadow-sm border-b border-slate-100">
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-xl font-extrabold text-morandi-charcoal flex items-center gap-2 tracking-tight"><Users className="w-5 h-5 text-morandi-blue" /> 店家管理</h2>
-            <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setCustomerForm({ name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular' }); setIsEditingCustomer('new'); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button>
+            <motion.button whileTap={buttonTap} whileHover={buttonHover} onClick={() => requireAuth(() => { setCustomerForm({ name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultTrip: '', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular', isWatchlist: false }); setIsEditingCustomer('new'); setEditCustomerMode('full'); setTempPriceProdId(''); setTempPriceValue(''); setTempPriceUnit('斤'); })} className="p-3 rounded-2xl text-white shadow-lg bg-morandi-blue hover:bg-slate-600 transition-colors"><Plus className="w-6 h-6" /></motion.button>
           </div>
           <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" /><input type="text" placeholder="搜尋店家名稱..." className="w-full pl-10 pr-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm text-morandi-charcoal font-bold tracking-wide focus:ring-2 focus:ring-morandi-blue transition-all placeholder:text-gray-400" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} /></div>
+          <div className="flex items-center gap-2 mt-2.5">
+            <button
+              type="button"
+              onClick={() => setOnlyWatchlist(false)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${!onlyWatchlist ? 'bg-morandi-blue text-white border-morandi-blue shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+            >
+              全部店家 ({customers.filter(c => !c.isArchived).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setOnlyWatchlist(true)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1 ${onlyWatchlist ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'}`}
+            >
+              🚨 只看易漏盯哨 ({watchlistCount})
+            </button>
+          </div>
         </div>
         
         <motion.div variants={containerVariants} initial="hidden" animate="show" className="pt-4">
@@ -163,9 +187,9 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({
            const hasOrderToday = groupedOrders[c.name] && groupedOrders[c.name].length > 0;
            return (
               <motion.div variants={itemVariants} key={c.id || `fallback-${idx}`} className="mb-4 relative">
-                <SyncableStatusWrapper syncStatus={c._syncStatus} onRetry={() => handleRetry(c)} className={`bg-white rounded-[32px] p-6 shadow-sm border transition-all overflow-hidden ${c.isPaused ? 'opacity-50 grayscale-[50%] border-rose-200 bg-rose-50/20' : 'hover:shadow-md border-slate-200'}`}>
+                <SyncableStatusWrapper syncStatus={c._syncStatus} onRetry={() => handleRetry(c)} className={`bg-white rounded-[32px] p-6 shadow-sm border transition-all overflow-hidden ${c.isPaused ? 'opacity-50 grayscale-[50%] border-rose-200 bg-rose-50/20' : c.isWatchlist ? 'hover:shadow-md border-amber-300/80 ring-1 ring-amber-100' : 'hover:shadow-md border-slate-200'}`}>
                 {hasOrderToday && c._syncStatus !== 'pending' && c._syncStatus !== 'error' && <div className="absolute top-0 right-0 bg-amber-100/90 text-amber-700 text-[9px] font-bold px-3 py-1.5 rounded-bl-xl z-10 border-b border-l border-amber-200/50 backdrop-blur-sm">今日已下單</div>}
-                <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{String(c.name || '').charAt(0)}</div><div><div className="flex items-center gap-2"><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3>{c.isPaused && <span className="bg-rose-100 text-rose-600 text-[10px] font-black px-2 py-0.5 rounded-md tracking-widest">暫停中</span>}</div><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p>{(c.address || c.coordinates) && (() => {
+                <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-14 h-14 rounded-[22px] bg-morandi-oatmeal flex items-center justify-center text-xl font-extrabold text-morandi-blue">{String(c.name || '').charAt(0)}</div><div><div className="flex items-center gap-2 flex-wrap"><h3 className="font-bold text-slate-800 text-lg tracking-tight">{c.name}</h3>{c.isWatchlist && <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-black px-2 py-0.5 rounded-md tracking-wide">🚨 易漏盯哨</span>}{c.isPaused && <span className="bg-rose-100 text-rose-600 text-[10px] font-black px-2 py-0.5 rounded-md tracking-widest">暫停中</span>}</div><p className="text-xs text-slate-500 font-medium tracking-wide">{c.phone || '無電話'}</p>{(c.address || c.coordinates) && (() => {
 const targetUrl = c.coordinates ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.coordinates)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address || '')}`;
 const tooltipText = c.coordinates ? "開啟精準地圖連結" : "在 Google 地圖上搜尋此地址";
 

@@ -68,7 +68,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       const initial = initialData || {
-        name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular', autoOrderEnabled: false, isPaused: false, isArchived: false
+        name: '', phone: '', address: '', coordinates: '', deliveryTime: '08:00', defaultItems: [], offDays: [], holidayDates: [], priceList: [], deliveryMethod: '', paymentTerm: 'regular', autoOrderEnabled: false, isWatchlist: false, isPaused: false, isArchived: false
       };
       setCustomerForm(initial);
       // CHANGED: 根據是否為散客初始化常用品項展開狀態
@@ -146,6 +146,23 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                       </select>
                       <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                     </div>
+                  </div>
+                  <div className="flex items-center justify-between bg-amber-50/70 p-4 rounded-[22px] border border-amber-200/80 shadow-sm">
+                    <div className="pr-3">
+                      <div className="text-sm font-extrabold text-amber-900 flex items-center gap-1.5">
+                        🚨 設為「易漏盯哨」重點店家
+                      </div>
+                      <p className="text-[11px] text-amber-800/80 font-medium mt-0.5 leading-snug">
+                        開啟後，每日出車簡報會將此店家強制置頂提醒，避免忘記配送或漏打單
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerForm({ ...customerForm, isWatchlist: !customerForm.isWatchlist })}
+                      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${customerForm.isWatchlist ? 'bg-amber-500' : 'bg-slate-200'}`}
+                    >
+                      <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${customerForm.isWatchlist ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
                   </div>
                </div>
              </div>

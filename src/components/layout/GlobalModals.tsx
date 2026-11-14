@@ -117,6 +117,7 @@ export function GlobalModals(props: GlobalModalsProps) {
       holidayDates: formData.holidayDates || [], 
       defaultTrip: formData.defaultTrip || '', 
       autoOrderEnabled: formData.autoOrderEnabled || false, 
+      isWatchlist: Boolean(formData.isWatchlist),
       isPaused: formData.isPaused || false,
       isArchived: formData.isArchived || false,
       lastUpdated: now,
@@ -265,15 +266,9 @@ export function GlobalModals(props: GlobalModalsProps) {
         customers={customers} 
         products={products} 
         lineChannelToken={notificationSettings.lineChannelToken || ''} 
-        setLineChannelToken={(token) => {
-          localStorage.setItem('nm_line_channel_token', token);
-          notificationSettings.setLineSettings(token, notificationSettings.lineUserId);
-        }}
+        setLineChannelToken={notificationSettings.setLineChannelToken}
         lineUserId={notificationSettings.lineUserId || ''}
-        setLineUserId={(id) => {
-          localStorage.setItem('nm_line_user_id', id);
-          notificationSettings.setLineSettings(notificationSettings.lineChannelToken, id);
-        }}
+        setLineUserId={notificationSettings.setLineUserId}
         apiEndpoint={props.apiEndpoint || ""}
       />
 

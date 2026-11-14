@@ -53,6 +53,7 @@ interface Props {
 }
 
 export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRealSend, rule }: Props) {
+  const [showPreviewIndex, setShowPreviewIndex] = React.useState<number | null>(0);
   if (!isOpen) return null;
 
   const renderStepIcon = (isActive: boolean, isError: boolean = false) => {
@@ -64,21 +65,21 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
     if (!result || !result.length) return 'pending';
     const trace = result[0]?.details || {};
     const status = result[0]?.status;
+    const reason = String(trace.reason || '');
 
     if (stepIndex === 1) { // 排程與週期
-      // if we failed here, it would be SKIPPED with reason related to time
-      if (status === 'SKIPPED' && trace.reason?.includes('時間')) return 'error';
+      if (status === 'SKIPPED' && (reason.includes('時間') || reason.includes('停用'))) return 'error';
       return 'success';
     }
     
     if (stepIndex === 2) { // 活躍對象過濾
-      if (status === 'SKIPPED' && trace.reason?.includes('休假')) return 'error';
+      if (status === 'SKIPPED' && (reason.includes('休假') || reason.includes('無符合檢查對象'))) return 'error';
       if (trace.customersEvaluated !== undefined) return 'success';
       return 'pending'; 
     }
     
-    if (stepIndex === 3) { // 條件配對
-      if (status === 'SKIPPED' && trace.reason?.includes('未達成')) return 'error';
+    if (stepIndex === 3) { // 條件配對與收件路由
+      if (status === 'SKIPPED' && (reason.includes('未達成') || reason.includes('未設定') || reason.includes('未綁定'))) return 'error';
       if (status === 'SUCCESS' || trace.customersMatched !== undefined) return 'success';
       return 'pending';
     }
@@ -89,6 +90,7 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
   const trace = result && result.length > 0 ? result[0].details : {};
   const status = result && result.length > 0 ? result[0].status : null;
   const skipReason = trace?.reason;
+  const previewSamples: Array<{ recipientName: string; previewText: string }> = Array.isArray(trace?.previewSamples) ? trace.previewSamples : [];
 
   const nextRuns = rule ? calculateNextRuns(rule.schedule, rule.timeToNotify) : [];
   const shortDays = ['日', '一', '二', '三', '四', '五', '六'];
@@ -100,10 +102,10 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
           initial={{ opacity: 0, scale: 0.95, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
-          className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100 flex flex-col"
+          className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90dvh] overflow-hidden border border-slate-100 flex flex-col"
         >
           {/* Header */}
-          <div className="flex justify-between items-center p-5 border-b border-slate-100">
+          <div className="flex justify-between items-center p-5 border-b border-slate-100 shrink-0">
             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
               <Sparkles className="w-6 h-6 text-indigo-500" />
               時空推演診斷
@@ -113,7 +115,7 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
             </button>
           </div>
 
-          <div className="p-6">
+          <div className="p-6 overflow-y-auto flex-1">
             {rule && (
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 mb-4">
                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-2">
@@ -141,9 +143,9 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
                 <p className="text-slate-600 font-medium">正在進行時空推演邏輯...</p>
               </div>
             ) : result ? (
-              <div className="space-y-6">
+              <div className="space-y-5">
                 {/* Timeline */}
-                <div className="relative border-l-2 border-slate-100 ml-4 pl-6 space-y-8">
+                <div className="relative border-l-2 border-slate-100 ml-4 pl-6 space-y-6">
                   {/* Step 1 */}
                   <div className="relative">
                     <div className="absolute -left-[35px] top-0 bg-white p-1">
@@ -173,33 +175,62 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
                     <div className="absolute -left-[35px] top-0 bg-white p-1">
                       {renderStepIcon(getStepStatus(3) === 'success', getStepStatus(3) === 'error')}
                     </div>
-                    <h4 className={`font-bold ${getStepStatus(3) === 'pending' ? 'text-slate-400' : 'text-slate-800'}`}>Step 3: 條件邏輯配對</h4>
+                    <h4 className={`font-bold ${getStepStatus(3) === 'pending' ? 'text-slate-400' : 'text-slate-800'}`}>Step 3: 條件配對與發送路由</h4>
                     <p className={`text-sm mt-1 ${getStepStatus(3) === 'error' ? 'text-rose-600 font-semibold' : 'text-slate-500'}`}>
                       {getStepStatus(3) === 'pending' ? '尚未執行' :
                        getStepStatus(3) === 'error' ? skipReason :
-                       `找到符合條件名單共 ${trace.customersMatched || 0} 間店`}
+                       `命中 ${trace.customersMatched || 0} 家客戶${trace.ordersMatched ? ` / ${trace.ordersMatched} 筆訂單` : ''}${trace.driverPushCount ? ` → 預計發給 ${trace.driverPushCount} 組接收人 (${trace.recipients})` : ''}`}
                     </p>
                   </div>
                 </div>
 
                 {/* Result Box */}
-                <div className={`mt-6 p-4 rounded-xl border-l-4 ${status === 'SUCCESS' ? 'bg-emerald-50 border-emerald-500' : 'bg-slate-50 border-slate-400'}`}>
-                  <h4 className={`font-bold text-lg flex items-center gap-2 ${status === 'SUCCESS' ? 'text-emerald-700' : 'text-slate-700'}`}>
+                <div className={`p-4 rounded-xl border-l-4 ${status === 'SUCCESS' ? 'bg-emerald-50 border-emerald-500' : 'bg-slate-50 border-slate-400'}`}>
+                  <h4 className={`font-bold text-base flex items-center gap-2 ${status === 'SUCCESS' ? 'text-emerald-700' : 'text-slate-700'}`}>
                     {status === 'SUCCESS' ? '診斷結果：可觸發發送' : '診斷結果：將安靜略過'}
                   </h4>
-                  <p className="text-sm mt-2 text-slate-600">
+                  <p className="text-sm mt-1 text-slate-600">
                     {status === 'SUCCESS' 
-                      ? '條件已完全符合！如果這是一次真實的排程檢查，系統將發送提醒給目標客戶。' 
-                      : '根據目前的設定與環境變數，系統判斷此刻無需發送提醒。'}
+                      ? '條件已符合！按下下方按鈕可立即執行真實 LINE 推播。' 
+                      : (skipReason || '根據目前設定與今日訂單狀態，系統判斷此刻無需發送提醒。')}
                   </p>
                 </div>
+
+                {/* 預覽實際將發出的 LINE 內容 */}
+                {previewSamples.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">即將發出的 LINE 訊息預覽</h4>
+                    {previewSamples.length > 1 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {previewSamples.map((s, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setShowPreviewIndex(idx)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${showPreviewIndex === idx ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
+                          >
+                            {s.recipientName}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {previewSamples[showPreviewIndex ?? 0] && (
+                      <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3 text-xs text-slate-800 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto font-sans">
+                        <div className="text-[11px] font-bold text-emerald-700 mb-1.5 pb-1 border-b border-emerald-200/70">
+                          收件人：{previewSamples[showPreviewIndex ?? 0].recipientName}
+                        </div>
+                        {previewSamples[showPreviewIndex ?? 0].previewText}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
                <div className="py-10 text-center text-slate-500">無結果</div>
             )}
           </div>
           
-          <div className="p-4 bg-slate-50 border-t border-slate-100 flex flex-col gap-2">
+          <div className="p-4 bg-slate-50 border-t border-slate-100 flex flex-col gap-2 shrink-0">
              {status === 'SUCCESS' && (
                 <button 
                   onClick={onRealSend}
