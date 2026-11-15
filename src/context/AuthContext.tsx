@@ -91,13 +91,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.dispatchEvent(new Event('app-unauthorized'));
   }, []);
 
-  // 3. 監聽全域 Token 失效事件
+  // 3. 監聽全域登入與 Token 失效事件，保持 AuthContext 與 useDataSync / LIFF 同步
   useEffect(() => {
     const handleUnauthorized = () => {
       logout();
     };
+    const handleAuthChanged = () => {
+      try {
+        const nextToken = localStorage.getItem('APP_TOKEN') || localStorage.getItem('APP_SESSION_TOKEN') || null;
+        const savedUser = localStorage.getItem('APP_USER');
+        const nextUser = savedUser ? JSON.parse(savedUser) : null;
+        setToken(nextToken);
+        setUser(nextUser);
+      } catch (e) {
+        console.warn('Failed to sync auth state:', e);
+      }
+    };
     window.addEventListener('app-unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('app-unauthorized', handleUnauthorized);
+    window.addEventListener('app-auth-changed', handleAuthChanged);
+    return () => {
+      window.removeEventListener('app-unauthorized', handleUnauthorized);
+      window.removeEventListener('app-auth-changed', handleAuthChanged);
+    };
   }, [logout]);
 
   // 4. 統一 API 呼叫器：以 POST + text/plain 避免 CORS Preflight (OPTIONS) 阻斷，並自動注入 Token

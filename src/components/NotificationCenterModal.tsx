@@ -165,13 +165,26 @@ export const NotificationCenterModal: React.FC<Props> = ({
     rules, 
     lineChannelToken: storeLineChannelToken, 
     lineUserId: storeLineUserId, 
+    lineLiffId: storeLineLiffId,
     dailyBriefing,
     dailyBriefings,
     hasCloudUpdate, 
     setRules, 
+    setLineLiffId,
     setDailyBriefings,
     resetCloudUpdateFlag 
   } = useSettingsStore();
+
+  const [liffIdInput, setLiffIdInput] = useState(() => {
+    const envId = String((import.meta as any).env?.VITE_LIFF_ID || '').trim();
+    return (storeLineLiffId || localStorage.getItem('nm_liff_id') || envId || '').trim();
+  });
+
+  useEffect(() => {
+    if (storeLineLiffId && storeLineLiffId !== liffIdInput) {
+      setLiffIdInput(storeLineLiffId);
+    }
+  }, [storeLineLiffId]);
 
   const [activeTab, setActiveTab] = useState<'rules' | 'briefing' | 'settings' | 'logs'>('rules');
   const [editingRule, setEditingRule] = useState<ReminderRule | null>(null);
@@ -302,13 +315,15 @@ export const NotificationCenterModal: React.FC<Props> = ({
     channelToken: string,
     userId: string,
     throwOnError = false,
-    briefingsOverride?: DailyBriefingConfig[]
+    briefingsOverride?: DailyBriefingConfig[],
+    liffIdOverride?: string
   ) => {
     const store = useSettingsStore.getState();
     const nextBriefings = briefingsOverride ?? store.dailyBriefings;
     const primaryBriefing = nextBriefings[0] || DEFAULT_DAILY_BRIEFING;
+    const resolvedLiffId = (liffIdOverride !== undefined ? liffIdOverride : (liffIdInput || store.lineLiffId || '')).trim();
     store.setRules(currentRules);
-    store.setLineSettings(channelToken, userId);
+    store.setLineSettings(channelToken, userId, resolvedLiffId);
     store.setDailyBriefings(nextBriefings);
 
     if (!apiEndpoint) return;
@@ -320,6 +335,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
         rules: currentRules,
         lineChannelToken: channelToken,
         lineUserId: userId,
+        lineLiffId: resolvedLiffId,
         dailyBriefings: nextBriefings,
         dailyBriefing: primaryBriefing
       });
@@ -591,13 +607,14 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const handleSaveSettingsOnly = async () => {
     const trimmedToken = lineChannelToken.trim();
     const trimmedUserId = lineUserId.trim();
+    const trimmedLiffId = liffIdInput.trim();
     if (!apiEndpoint || !trimmedToken || !trimmedUserId) {
       alert('請填寫完整 Token 與 User ID');
       return;
     }
-    useSettingsStore.getState().setLineSettings(trimmedToken, trimmedUserId);
+    useSettingsStore.getState().setLineSettings(trimmedToken, trimmedUserId, trimmedLiffId);
     try {
-      await saveToGas(rules, trimmedToken, trimmedUserId, true);
+      await saveToGas(rules, trimmedToken, trimmedUserId, true, undefined, trimmedLiffId);
       alert('LINE 串接設定已儲存至雲端！');
     } catch (e: any) {
       alert('儲存設定失敗：' + (e?.message || '網路異常'));
@@ -607,16 +624,17 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const handleSaveAndTestToken = async () => {
     const trimmedToken = lineChannelToken.trim();
     const trimmedUserId = lineUserId.trim();
+    const trimmedLiffId = liffIdInput.trim();
     if (!apiEndpoint || !trimmedToken || !trimmedUserId) {
       alert('請填寫完整 Token 與 User ID');
       return;
     }
     // 原子化寫入本地 Store 與 localStorage，避免閉包殘留舊值
-    useSettingsStore.getState().setLineSettings(trimmedToken, trimmedUserId);
+    useSettingsStore.getState().setLineSettings(trimmedToken, trimmedUserId, trimmedLiffId);
     setIsSaving(true);
     try {
       // First save (throw if save fails)
-      await saveToGas(rules, trimmedToken, trimmedUserId, true);
+      await saveToGas(rules, trimmedToken, trimmedUserId, true, undefined, trimmedLiffId);
       
       // Then trigger test message
       container.updateApiEndpoint(apiEndpoint);
@@ -710,17 +728,20 @@ export const NotificationCenterModal: React.FC<Props> = ({
 
   const handleDeployLineRichMenu = async () => {
     const trimmedToken = (storeLineChannelToken || lineChannelToken || '').trim();
+    const trimmedLiffId = (liffIdInput || storeLineLiffId || '').trim();
     if (!apiEndpoint || !trimmedToken) {
       alert('請先填入有效的 LINE Channel Access Token 並儲存設定');
       return;
     }
     setIsDeployingRichMenu(true);
     try {
+      setLineLiffId(trimmedLiffId);
       const imageBase64 = generateRichMenuPngBase64();
       container.updateApiEndpoint(apiEndpoint);
       const res: any = await container.apiClient.post('setupLineRichMenu', {
         lineChannelToken: trimmedToken,
         imageBase64,
+        liffId: trimmedLiffId,
       });
       if (res?.success) {
         alert(res.message || 'LINE 底部圖文選單部署成功！請重新開啟 LINE 聊天室即可看到 6 格操作按鈕。');
@@ -1942,14 +1963,14 @@ export const NotificationCenterModal: React.FC<Props> = ({
                     </div>
                  </div>
 
-                 <div className="bg-white p-5 rounded-2xl border border-indigo-100 shadow-sm">
-                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                 <div className="bg-white p-5 rounded-2xl border border-indigo-100 shadow-sm space-y-4">
+                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                      <div>
                        <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
                          🎛️ LINE 聊天室底部固定按鈕選單 (Rich Menu)
                        </h4>
                        <p className="text-xs text-slate-500 mt-1">
-                         一鍵將「改單、更改狀態、設定公休、刪除訂單、今日訂單、控制選單」6 大按鍵固定在 LINE 對話框最下方，免打字直接點選操作！
+                         一鍵將「改單、更改狀態、設定公休、刪除訂單、今日訂單、控制選單」6 大按鍵固定在 LINE 對話框最下方，填入 LIFF ID 即開啟零延遲手機網頁版。
                        </p>
                      </div>
                      <button
@@ -1960,13 +1981,64 @@ export const NotificationCenterModal: React.FC<Props> = ({
                        {isDeployingRichMenu ? '部署選單中...' : '📲 一鍵安裝底部按鈕選單'}
                      </button>
                    </div>
+
+                   <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                       <label className="text-xs font-bold text-slate-700">
+                         ⚡ LIFF ID（選填，啟用「4 格極速網頁 ＋ 2 格 Bot 指令」）
+                       </label>
+                       <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${liffIdInput.trim() ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
+                         {liffIdInput.trim() ? '⚡ 4 格 LIFF 極速網頁 + 2 格 Bot' : '💬 6 格純 Bot 指令'}
+                       </span>
+                     </div>
+                     <div className="flex gap-2">
+                       <input
+                         type="text"
+                         value={liffIdInput}
+                         onChange={(e) => setLiffIdInput(e.target.value)}
+                         onBlur={() => setLineLiffId(liffIdInput.trim())}
+                         placeholder="例如：2001234567-AbCdEfGh"
+                         className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                       />
+                       <button
+                         type="button"
+                         onClick={handleSaveSettingsOnly}
+                         disabled={isSaving}
+                         className="px-3.5 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-700 disabled:opacity-50"
+                       >
+                         儲存
+                       </button>
+                     </div>
+                     <p className="text-[11px] text-slate-500 leading-relaxed">
+                       LINE Developers Endpoint URL 請填：<code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-slate-700">{typeof window !== 'undefined' ? window.location.origin : 'https://你的網域.vercel.app'}</code>（Scope 勾選 <code className="font-mono">profile</code> 與 <code className="font-mono">openid</code>）
+                     </p>
+                   </div>
+
                    <div className="grid grid-cols-3 gap-2 p-2.5 bg-slate-900 rounded-xl text-white text-center text-xs font-bold">
-                     <div className="bg-blue-700/90 border border-blue-400/50 rounded-lg py-2.5 px-1">✏️ 修改訂單</div>
-                     <div className="bg-emerald-700/90 border border-emerald-400/50 rounded-lg py-2.5 px-1">📊 更改狀態</div>
-                     <div className="bg-amber-700/90 border border-amber-400/50 rounded-lg py-2.5 px-1">🏖️ 設定公休</div>
-                     <div className="bg-red-700/90 border border-red-400/50 rounded-lg py-2.5 px-1">🗑️ 刪除訂單</div>
-                     <div className="bg-slate-700/90 border border-slate-400/50 rounded-lg py-2.5 px-1">📋 今日訂單</div>
-                     <div className="bg-slate-800 border border-sky-400/50 rounded-lg py-2.5 px-1">🎛️ 控制主選單</div>
+                     <div className="bg-blue-700/90 border border-blue-400/50 rounded-lg py-2.5 px-1">
+                       <div>✏️ 修改訂單</div>
+                       <div className="text-[10px] font-normal text-blue-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
+                     </div>
+                     <div className="bg-emerald-700/90 border border-emerald-400/50 rounded-lg py-2.5 px-1">
+                       <div>📊 更改狀態</div>
+                       <div className="text-[10px] font-normal text-emerald-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
+                     </div>
+                     <div className="bg-amber-700/90 border border-amber-400/50 rounded-lg py-2.5 px-1">
+                       <div>🏖️ 設定公休</div>
+                       <div className="text-[10px] font-normal text-amber-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
+                     </div>
+                     <div className="bg-red-700/90 border border-red-400/50 rounded-lg py-2.5 px-1">
+                       <div>🗑️ 刪除訂單</div>
+                       <div className="text-[10px] font-normal text-red-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
+                     </div>
+                     <div className="bg-slate-700/90 border border-slate-400/50 rounded-lg py-2.5 px-1">
+                       <div>📋 今日訂單</div>
+                       <div className="text-[10px] font-normal text-slate-200 mt-0.5">Bot 即時回覆</div>
+                     </div>
+                     <div className="bg-slate-800 border border-sky-400/50 rounded-lg py-2.5 px-1">
+                       <div>🎛️ 控制主選單</div>
+                       <div className="text-[10px] font-normal text-sky-200 mt-0.5">Bot 主選單</div>
+                     </div>
                    </div>
                  </div>
 

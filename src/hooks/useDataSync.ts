@@ -331,6 +331,8 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
               trip,
               isTimeAutoFilled,
               isTripAutoFilled,
+              assignedTo: String(o.assigned_to || o.assignedTo || o.指派人員ID || '').trim(),
+              assignedName: String(o.assigned_name || o.assignedName || o.指派人員姓名 || '').trim(),
               lastUpdated: safeNumber(o.lastUpdated, 0, `Order ${oid} lastUpdated`),
               syncStatus: 'synced' 
             }; 

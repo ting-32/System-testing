@@ -247,11 +247,34 @@ export function setupMockBackend() {
             }), { status: 200 });
           }
 
+          if (action === 'liffLogin') {
+            return new Response(JSON.stringify({
+              success: true,
+              token: 'mock-liff-token-admin',
+              user: { userId: 'admin', username: 'admin', name: '模擬管理員 (LIFF)', role: 'admin' },
+              role: 'admin',
+              name: '模擬管理員 (LIFF)',
+              userId: 'admin'
+            }), { status: 200 });
+          }
+
+          if (action === 'bindLiffAccount') {
+            return new Response(JSON.stringify({
+              success: true,
+              staffName: '模擬管理員'
+            }), { status: 200 });
+          }
+
           if (action === 'setupLineRichMenu') {
+            const req = body.data || body;
+            const hasLiff = !!(req && req.liffId && String(req.liffId).trim());
             return new Response(JSON.stringify({
               success: true,
               richMenuId: 'mock-richmenu-v1',
-              message: '（模擬環境）LINE 底部圖文選單部署成功！'
+              mode: hasLiff ? 'liff_hybrid' : 'postback',
+              message: hasLiff
+                ? '（模擬環境）LINE 混合型極速選單（4 格 LIFF ＋ 2 格秒回）部署成功！'
+                : '（模擬環境）LINE 底部圖文選單（6 格指令）部署成功！'
             }), { status: 200 });
           }
 

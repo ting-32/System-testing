@@ -77,6 +77,10 @@ import { Header } from './components/layout/Header';
 import { BottomNav } from './components/layout/BottomNav';
 import { getTomorrowDate, getSmartDefaultDate, getLastMonthEndDate, formatTimeDisplay, formatTimeForInput, getUpcomingHolidays, isDateInOffDays } from './utils';
 import { buttonTap, buttonHover, triggerHaptic, containerVariants, itemVariants } from './components/animations';
+import { parseQuickModeConfig, clearQuickModeFromUrl } from './utils/quickMode';
+import { useLiffSession } from './hooks/useLiffSession';
+import { LiffQuickPanel } from './components/LiffQuickPanel';
+import { useSettingsStore } from './store/useSettingsStore';
 
 // ... (Toast Types, Variants, Haptic Helper, Helper Functions remain unchanged) ...
 // --- Toast Types ---
@@ -106,11 +110,13 @@ const App: React.FC = () => {
         
         // 保留重要的連線設定，清空其餘狀態
         const gasUrl = localStorage.getItem('nm_gas_url');
+        const liffId = localStorage.getItem('nm_liff_id');
         await localforage.clear();
         localStorage.clear();
         
         // 把重要的存回去
         if (gasUrl) localStorage.setItem('nm_gas_url', gasUrl);
+        if (liffId) localStorage.setItem('nm_liff_id', liffId);
         localStorage.setItem('nm_app_version', APP_VERSION);
         
         // 強制重整畫面，確保載入全新狀態
@@ -184,6 +190,34 @@ const App: React.FC = () => {
   } = useDataSync(addToast, isEditingRef, (id) => onReconciledRef.current?.(id), () => addSyncTaskRef.current);
 
   const auth = useAppAuth({ handleLogin, addToast });
+
+  const [quickConfig, setQuickConfig] = useState(() => parseQuickModeConfig());
+  const storeLiffId = useSettingsStore((s) => s.lineLiffId);
+  const resolvedLiffId = quickConfig.liffId || storeLiffId || '';
+
+  const handleLiffSessionReady = useCallback(
+    ({ token, user }: { token: string; user: { userId: string; username: string; name: string; role: string } }) => {
+      localStorage.setItem('APP_TOKEN', token);
+      localStorage.setItem('APP_SESSION_TOKEN', token);
+      localStorage.setItem('APP_USER_ROLE', user.role);
+      localStorage.setItem('APP_USER_NAME', user.name);
+      localStorage.setItem('APP_USER_ID', user.userId);
+      localStorage.setItem('APP_USER', JSON.stringify(user));
+      localStorage.setItem('nm_auth_status', 'true');
+      setSessionExpiredNotice(null);
+      setIsAuthenticated(true);
+      window.dispatchEvent(new Event('app-auth-changed'));
+    },
+    [setIsAuthenticated]
+  );
+
+  const liffSession = useLiffSession({
+    enabled: quickConfig.isQuickMode,
+    liffId: resolvedLiffId,
+    apiEndpoint,
+    isAuthenticated,
+    onSessionReady: handleLiffSessionReady,
+  });
 
   const onSyncSuccess = useCallback((task: any, responseData: any) => {
     setOrders((prev: Order[]) => {
@@ -955,26 +989,79 @@ const App: React.FC = () => {
     printWindow.document.close(); 
   };
 
-  if (!isAuthenticated || isInitialLoading) {
+  const isQuickSkeleton = quickConfig.isQuickMode && isInitialLoading && orders.length === 0 && customers.length === 0;
+  const shouldShowAuthOrLoading = !isAuthenticated || (quickConfig.isQuickMode ? isQuickSkeleton : isInitialLoading);
+
+  if (shouldShowAuthOrLoading) {
     return (
       <>
         <AnimatePresence mode="wait">
           {!isAuthenticated ? (
-            <LoginScreen 
-              key="login-screen" 
-              onLogin={async (usernameOrPwd, maybePwd) => {
-                const res = await handleLogin(usernameOrPwd, maybePwd);
-                const ok = typeof res === 'boolean' ? res : (res && res.success);
-                if (ok) setSessionExpiredNotice(null);
-                return res;
-              }} 
-              onSaveApiUrl={handleSaveApiUrl} 
-              apiEndpoint={apiEndpoint} 
-              addToast={addToast}
-              sessionExpiredMessage={sessionExpiredNotice}
-            />
+            quickConfig.isQuickMode && liffSession.isInitializing ? (
+              <motion.div
+                key="liff-verifying"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="min-h-screen flex flex-col items-center justify-center bg-morandi-oatmeal px-6 text-center"
+              >
+                <div className="w-12 h-12 rounded-2xl bg-[#5D7586]/15 text-[#5D7586] flex items-center justify-center mb-4">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                </div>
+                <p className="text-base font-bold text-[#3E3C3A]">LINE 身分快速驗證中…</p>
+                <p className="text-xs text-[#8A8580] mt-1.5">正在自動連線並同步今日出車單據</p>
+              </motion.div>
+            ) : (
+              <div key="login-screen" className="min-h-screen bg-morandi-oatmeal">
+                {quickConfig.isQuickMode && (liffSession.needsBind || liffSession.liffError) && (
+                  <div className="max-w-md mx-auto pt-4 px-4">
+                    <div className="bg-white border border-[#9C7C58]/30 rounded-2xl p-3.5 shadow-sm text-xs leading-relaxed text-[#3E3C3A]">
+                      {liffSession.needsBind ? (
+                        <p>
+                          歡迎 <span className="font-bold">{liffSession.lineProfileName || '同仁'}</span>！初次開啟 LINE 快控頁，請先登入一次系統帳號完成自動綁定，之後即可 0 秒免登直達。
+                        </p>
+                      ) : (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[#9E5A5A] font-medium">{liffSession.liffError}</span>
+                          {resolvedLiffId && (
+                            <button
+                              type="button"
+                              onClick={liffSession.triggerManualLineLogin}
+                              className="shrink-0 px-2.5 py-1.5 rounded-lg bg-[#5D7586] text-white font-semibold"
+                            >
+                              重試 LINE
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <LoginScreen
+                  onLogin={async (usernameOrPwd, maybePwd) => {
+                    const res = await handleLogin(usernameOrPwd, maybePwd);
+                    const ok = typeof res === 'boolean' ? res : (res && res.success);
+                    if (ok) {
+                      setSessionExpiredNotice(null);
+                      if (quickConfig.isQuickMode && (liffSession.needsBind || liffSession.hasLiffTokens)) {
+                        const tok = localStorage.getItem('APP_SESSION_TOKEN') || localStorage.getItem('APP_TOKEN') || '';
+                        const bindRes = await liffSession.bindCurrentLineAccount(tok);
+                        if (bindRes.success) {
+                          addToast('已完成 LINE 帳號綁定，下次將自動登入', 'success');
+                        }
+                      }
+                    }
+                    return res;
+                  }}
+                  onSaveApiUrl={handleSaveApiUrl}
+                  apiEndpoint={apiEndpoint}
+                  addToast={addToast}
+                  sessionExpiredMessage={sessionExpiredNotice}
+                />
+              </div>
+            )
           ) : (
-            <motion.div 
+            <motion.div
               key="initial-loading"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -986,6 +1073,38 @@ const App: React.FC = () => {
             </motion.div>
           )}
         </AnimatePresence>
+        <ToastNotification toasts={toasts} removeToast={removeToast} />
+      </>
+    );
+  }
+
+  if (quickConfig.isQuickMode) {
+    return (
+      <>
+        <LiffQuickPanel
+          initialAction={quickConfig.action}
+          orders={orders}
+          setOrders={setOrders}
+          customers={customers}
+          products={products}
+          trips={trips}
+          apiEndpoint={apiEndpoint}
+          isBackgroundSyncing={isBackgroundSyncing}
+          isSaving={isSaving}
+          pendingSyncCount={syncQueue.length}
+          isInLiffClient={liffSession.isInClient}
+          onRefreshSync={() => syncData(false)}
+          onCloseLiff={liffSession.closeLiffWindow}
+          onSwitchToFullApp={() => {
+            clearQuickModeFromUrl();
+            setQuickConfig((prev) => ({ ...prev, isQuickMode: false }));
+          }}
+          onSwipeStatusChange={handleSwipeStatusChange}
+          saveOrderToCloud={saveOrderToCloud}
+          onDeleteOrder={handleDeleteOrder}
+          onSaveCustomerCloud={onSaveCustomerCloud}
+          addToast={addToast}
+        />
         <ToastNotification toasts={toasts} removeToast={removeToast} />
       </>
     );

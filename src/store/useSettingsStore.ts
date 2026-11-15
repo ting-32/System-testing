@@ -53,6 +53,7 @@ interface SettingsState {
   rules: ReminderRule[];
   lineChannelToken: string;
   lineUserId: string;
+  lineLiffId: string;
   dailyBriefing: DailyBriefingConfig;
   dailyBriefings: DailyBriefingConfig[];
   hasCloudUpdate: boolean;
@@ -61,9 +62,10 @@ interface SettingsState {
   
   // Actions
   setRules: (rules: ReminderRule[]) => void;
-  setLineSettings: (token: string, userId: string) => void;
+  setLineSettings: (token: string, userId: string, liffId?: string) => void;
   setLineChannelToken: (token: string) => void;
   setLineUserId: (userId: string) => void;
+  setLineLiffId: (liffId: string) => void;
   setDailyBriefing: (briefing: DailyBriefingConfig) => void;
   setDailyBriefings: (briefings: DailyBriefingConfig[]) => void;
   markLocalUpdate: () => void;
@@ -78,6 +80,7 @@ export const useSettingsStore = create<SettingsState>()(
       rules: [],
       lineChannelToken: '',
       lineUserId: '',
+      lineLiffId: typeof window !== 'undefined' ? (localStorage.getItem('nm_liff_id') || '') : '',
       dailyBriefing: DEFAULT_DAILY_BRIEFING,
       dailyBriefings: [{ ...DEFAULT_DAILY_BRIEFING }],
       hasCloudUpdate: false,
@@ -86,12 +89,18 @@ export const useSettingsStore = create<SettingsState>()(
 
       setRules: (rules) => set({ rules, lastLocalUpdateAt: Date.now() }),
       
-      setLineSettings: (token, userId) => {
+      setLineSettings: (token, userId, liffId) => {
         if (typeof window !== 'undefined') {
           localStorage.setItem('nm_line_channel_token', token);
           localStorage.setItem('nm_line_user_id', userId);
+          if (liffId !== undefined) localStorage.setItem('nm_liff_id', liffId);
         }
-        set({ lineChannelToken: token, lineUserId: userId, lastLocalUpdateAt: Date.now() });
+        set((state) => ({
+          lineChannelToken: token,
+          lineUserId: userId,
+          lineLiffId: liffId !== undefined ? liffId : state.lineLiffId,
+          lastLocalUpdateAt: Date.now()
+        }));
       },
 
       setLineChannelToken: (token) => {
@@ -106,6 +115,13 @@ export const useSettingsStore = create<SettingsState>()(
           localStorage.setItem('nm_line_user_id', userId);
         }
         set({ lineUserId: userId, lastLocalUpdateAt: Date.now() });
+      },
+
+      setLineLiffId: (liffId) => {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('nm_liff_id', liffId);
+        }
+        set({ lineLiffId: liffId, lastLocalUpdateAt: Date.now() });
       },
 
       setDailyBriefing: (dailyBriefing) => {
@@ -163,11 +179,13 @@ export const useSettingsStore = create<SettingsState>()(
         const isRulesChanged = currentRules !== newRules;
         const isTokenChanged = settings.lineChannelToken !== undefined && settings.lineChannelToken !== get().lineChannelToken;
         const isUserIdChanged = settings.lineUserId !== undefined && settings.lineUserId !== get().lineUserId;
+        const isLiffIdChanged = settings.lineLiffId !== undefined && settings.lineLiffId !== get().lineLiffId;
         const isBriefingChanged = incomingBriefings !== undefined && JSON.stringify(incomingBriefings) !== JSON.stringify(get().dailyBriefings);
 
-        if (isRulesChanged || isTokenChanged || isUserIdChanged || isBriefingChanged) {
+        if (isRulesChanged || isTokenChanged || isUserIdChanged || isLiffIdChanged || isBriefingChanged) {
           const nextToken = settings.lineChannelToken !== undefined ? settings.lineChannelToken : get().lineChannelToken;
           const nextUserId = settings.lineUserId !== undefined ? settings.lineUserId : get().lineUserId;
+          const nextLiffId = settings.lineLiffId !== undefined ? settings.lineLiffId : get().lineLiffId;
 
           if (typeof window !== 'undefined') {
             if (settings.lineChannelToken !== undefined) {
@@ -176,12 +194,16 @@ export const useSettingsStore = create<SettingsState>()(
             if (settings.lineUserId !== undefined) {
               localStorage.setItem('nm_line_user_id', nextUserId);
             }
+            if (settings.lineLiffId !== undefined) {
+              localStorage.setItem('nm_liff_id', nextLiffId);
+            }
           }
 
           set({
             rules: settings.rules || get().rules,
             lineChannelToken: nextToken,
             lineUserId: nextUserId,
+            lineLiffId: nextLiffId,
             dailyBriefings: incomingBriefings || get().dailyBriefings,
             dailyBriefing: (incomingBriefings && incomingBriefings[0]) || get().dailyBriefing,
             hasCloudUpdate: true
@@ -197,6 +219,7 @@ export const useSettingsStore = create<SettingsState>()(
         rules: state.rules,
         lineChannelToken: state.lineChannelToken,
         lineUserId: state.lineUserId,
+        lineLiffId: state.lineLiffId,
         dailyBriefing: state.dailyBriefing,
         dailyBriefings: state.dailyBriefings,
       }),
