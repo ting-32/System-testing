@@ -160,11 +160,13 @@ export const OrderDispatchPage: React.FC = () => {
             : (currentOrder?.productName ? `• ${currentOrder.productName} × ${currentOrder.quantity || 1}` : '• 出貨品項請見單據');
 
           apiFetch('sendStaffDispatchNotification', {
+            orderId,
             staffUserId: targetUserId,
             staffName: targetUserName,
             customerName: currentOrder?.customerName,
             deliveryDate: currentOrder?.deliveryDate,
             deliveryTime: currentOrder?.deliveryTime,
+            note: currentOrder?.note || '',
             itemSummary: itemsSummary
           }).catch(e => console.warn('Push dispatch error', e));
 
@@ -227,12 +229,28 @@ export const OrderDispatchPage: React.FC = () => {
           return `${idx + 1}. 【${o.customerName}】${o.deliveryTime ? `(${o.deliveryTime}) ` : ''}- ${itemSummary}`;
         }).join('\n');
 
+        const perOrderPayloads = staffOrders.map(o => ({
+          orderId: o.order_id,
+          customerName: o.customerName,
+          deliveryDate: o.deliveryDate || '今日',
+          deliveryTime: o.deliveryTime || '',
+          note: o.note || '',
+          itemSummary: o.items && o.items.length > 0
+            ? o.items.map(it => `• ${it.productName || it.name} × ${it.quantity} ${it.unit || ''}`).join('\n')
+            : (o.productName ? `• ${o.productName} × ${o.quantity || 1}` : '• 品項見單據')
+        }));
+
         const res = await apiFetch('sendStaffDispatchNotification', {
+          orderId: staffOrders.length === 1 ? staffOrders[0].order_id : undefined,
+          orderIds: staffOrders.map(o => o.order_id),
+          orders: perOrderPayloads,
           staffUserId: sId,
           staffName: staffMember?.name || sId,
-          customerName: `今日出車彙整 (${staffOrders.length} 家客戶)`,
+          customerName: staffOrders.length === 1 ? staffOrders[0].customerName : `今日出車彙整 (${staffOrders.length} 家客戶)`,
           deliveryDate: staffOrders[0]?.deliveryDate || '今日',
-          itemSummary: summaryText
+          deliveryTime: staffOrders.length === 1 ? staffOrders[0]?.deliveryTime : '',
+          note: staffOrders.length === 1 ? (staffOrders[0]?.note || '') : '',
+          itemSummary: staffOrders.length === 1 ? perOrderPayloads[0].itemSummary : summaryText
         });
         if (res.success) {
           successCount++;

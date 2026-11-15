@@ -247,6 +247,14 @@ export function setupMockBackend() {
             }), { status: 200 });
           }
 
+          if (action === 'setupLineRichMenu') {
+            return new Response(JSON.stringify({
+              success: true,
+              richMenuId: 'mock-richmenu-v1',
+              message: '（模擬環境）LINE 底部圖文選單部署成功！'
+            }), { status: 200 });
+          }
+
           if (action === 'sendStaffDispatchNotification') {
             const req = body.data || body;
             const staffUserId = req.staffUserId || req.targetUserId;

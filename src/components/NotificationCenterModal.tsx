@@ -633,6 +633,107 @@ export const NotificationCenterModal: React.FC<Props> = ({
     }
   };
 
+  const [isDeployingRichMenu, setIsDeployingRichMenu] = useState(false);
+
+  const generateRichMenuPngBase64 = (): string => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2500;
+    canvas.height = 843;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+
+    // Deep slate background
+    ctx.fillStyle = '#0F172A';
+    ctx.fillRect(0, 0, 2500, 843);
+
+    const tiles = [
+      { col: 0, row: 0, bg: '#1D4ED8', accent: '#60A5FA', emoji: '✏️', title: '修改訂單', sub: '點選店家調品項／數量' },
+      { col: 1, row: 0, bg: '#047857', accent: '#34D399', emoji: '📊', title: '更改狀態', sub: '已送達／已收款／待出貨' },
+      { col: 2, row: 0, bg: '#B45309', accent: '#FBBF24', emoji: '🏖️', title: '設定公休', sub: '特定公休日／每週固定休' },
+      { col: 0, row: 1, bg: '#B91C1C', accent: '#F87171', emoji: '🗑️', title: '刪除訂單', sub: '點選移除誤建或重複單' },
+      { col: 1, row: 1, bg: '#334155', accent: '#94A3B8', emoji: '📋', title: '今日訂單', sub: '快速檢視本日出貨明細' },
+      { col: 2, row: 1, bg: '#1E293B', accent: '#38BDF8', emoji: '🎛️', title: '控制主選單', sub: '開啟完整互動操作面板' },
+    ];
+
+    const colWidths = [833, 834, 833];
+    const rowHeights = [421, 422];
+    const pad = 18;
+    const radius = 34;
+
+    const drawRoundRect = (x: number, y: number, w: number, h: number, r: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    };
+
+    tiles.forEach((t) => {
+      const startX = t.col === 0 ? 0 : t.col === 1 ? 833 : 1667;
+      const startY = t.row === 0 ? 0 : 421;
+      const w = colWidths[t.col];
+      const h = rowHeights[t.row];
+
+      const rx = startX + pad;
+      const ry = startY + pad;
+      const rw = w - pad * 2;
+      const rh = h - pad * 2;
+
+      drawRoundRect(rx, ry, rw, rh, radius);
+      ctx.fillStyle = t.bg;
+      ctx.fill();
+
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = t.accent;
+      ctx.stroke();
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.font = '88px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(`${t.emoji}  ${t.title}`, rx + rw / 2, ry + rh * 0.42);
+
+      ctx.font = '40px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
+      ctx.fillStyle = '#E2E8F0';
+      ctx.fillText(t.sub, rx + rw / 2, ry + rh * 0.72);
+    });
+
+    return canvas.toDataURL('image/png');
+  };
+
+  const handleDeployLineRichMenu = async () => {
+    const trimmedToken = (storeLineChannelToken || lineChannelToken || '').trim();
+    if (!apiEndpoint || !trimmedToken) {
+      alert('請先填入有效的 LINE Channel Access Token 並儲存設定');
+      return;
+    }
+    setIsDeployingRichMenu(true);
+    try {
+      const imageBase64 = generateRichMenuPngBase64();
+      container.updateApiEndpoint(apiEndpoint);
+      const res: any = await container.apiClient.post('setupLineRichMenu', {
+        lineChannelToken: trimmedToken,
+        imageBase64,
+      });
+      if (res?.success) {
+        alert(res.message || 'LINE 底部圖文選單部署成功！請重新開啟 LINE 聊天室即可看到 6 格操作按鈕。');
+      } else {
+        alert('部署失敗：' + (res?.error || '未知錯誤'));
+      }
+    } catch (e: any) {
+      alert('部署圖文選單時發生錯誤：' + (e?.message || '未知錯誤'));
+    } finally {
+      setIsDeployingRichMenu(false);
+    }
+  };
+
   const handleCreateRule = () => {
     setEditingRule({
       id: Date.now().toString(),
@@ -1839,6 +1940,34 @@ export const NotificationCenterModal: React.FC<Props> = ({
                         {isSaving ? '儲存中...' : '儲存與測試'}
                       </button>
                     </div>
+                 </div>
+
+                 <div className="bg-white p-5 rounded-2xl border border-indigo-100 shadow-sm">
+                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                     <div>
+                       <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                         🎛️ LINE 聊天室底部固定按鈕選單 (Rich Menu)
+                       </h4>
+                       <p className="text-xs text-slate-500 mt-1">
+                         一鍵將「改單、更改狀態、設定公休、刪除訂單、今日訂單、控制選單」6 大按鍵固定在 LINE 對話框最下方，免打字直接點選操作！
+                       </p>
+                     </div>
+                     <button
+                       onClick={handleDeployLineRichMenu}
+                       disabled={isDeployingRichMenu}
+                       className="shrink-0 bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                     >
+                       {isDeployingRichMenu ? '部署選單中...' : '📲 一鍵安裝底部按鈕選單'}
+                     </button>
+                   </div>
+                   <div className="grid grid-cols-3 gap-2 p-2.5 bg-slate-900 rounded-xl text-white text-center text-xs font-bold">
+                     <div className="bg-blue-700/90 border border-blue-400/50 rounded-lg py-2.5 px-1">✏️ 修改訂單</div>
+                     <div className="bg-emerald-700/90 border border-emerald-400/50 rounded-lg py-2.5 px-1">📊 更改狀態</div>
+                     <div className="bg-amber-700/90 border border-amber-400/50 rounded-lg py-2.5 px-1">🏖️ 設定公休</div>
+                     <div className="bg-red-700/90 border border-red-400/50 rounded-lg py-2.5 px-1">🗑️ 刪除訂單</div>
+                     <div className="bg-slate-700/90 border border-slate-400/50 rounded-lg py-2.5 px-1">📋 今日訂單</div>
+                     <div className="bg-slate-800 border border-sky-400/50 rounded-lg py-2.5 px-1">🎛️ 控制主選單</div>
+                   </div>
                  </div>
 
                  <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 text-amber-800 text-sm flex gap-3">

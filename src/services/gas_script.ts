@@ -204,7 +204,7 @@ function doPost(e) {
         })).setMimeType(ContentService.MimeType.JSON);
       }
 
-      const adminOnlyActions = ["saveSettings", "deleteCustomer", "deleteProduct", "changePassword", "getSystemLogs"];
+      const adminOnlyActions = ["saveSettings", "deleteCustomer", "deleteProduct", "changePassword", "getSystemLogs", "setupLineRichMenu"];
       if (userRole === "staff" && adminOnlyActions.includes(action)) {
         writeSystemLog("SYSTEM_FORBIDDEN", "越權管理員操作阻擋", JSON.stringify({ action: action, employee: tokenPayload.name }));
         return ContentService.createTextOutput(JSON.stringify({ 
@@ -339,6 +339,10 @@ function doPost(e) {
       case "testLineMessage":
         result = testLineMessage(params.data);
         writeSystemLog("SYSTEM_TEST_MSG", "LINE Notify", JSON.stringify({ msg: "Triggered test message" }));
+        break;
+      case "setupLineRichMenu":
+        result = handleSetupLineRichMenu(params.data || params, tokenPayload);
+        writeSystemLog("SETUP_LINE_RICHMENU", "LINE 圖文選單", JSON.stringify({ operator: tokenPayload ? tokenPayload.name : '未知', success: !!(result && result.success) }));
         break;
       case "testRule":
         result = checkReminders(params.data.ruleId);
@@ -1528,6 +1532,10 @@ function updateOrderContent(orderData) {
     
     // FULL UPDATE MODE (包含 items 異動，需要重新產生 rows)
     let originalCreatedAt = "";
+    let preservedAssignedTo = "";
+    let preservedAssignedName = "";
+    let preservedDispatchStatus = "";
+    const existingItemPricing = {};
     if (lastRow > 1) {
       for (let i = values.length - 1; i >= 1; i--) {
         const sheetId = String(values[i][1]).trim();
@@ -1538,6 +1546,20 @@ function updateOrderContent(orderData) {
             checkOrderVersionStrict(sheetVersion, orderData.version);
           }
           if (!originalCreatedAt) originalCreatedAt = values[i][0];
+          if (!preservedAssignedTo && headerMap["assigned_to"] !== undefined) {
+            preservedAssignedTo = values[i][headerMap["assigned_to"]] || "";
+          }
+          if (!preservedAssignedName && headerMap["assigned_name"] !== undefined) {
+            preservedAssignedName = values[i][headerMap["assigned_name"]] || "";
+          }
+          if (!preservedDispatchStatus && headerMap["dispatch_status"] !== undefined) {
+            preservedDispatchStatus = values[i][headerMap["dispatch_status"]] || "";
+          }
+          const prodKey = String(values[i][5] || "").trim();
+          const upIdx = headerMap["單價"];
+          if (prodKey && upIdx !== undefined && values[i][upIdx] !== "" && values[i][upIdx] !== undefined) {
+            existingItemPricing[prodKey] = Number(values[i][upIdx]) || 0;
+          }
         }
       }
     }
@@ -1572,16 +1594,28 @@ function updateOrderContent(orderData) {
         row[2] = orderData.customerName;
         row[3] = orderData.deliveryDate;
         row[4] = orderData.deliveryTime || "";
-        row[5] = item.productName || item.productId;
-        row[6] = item.quantity;
+        const itemProdName = item.productName || item.productId;
+        const qtyNum = Number(item.quantity) || 0;
+        row[5] = itemProdName;
+        row[6] = qtyNum;
         row[7] = orderData.note || "";
         row[8] = orderData.status || "PENDING";
         row[9] = orderData.deliveryMethod || "";
         row[10] = item.unit || "斤";
         
         row[lastUpdatedColIdx] = newLastUpdatedTs;
-        if (headerMap["Trip"]) row[headerMap["Trip"]] = orderData.trip || "";
-        if (headerMap["資料來源"]) row[headerMap["資料來源"]] = orderData.source || "";
+        if (headerMap["Trip"] !== undefined) row[headerMap["Trip"]] = orderData.trip || "";
+        if (headerMap["資料來源"] !== undefined) row[headerMap["資料來源"]] = orderData.source || "";
+        if (headerMap["assigned_to"] !== undefined && preservedAssignedTo) row[headerMap["assigned_to"]] = preservedAssignedTo;
+        if (headerMap["assigned_name"] !== undefined && preservedAssignedName) row[headerMap["assigned_name"]] = preservedAssignedName;
+        if (headerMap["dispatch_status"] !== undefined && preservedDispatchStatus) row[headerMap["dispatch_status"]] = preservedDispatchStatus;
+        const resolvedUnitPrice = item.unitPrice !== undefined ? Number(item.unitPrice) : existingItemPricing[String(itemProdName).trim()];
+        if (headerMap["單價"] !== undefined && resolvedUnitPrice !== undefined && !isNaN(resolvedUnitPrice)) {
+          row[headerMap["單價"]] = resolvedUnitPrice;
+          if (headerMap["小計"] !== undefined) {
+            row[headerMap["小計"]] = item.subtotal !== undefined ? Number(item.subtotal) : resolvedUnitPrice * qtyNum;
+          }
+        }
         row[versionColIdx] = currentVersion + 1; 
         
         newRows.push(row);
@@ -4486,6 +4520,363 @@ function runDailyBriefingCheck(isDryRun = false, forceRun = false, overrideConfi
   return allResults;
 }
 
+/**
+ * 取得常駐於輸入框上方的 Quick Reply 控制快捷按鈕列
+ */
+function getDefaultControlQuickReply() {
+  return {
+    items: [
+      {
+        type: "action",
+        action: { type: "postback", label: "🎛️ 控制選單", data: "cmd=SHOW_MENU", displayText: "選單" }
+      },
+      {
+        type: "action",
+        action: { type: "postback", label: "✏️ 改單", data: "cmd=W_START&op=U&day=T&p=0", displayText: "✏️ 我要改單" }
+      },
+      {
+        type: "action",
+        action: { type: "postback", label: "📊 改狀態", data: "cmd=W_START&op=S&day=T&p=0", displayText: "📊 更改訂單狀態" }
+      },
+      {
+        type: "action",
+        action: { type: "postback", label: "🏖️ 設公休", data: "cmd=W_START&op=H&p=0", displayText: "🏖️ 設定店家公休" }
+      },
+      {
+        type: "action",
+        action: { type: "postback", label: "🗑️ 刪單", data: "cmd=W_START&op=D&day=T&p=0", displayText: "🗑️ 刪除訂單" }
+      },
+      {
+        type: "action",
+        action: { type: "postback", label: "📋 今日訂單", data: "cmd=W_TODAY", displayText: "📋 查看今日訂單" }
+      }
+    ]
+  };
+}
+
+function sendLineReply(replyToken, channelToken, messagesOrText, skipDefaultQuickReply) {
+  if (!replyToken || !channelToken || !messagesOrText) return;
+  let messages = [];
+  if (typeof messagesOrText === 'string') {
+    messages = [{ type: "text", text: messagesOrText }];
+  } else if (Array.isArray(messagesOrText)) {
+    messages = messagesOrText.map(m => typeof m === 'string' ? { type: "text", text: m } : m);
+  } else if (typeof messagesOrText === 'object') {
+    messages = [messagesOrText];
+  }
+  if (messages.length === 0) return;
+
+  const trimmedMsgs = messages.slice(0, 5);
+  if (!skipDefaultQuickReply) {
+    const lastIdx = trimmedMsgs.length - 1;
+    if (trimmedMsgs[lastIdx] && !trimmedMsgs[lastIdx].quickReply) {
+      trimmedMsgs[lastIdx] = Object.assign({}, trimmedMsgs[lastIdx], {
+        quickReply: getDefaultControlQuickReply()
+      });
+    }
+  }
+
+  try {
+    UrlFetchApp.fetch("https://api.line.me/v2/bot/message/reply", {
+      method: "post",
+      contentType: "application/json",
+      headers: {
+        "Authorization": "Bearer " + channelToken
+      },
+      payload: JSON.stringify({
+        replyToken: replyToken,
+        messages: trimmedMsgs
+      }),
+      muteHttpExceptions: true
+    });
+  } catch (err) {
+    console.error("LINE reply error: " + err.toString());
+  }
+}
+
+/**
+ * 建置「🎛️ ERP 系統控制主面板」Flex Message（4 大操作按鈕＋今日訂單）
+ */
+function buildLineControlMenuMessage(lineUser) {
+  const userStatusLine = lineUser
+    ? `👤 已綁定：${lineUser.name} (${String(lineUser.role || 'staff').toUpperCase()})`
+    : `⚠️ 尚未綁定帳號（請先輸入：#綁定 工號）`;
+
+  return {
+    type: "flex",
+    altText: "🎛️ ERP 快速控制面板（改單 / 狀態 / 公休 / 刪單）",
+    contents: {
+      type: "bubble",
+      size: "mega",
+      header: {
+        type: "box",
+        layout: "vertical",
+        backgroundColor: "#0F172A",
+        paddingAll: "16px",
+        contents: [
+          {
+            type: "text",
+            text: "🎛️ 系統快速控制面板",
+            weight: "bold",
+            size: "lg",
+            color: "#FFFFFF"
+          },
+          {
+            type: "text",
+            text: userStatusLine,
+            size: "xs",
+            color: "#94A3B8",
+            margin: "xs",
+            wrap: true
+          }
+        ]
+      },
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        paddingAll: "14px",
+        contents: [
+          {
+            type: "text",
+            text: "直接點選下方按鈕操作，免背指令：",
+            size: "xs",
+            color: "#64748B",
+            margin: "none"
+          },
+          {
+            type: "box",
+            layout: "horizontal",
+            spacing: "sm",
+            margin: "sm",
+            contents: [
+              {
+                type: "button",
+                style: "primary",
+                color: "#2563EB",
+                height: "sm",
+                flex: 1,
+                action: {
+                  type: "postback",
+                  label: "✏️ 修改訂單",
+                  data: "cmd=W_START&op=U&day=T&p=0",
+                  displayText: "✏️ 修改訂單"
+                }
+              },
+              {
+                type: "button",
+                style: "primary",
+                color: "#059669",
+                height: "sm",
+                flex: 1,
+                action: {
+                  type: "postback",
+                  label: "📊 更改狀態",
+                  data: "cmd=W_START&op=S&day=T&p=0",
+                  displayText: "📊 更改訂單狀態"
+                }
+              }
+            ]
+          },
+          {
+            type: "box",
+            layout: "horizontal",
+            spacing: "sm",
+            margin: "sm",
+            contents: [
+              {
+                type: "button",
+                style: "primary",
+                color: "#D97706",
+                height: "sm",
+                flex: 1,
+                action: {
+                  type: "postback",
+                  label: "🏖️ 設定公休",
+                  data: "cmd=W_START&op=H&p=0",
+                  displayText: "🏖️ 設定店家公休"
+                }
+              },
+              {
+                type: "button",
+                style: "primary",
+                color: "#DC2626",
+                height: "sm",
+                flex: 1,
+                action: {
+                  type: "postback",
+                  label: "🗑️ 刪除訂單",
+                  data: "cmd=W_START&op=D&day=T&p=0",
+                  displayText: "🗑️ 刪除訂單"
+                }
+              }
+            ]
+          },
+          {
+            type: "button",
+            style: "secondary",
+            height: "sm",
+            margin: "sm",
+            action: {
+              type: "postback",
+              label: "📋 查看今日訂單一覽",
+              data: "cmd=W_TODAY",
+              displayText: "📋 查看今日訂單"
+            }
+          }
+        ]
+      }
+    }
+  };
+}
+
+/**
+ * 依 LINE User ID 從 Users 工作表反查系統使用者帳號與權限角色
+ */
+function getUserByLineId(lineUserId) {
+  const targetLineId = String(lineUserId || '').trim();
+  if (!targetLineId) return null;
+
+  const sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (!sheet || sheet.getLastRow() <= 1) return null;
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const idIdx = findHeaderIndex(headers, ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]);
+  const userIdx = findHeaderIndex(headers, ["username", "user", "帳號", "登入帳號", "使用者名稱"]);
+  const nameIdx = findHeaderIndex(headers, ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]);
+  const roleIdx = findHeaderIndex(headers, ["role", "職位", "角色", "職務", "職級", "職位角色"]);
+  const statusIdx = findHeaderIndex(headers, ["status", "狀態", "帳號狀態", "啟用狀態"]);
+  const lineIdx = findHeaderIndex(headers, ["line_user_id", "lineuserid", "line_id", "lineid", "line綁定id", "line"]);
+  if (lineIdx === -1) return null;
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const rowLineId = String(row[lineIdx] || '').trim();
+    if (rowLineId === targetLineId) {
+      const rawId = idIdx !== -1 ? String(row[idIdx] || '').trim() : '';
+      const rawUser = userIdx !== -1 ? String(row[userIdx] || '').trim() : '';
+      const uId = rawId || rawUser;
+      const uName = nameIdx !== -1 && String(row[nameIdx] || '').trim()
+        ? String(row[nameIdx]).trim()
+        : (rawUser || uId || '同仁');
+      const role = roleIdx !== -1 && String(row[roleIdx] || '').trim()
+        ? String(row[roleIdx]).trim().toLowerCase()
+        : 'staff';
+      const rawStatus = statusIdx !== -1 ? String(row[statusIdx] || '').trim().toUpperCase() : 'ACTIVE';
+      const isActive = (rawStatus !== 'DISABLED' && rawStatus !== 'FALSE');
+      return {
+        userId: uId,
+        username: rawUser || uId,
+        name: uName,
+        role: role,
+        status: isActive ? 'ACTIVE' : 'DISABLED',
+        isActive: isActive,
+        lineUserId: targetLineId
+      };
+    }
+  }
+  return null;
+}
+
+function parseLinePostbackData(dataStr) {
+  const result = {};
+  if (!dataStr) return result;
+  String(dataStr).split('&').forEach(pair => {
+    const idx = pair.indexOf('=');
+    if (idx > -1) {
+      const k = decodeURIComponent(pair.substring(0, idx));
+      const v = decodeURIComponent(pair.substring(idx + 1));
+      result[k] = v;
+    }
+  });
+  return result;
+}
+
+function getOrderStatusChineseLabel(status) {
+  const s = String(status || '').trim().toUpperCase();
+  const map = {
+    'PENDING': '待出貨',
+    'SHIPPED': '已出貨 / 已送達',
+    'PAID': '已收款 / 已結清',
+    'PAID_UNSHIPPED': '已收款 (未出貨)',
+    'CANCELLED': '已取消',
+    'DELETED': '已刪除'
+  };
+  return map[s] || s || '未知';
+}
+
+function normalizeLineOrderStatus(rawStatus) {
+  const s = String(rawStatus || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!s) return null;
+  if (s === 'PENDING' || s === '待出貨' || s === '未出貨' || s === '待配送' || s === '未配送' || s === '恢復待出貨') return 'PENDING';
+  if (s === 'SHIPPED' || s === '已出貨' || s === '已送達' || s === '送達' || s === '已配送' || s === '完成配送' || s === '配送完成') return 'SHIPPED';
+  if (s === 'PAID_UNSHIPPED' || s === '已收款未出貨' || s === '已付款未出貨' || s === '先收款' || s === '預付') return 'PAID_UNSHIPPED';
+  if (s === 'PAID' || s === '已收款' || s === '已付款' || s === '已結清' || s === '收款完成') return 'PAID';
+  if (s === 'CANCELLED' || s === '已取消' || s === '取消訂單' || s === '取消') return 'CANCELLED';
+  return null;
+}
+
+function parseRelativeOrCalendarDate(token, todayStr, timeZone) {
+  const raw = String(token || '').trim();
+  if (!raw) return null;
+  const tz = timeZone || "Asia/Taipei";
+  const now = new Date();
+  const currentYear = Utilities.formatDate(now, tz, "yyyy");
+
+  if (raw === '今天' || raw === '今日') return todayStr;
+  if (raw === '明天' || raw === '明日') {
+    const d = new Date(todayStr + 'T00:00:00');
+    d.setDate(d.getDate() + 1);
+    return Utilities.formatDate(d, tz, "yyyy-MM-dd");
+  }
+  if (raw === '後天' || raw === '後日') {
+    const d = new Date(todayStr + 'T00:00:00');
+    d.setDate(d.getDate() + 2);
+    return Utilities.formatDate(d, tz, "yyyy-MM-dd");
+  }
+  if (raw === '昨天' || raw === '昨日') {
+    const d = new Date(todayStr + 'T00:00:00');
+    d.setDate(d.getDate() - 1);
+    return Utilities.formatDate(d, tz, "yyyy-MM-dd");
+  }
+  const fullMatch = raw.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
+  if (fullMatch) {
+    return `${fullMatch[1]}-${fullMatch[2].padStart(2, '0')}-${fullMatch[3].padStart(2, '0')}`;
+  }
+  const mdMatch = raw.match(/^(\d{1,2})[\/\-\.](\d{1,2})(?:號|日)?$/);
+  if (mdMatch) {
+    const m = parseInt(mdMatch[1], 10);
+    const d = parseInt(mdMatch[2], 10);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${currentYear}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+  const cnMdMatch = raw.match(/^(\d{1,2})月(\d{1,2})(?:號|日)?$/);
+  if (cnMdMatch) {
+    const m = parseInt(cnMdMatch[1], 10);
+    const d = parseInt(cnMdMatch[2], 10);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${currentYear}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+  return null;
+}
+
+function parseChineseWeekdayNumber(token) {
+  const s = String(token || '').trim();
+  const map = {
+    '0': 0, '7': 0, '日': 0, '天': 0, '週日': 0, '周日': 0, '星期日': 0, '星期天': 0, '禮拜日': 0, '禮拜天': 0,
+    '1': 1, '一': 1, '週一': 1, '周一': 1, '星期一': 1, '禮拜一': 1,
+    '2': 2, '二': 2, '週二': 2, '周二': 2, '星期二': 2, '禮拜二': 2,
+    '3': 3, '三': 3, '週三': 3, '周三': 3, '星期三': 3, '禮拜三': 3,
+    '4': 4, '四': 4, '週四': 4, '周四': 4, '星期四': 4, '禮拜四': 4,
+    '5': 5, '五': 5, '週五': 5, '周五': 5, '星期五': 5, '禮拜五': 5,
+    '6': 6, '六': 6, '週六': 6, '周六': 6, '星期六': 6, '禮拜六': 6
+  };
+  return map[s] !== undefined ? map[s] : null;
+}
+
 function handleLineWebhook(payload) {
   const configSheet = getConfigSheet();
   const settingsStr = getSystemConfig(configSheet, "AppSettings");
@@ -4496,100 +4887,1188 @@ function handleLineWebhook(payload) {
       channelToken = String(settings.lineChannelToken || '').trim();
     } catch (e) {}
   }
-  
   if (!channelToken) {
+    channelToken = getLineMessagingToken();
+  }
+
+  if (!channelToken || !payload || !Array.isArray(payload.events)) {
     return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
   }
-  
+
+  const cache = CacheService.getScriptCache();
+
   payload.events.forEach(function(event) {
-    if (event.type === 'message' && event.message.type === 'text') {
-      const text = event.message.text.trim();
-      const userId = event.source.userId;
+    // 1. Webhook 事件去重 (防止 LINE 網路重試造成重複執行)
+    if (event.webhookEventId) {
+      const dedupKey = "LINE_EVT_" + String(event.webhookEventId);
+      if (cache.get(dedupKey)) {
+        return;
+      }
+      cache.put(dedupKey, "1", 300);
+    }
+
+    // 2. 新加入好友事件：自動送出控制面板與綁定教學
+    if (event.type === 'follow') {
+      const uid = event.source ? event.source.userId : '';
+      const lineUser = getUserByLineId(uid);
+      sendLineReply(event.replyToken, channelToken, [
+        buildLineControlMenuMessage(lineUser),
+        {
+          type: "text",
+          text: "👋 歡迎使用製麵廠 ERP 智慧助理！\n您可以直接點選上方按鈕操作，或傳送「#綁定 您的工號」啟用操控與派工通知。"
+        }
+      ]);
+      return;
+    }
+
+    // 3. Postback 按鈕事件處理 (例如「✅ 我已送達」、主面板與點選精靈)
+    if (event.type === 'postback' && event.postback && event.postback.data) {
+      handleLinePostbackEvent(event, channelToken);
+      return;
+    }
+
+    // 4. 文字訊息事件處理
+    if (event.type === 'message' && event.message && event.message.type === 'text') {
+      const text = String(event.message.text || '').trim();
+      const userId = event.source ? event.source.userId : '';
       const replyToken = event.replyToken;
-      
-      let replyText = "";
-      
-      // 1. 查詢自己的 LINE User ID
+      let replyPayload = "";
+
+      // A. 查詢自己的 LINE User ID
       if (text === "查ID" || text === "我的ID" || text === "id" || text === "ID") {
-        replyText = "您的 LINE User ID 是：\n" + userId + "\n\n💡 若要綁定派工通知，請輸入：\n#綁定 您的工號\n（例如：#綁定 staff3）";
-      } 
-      // 2. 司機/同仁自助綁定工號 (#綁定 工號 或 #bind 工號)
+        cache.remove("LINE_WIZARD_" + userId);
+        replyPayload = "您的 LINE User ID 是：\n" + userId + "\n\n💡 若要綁定系統帳號，請輸入：\n#綁定 您的工號\n（例如：#綁定 staff3）";
+      }
+      // B. 司機/同仁自助綁定工號 (#綁定 工號 或 #bind 工號)
       else if (/^(?:#?綁定|#?bind)\s*([a-zA-Z0-9_\-]+)$/i.test(text)) {
+        cache.remove("LINE_WIZARD_" + userId);
         const match = text.match(/^(?:#?綁定|#?bind)\s*([a-zA-Z0-9_\-]+)$/i);
         const targetStaffId = match ? match[1].trim() : '';
         const bindResult = handleLineSelfBind(userId, targetStaffId);
         if (bindResult.success) {
-          replyText = `✅ 綁定成功！\n同仁【${bindResult.staffName} (${targetStaffId})】已成功綁定此 LINE 帳號。\n日後若有指派給您的配送訂單，系統將自動推播明細給您！`;
+          const boundUser = getUserByLineId(userId);
+          replyPayload = [
+            {
+              type: "text",
+              text: `✅ 綁定成功！\n同仁【${bindResult.staffName} (${targetStaffId})】已成功綁定此 LINE 帳號。\n現在可直接點選下方按鈕或面板操作系統：`
+            },
+            buildLineControlMenuMessage(boundUser)
+          ];
         } else {
-          replyText = `❌ 綁定失敗：${bindResult.error || "查無此工號，請確認工號是否正確（例如：#綁定 staff3）"}`;
+          replyPayload = `❌ 綁定失敗：${bindResult.error || "查無此工號，請確認工號是否正確（例如：#綁定 staff3）"}`;
         }
       }
-      // 3. 說明選單 / 幫助
+      // C. 喚醒控制主面板 (「選單 / menu / 控制 / 操作 / 面板 / 按鈕 / 0」)
+      else if (/^(?:🎛️\s*)?(?:選單|主選單|控制|控制主選單|控制面板|操作|面板|按鈕|menu|0)$/i.test(text)) {
+        cache.remove("LINE_WIZARD_" + userId);
+        cache.remove("LINE_PENDING_" + userId);
+        cache.remove("LINE_PICK_" + userId);
+        const lineUser = getUserByLineId(userId);
+        replyPayload = buildLineControlMenuMessage(lineUser);
+      }
+      // C2. 短文字快速喚起按鈕精靈（同時相容手打與 LINE 官方帳號管理員「文字類型」圖文選單）
+      else if (/^(?:✏️\s*)?(?:改單|修改訂單)$/.test(text)) {
+        handleLinePostbackEvent({ source: event.source, replyToken: replyToken, postback: { data: "cmd=W_START&op=U&day=T&p=0" } }, channelToken);
+        return;
+      }
+      else if (/^(?:📊\s*)?(?:改狀態|更改狀態|更改訂單狀態)$/.test(text)) {
+        handleLinePostbackEvent({ source: event.source, replyToken: replyToken, postback: { data: "cmd=W_START&op=S&day=T&p=0" } }, channelToken);
+        return;
+      }
+      else if (/^(?:🏖️\s*)?(?:設公休|設定公休|設定店家公休|公休設定)$/.test(text)) {
+        handleLinePostbackEvent({ source: event.source, replyToken: replyToken, postback: { data: "cmd=W_START&op=H&p=0" } }, channelToken);
+        return;
+      }
+      else if (/^(?:🗑️\s*)?(?:刪單|刪除訂單)$/.test(text)) {
+        handleLinePostbackEvent({ source: event.source, replyToken: replyToken, postback: { data: "cmd=W_START&op=D&day=T&p=0" } }, channelToken);
+        return;
+      }
+      else if (/^(?:📋\s*)?(?:今日訂單|查看今日訂單)$/.test(text)) {
+        handleLinePostbackEvent({ source: event.source, replyToken: replyToken, postback: { data: "cmd=W_TODAY" } }, channelToken);
+        return;
+      }
+      // D. 說明選單 / 幫助 (同時送上按鈕面板＋指令範例)
       else if (text === "說明" || text === "幫助" || text === "help" || text === "功能" || text === "?") {
-        replyText = "🤖【系統查詢指令說明】\n" +
-                    "━━━━━━━━━━━━━━\n" +
-                    "🚚 司機派工專屬綁定：\n" +
-                    "👉「#綁定 staff3」（綁定您的員工工號）\n" +
-                    "👉「查ID」（查詢您個人的 LINE User ID）\n\n" +
-                    "1️⃣ 店家營業與公休：\n" +
-                    "👉「鵝肉亭今天有營業嗎？」\n" +
-                    "👉「鵝肉亭什麼時候公休？」\n\n" +
-                    "2️⃣ 配送進度與訂單：\n" +
-                    "👉「鵝肉亭今天有去嗎？」\n" +
-                    "👉「鵝肉亭有叫麵嗎？」\n" +
-                    "👉「正宗民雄鵝肉亭」（看完整店家資料）\n\n" +
-                    "3️⃣ 指定日期訂單：\n" +
-                    "👉「誠石 5/30 訂了多少？」\n" +
-                    "👉「大埔 5/30 叫了啥」\n\n" +
-                    "4️⃣ 月份貨款統計：\n" +
-                    "👉「誠石 5月貨款是多少？」\n" +
-                    "👉「鵝肉亭五月要收多少」\n\n" +
-                    "5️⃣ 生成對帳單 PDF：\n" +
-                    "👉「誠石 5月報表」\n" +
-                    "👉「鵝肉亭 5月PDF」";
+        cache.remove("LINE_WIZARD_" + userId);
+        const lineUser = getUserByLineId(userId);
+        const guideText =
+          "🤖【系統 LINE 按鈕與指令說明】\n" +
+          "━━━━━━━━━━━━━━\n" +
+          "💡 免打字操作：輸入「選單」或直接點下方快捷列按鈕，即可用點選完成改單、改狀態、設公休、刪單！\n\n" +
+          "⚡ 進階文字指令（#指令 與 口語皆可）：\n" +
+          "• #改單 誠石 油麵 30（或 #改單 誠石 +油麵 5）\n" +
+          "• #狀態 誠石 已送達（待出貨/已送達/已收款/已取消）\n" +
+          "• #公休 鵝肉亭 5/20（或 週日 / 取消 5/20）\n" +
+          "• #刪單 誠石 5/30\n" +
+          "• 口語：「把誠石今天的油麵改成30斤」\n\n" +
+          "🔍 查詢範例：「鵝肉亭今天有營業嗎？」、「誠石 5月貨款是多少？」";
+        replyPayload = [buildLineControlMenuMessage(lineUser), { type: "text", text: guideText }];
+      }
+      // E. 檢查是否有待確認的異動暫存 (文字輸入「確認/取消」保底機制)
+      else if (userId && cache.get("LINE_PENDING_" + userId) && /^(?:確認|確定|確認執行|好|是|y|yes|ok|取消|取消操作|不要|否|n|no)$/i.test(text)) {
+        const pendingRaw = cache.get("LINE_PENDING_" + userId);
+        if (/^(?:取消|取消操作|不要|否|n|no)$/i.test(text)) {
+          cache.remove("LINE_PENDING_" + userId);
+          cache.remove("LINE_PICK_" + userId);
+          cache.remove("LINE_WIZARD_" + userId);
+          replyPayload = "❌ 已取消本次操作，系統資料未變更。";
+        } else {
+          const lineUser = getUserByLineId(userId);
+          if (!lineUser || !lineUser.isActive) {
+            cache.remove("LINE_PENDING_" + userId);
+            replyPayload = "🔒 您的系統帳號尚未綁定或已停用，無法執行寫入操作。";
+          } else {
+            try {
+              const pending = JSON.parse(pendingRaw);
+              cache.remove("LINE_PENDING_" + userId);
+              replyPayload = executeLinePendingAction(pending, lineUser);
+            } catch (e) {
+              cache.remove("LINE_PENDING_" + userId);
+              replyPayload = "❌ 執行失敗：" + (e.message || String(e));
+            }
+          }
+        }
+      }
+      // F. 檢查是否正在進行按鈕引導精靈輸入 (搜尋關鍵字 / 數量 / 備註 / 日期)
+      else if (userId && cache.get("LINE_WIZARD_" + userId) && !text.startsWith('#')) {
+        if (/^(?:取消|返回|退出|算了)$/i.test(text)) {
+          cache.remove("LINE_WIZARD_" + userId);
+          replyPayload = "❌ 已退出引導操作，您可點選下方按鈕重新選擇功能。";
+        } else {
+          replyPayload = handleLineWizardTextInput(text, userId);
+        }
       }
       else {
-        // 進入智慧查詢處理器
-        replyText = processLineOrderQuery(text);
+        // G. 進入智慧指令與查詢雙解析處理器
+        replyPayload = processLineCommandOrQuery(text, userId);
       }
 
-      try {
-        UrlFetchApp.fetch("https://api.line.me/v2/bot/message/reply", {
-          method: "post",
-          contentType: "application/json",
-          headers: { 
-            "Authorization": "Bearer " + channelToken
-          },
-          payload: JSON.stringify({
-            replyToken: replyToken,
-            messages: [{ type: "text", text: replyText }]
-          }),
-          muteHttpExceptions: true
-        });
-      } catch (err) {
-        console.error("LINE reply error: " + err.toString());
-      }
+      sendLineReply(replyToken, channelToken, replyPayload);
     }
   });
-  
+
   return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
 }
 
 /**
- * 智慧訂單與帳務自然語言解析器 (支援 Gemini AI 意圖理解與結構化查詢)
+ * 將操作代碼轉為中文標題
  */
-function processLineOrderQuery(rawText) {
+function getWizardOpMeta(op) {
+  const map = {
+    'U': { action: 'UPDATE_ORDER', label: '✏️ 修改訂單', verb: '修改明細' },
+    'S': { action: 'UPDATE_ORDER_STATUS', label: '📊 更改訂單狀態', verb: '更改狀態' },
+    'H': { action: 'SET_HOLIDAY', label: '🏖️ 設定店家公休', verb: '設定公休' },
+    'D': { action: 'DELETE_ORDER', label: '🗑️ 刪除訂單', verb: '刪除訂單' }
+  };
+  return map[op] || map['S'];
+}
+
+/**
+ * 載入分組後的有效訂單清單（供點選精靈與今日總覽使用）
+ */
+function getGroupedActiveOrdersForDate(ss, targetDate, lineUser, filterQuery) {
+  const allOrders = getAllOrdersFromSheet(ss);
+  const matchingRows = allOrders.filter(o => o.deliveryDate === targetDate);
+  const groupMap = new Map();
+
+  matchingRows.forEach(row => {
+    const oid = String(row.id || '').trim();
+    if (!oid) return;
+    if (!groupMap.has(oid)) {
+      groupMap.set(oid, {
+        orderId: oid,
+        customerName: row.customerName,
+        deliveryDate: row.deliveryDate,
+        deliveryTime: row.deliveryTime || '',
+        status: row.status || 'PENDING',
+        trip: row.trip || '',
+        note: row.note || '',
+        assignedTo: String(row.assignedTo || '').trim(),
+        assignedName: String(row.assignedName || '').trim(),
+        items: []
+      });
+    }
+    groupMap.get(oid).items.push({
+      productName: row.productName,
+      quantity: Number(row.quantity) || 0,
+      unit: row.unit || '斤',
+      unitPrice: row.unitPrice
+    });
+  });
+
+  let list = Array.from(groupMap.values());
+  if (lineUser) {
+    const role = String(lineUser.role || 'staff').trim().toLowerCase();
+    if (!hasPermission(role, 'canViewAllOrders')) {
+      const myId = String(lineUser.userId || '').trim();
+      const myName = String(lineUser.name || '').trim();
+      list = list.filter(o =>
+        (myId && o.assignedTo === myId) || (myName && (o.assignedName === myName || o.assignedTo === myName))
+      );
+    }
+  }
+  if (filterQuery) {
+    const q = String(filterQuery).trim().toLowerCase();
+    list = list.filter(o => String(o.customerName || '').toLowerCase().includes(q));
+  }
+  return list;
+}
+
+/**
+ * 建立「選擇訂單」訊息（含 Quick Reply 按鈕分頁＋今天/明天切換）
+ */
+function buildWizardOrderPickerMessage(ss, lineUser, op, dayFlag, pageIdx, filterQuery) {
+  const tz = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const now = new Date();
+  const todayStr = Utilities.formatDate(now, tz, "yyyy-MM-dd");
+  const tomorrowObj = new Date(todayStr + 'T00:00:00');
+  tomorrowObj.setDate(tomorrowObj.getDate() + 1);
+  const tomorrowStr = Utilities.formatDate(tomorrowObj, tz, "yyyy-MM-dd");
+
+  const useTomorrow = (dayFlag === 'N');
+  const targetDate = useTomorrow ? tomorrowStr : todayStr;
+  const dateLabel = useTomorrow ? `明天 (${tomorrowStr.substring(5)})` : `今天 (${todayStr.substring(5)})`;
+  const opMeta = getWizardOpMeta(op);
+
+  const orders = getGroupedActiveOrdersForDate(ss, targetDate, lineUser, filterQuery);
+  const pageSize = 8;
+  const totalPages = Math.max(1, Math.ceil(orders.length / pageSize));
+  const page = Math.max(0, Math.min(Number(pageIdx) || 0, totalPages - 1));
+  const slice = orders.slice(page * pageSize, (page + 1) * pageSize);
+
+  const cache = CacheService.getScriptCache();
+  cache.put("LINE_WIZARD_" + lineUser.lineUserId, JSON.stringify({
+    mode: 'SEARCH_ORDER',
+    op: op,
+    day: useTomorrow ? 'N' : 'T'
+  }), 180);
+
+  const quickItems = [];
+  let text = `${opMeta.label}｜請點選要操作的訂單\n📅 目前顯示：${dateLabel}`;
+  if (filterQuery) text += `（篩選：${filterQuery}）`;
+  text += `\n━━━━━━━━━━━━━━\n`;
+
+  if (slice.length === 0) {
+    text += `⚪ ${dateLabel} 目前查無可操作的訂單。`;
+  } else {
+    text += slice.map((o, i) => {
+      const num = page * pageSize + i + 1;
+      const itemsShort = o.items.map(it => `${it.productName}×${it.quantity}`).join('、');
+      return `${num}. 【${o.customerName}】${o.trip ? o.trip + ' ' : ''}| ${getOrderStatusChineseLabel(o.status)}\n   ${itemsShort}`;
+    }).join('\n');
+
+    slice.forEach((o, i) => {
+      const totalQty = o.items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+      const shortName = String(o.customerName || '').substring(0, 10);
+      const label = `${page * pageSize + i + 1}.${shortName}(${totalQty})`.substring(0, 20);
+      quickItems.push({
+        type: "action",
+        action: {
+          type: "postback",
+          label: label,
+          data: `cmd=W_PO&op=${op}&oid=${encodeURIComponent(o.orderId)}`,
+          displayText: `選擇【${o.customerName}】`
+        }
+      });
+    });
+  }
+
+  if (page + 1 < totalPages) {
+    quickItems.push({
+      type: "action",
+      action: {
+        type: "postback",
+        label: `➡️ 下一頁 (${page + 2}/${totalPages})`,
+        data: `cmd=W_START&op=${op}&day=${useTomorrow ? 'N' : 'T'}&p=${page + 1}`,
+        displayText: "下一頁訂單"
+      }
+    });
+  }
+
+  quickItems.push({
+    type: "action",
+    action: {
+      type: "postback",
+      label: useTomorrow ? "📅 改看今天訂單" : "📅 改看明天訂單",
+      data: `cmd=W_START&op=${op}&day=${useTomorrow ? 'T' : 'N'}&p=0`,
+      displayText: useTomorrow ? "切換到今天訂單" : "切換到明天訂單"
+    }
+  });
+
+  quickItems.push({
+    type: "action",
+    action: {
+      type: "postback",
+      label: "❌ 取消",
+      data: "cmd=W_CANCEL",
+      displayText: "❌ 取消"
+    }
+  });
+
+  text += `\n━━━━━━━━━━━━━━\n💡 找不到可直接在輸入框打「店名關鍵字」搜尋！`;
+
+  return {
+    type: "text",
+    text: text,
+    quickReply: { items: quickItems.slice(0, 13) }
+  };
+}
+
+/**
+ * 建立「選擇店家」訊息（供設定公休使用）
+ */
+function buildWizardCustomerPickerMessage(ss, lineUser, pageIdx, filterQuery) {
+  const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+  if (!custSheet || custSheet.getLastRow() <= 1) {
+    return "⚠️ 系統中目前尚無客戶資料表。";
+  }
+
+  let customers = getSheetData(custSheet).map(c => ({
+    id: String(c.ID || c.id || '').trim(),
+    name: String(c.Name || c.name || c.客戶名稱 || '').trim(),
+    isArchived: String(c.封存 || c.isArchived || '').trim().toLowerCase() === 'true'
+  })).filter(c => c.id && c.name && !c.isArchived);
+
+  if (filterQuery) {
+    const q = String(filterQuery).trim().toLowerCase();
+    customers = customers.filter(c => c.name.toLowerCase().includes(q));
+  }
+
+  const pageSize = 9;
+  const totalPages = Math.max(1, Math.ceil(customers.length / pageSize));
+  const page = Math.max(0, Math.min(Number(pageIdx) || 0, totalPages - 1));
+  const slice = customers.slice(page * pageSize, (page + 1) * pageSize);
+
+  const cache = CacheService.getScriptCache();
+  cache.put("LINE_WIZARD_" + lineUser.lineUserId, JSON.stringify({
+    mode: 'SEARCH_CUST',
+    op: 'H'
+  }), 180);
+
+  if (slice.length === 0) {
+    return {
+      type: "text",
+      text: `⚪ 找不到符合「${filterQuery}」的店家。\n請重新輸入店名關鍵字，或點選取消。`,
+      quickReply: {
+        items: [
+          { type: "action", action: { type: "postback", label: "📋 顯示全部店家", data: "cmd=W_START&op=H&p=0", displayText: "顯示全部店家" } },
+          { type: "action", action: { type: "postback", label: "❌ 取消", data: "cmd=W_CANCEL", displayText: "❌ 取消" } }
+        ]
+      }
+    };
+  }
+
+  const quickItems = slice.map(c => ({
+    type: "action",
+    action: {
+      type: "postback",
+      label: `🏪 ${c.name}`.substring(0, 20),
+      data: `cmd=W_PC&cid=${encodeURIComponent(c.id)}`,
+      displayText: `選擇店家：${c.name}`
+    }
+  }));
+
+  if (page + 1 < totalPages) {
+    quickItems.push({
+      type: "action",
+      action: {
+        type: "postback",
+        label: `➡️ 下一頁 (${page + 2}/${totalPages})`,
+        data: `cmd=W_START&op=H&p=${page + 1}`,
+        displayText: "下一頁店家"
+      }
+    });
+  }
+  quickItems.push({
+    type: "action",
+    action: { type: "postback", label: "❌ 取消", data: "cmd=W_CANCEL", displayText: "❌ 取消" }
+  });
+
+  const listStr = slice.map((c, i) => `${page * pageSize + i + 1}. ${c.name}`).join('\n');
+  return {
+    type: "text",
+    text: `🏖️【設定店家公休】請點選目標店家（第 ${page + 1}/${totalPages} 頁）：\n━━━━━━━━━━━━━━\n${listStr}\n━━━━━━━━━━━━━━\n💡 也可直接打字輸入「店名關鍵字」快速篩選`,
+    quickReply: { items: quickItems.slice(0, 13) }
+  };
+}
+
+/**
+ * 處理精靈模式下使用者直接輸入的文字（搜店名 / 輸入數量 / 輸入備註 / 輸入公休日）
+ */
+function handleLineWizardTextInput(text, userId) {
+  const cache = CacheService.getScriptCache();
+  const raw = cache.get("LINE_WIZARD_" + userId);
+  if (!raw) return processLineCommandOrQuery(text, userId);
+
+  const lineUser = getUserByLineId(userId);
+  if (!lineUser || !lineUser.isActive) {
+    cache.remove("LINE_WIZARD_" + userId);
+    return "🔒 權限驗證失敗：您的 LINE 尚未綁定有效系統帳號。";
+  }
+
+  let state = null;
+  try { state = JSON.parse(raw); } catch (e) {}
+  if (!state || !state.mode) {
+    cache.remove("LINE_WIZARD_" + userId);
+    return processLineCommandOrQuery(text, userId);
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const todayStr = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd");
+
+  // 1. 搜尋訂單關鍵字
+  if (state.mode === 'SEARCH_ORDER') {
+    return buildWizardOrderPickerMessage(ss, lineUser, state.op, state.day || 'T', 0, text);
+  }
+
+  // 2. 搜尋店家關鍵字
+  if (state.mode === 'SEARCH_CUST') {
+    return buildWizardCustomerPickerMessage(ss, lineUser, 0, text);
+  }
+
+  // 3. 輸入修改數量 (支援 30, +5, -5, 30斤)
+  if (state.mode === 'INPUT_QTY') {
+    const qtyMatch = text.match(/^([+\-]?\d+(?:\.\d+)?)\s*(斤|包|箱|顆|袋|份|條|塊|罐|瓶|盒)?$/);
+    if (qtyMatch) {
+      const rawNum = qtyMatch[1];
+      const mode = (rawNum.startsWith('+') || rawNum.startsWith('-')) ? 'ADD' : 'SET';
+      const qty = Number(rawNum);
+      cache.remove("LINE_WIZARD_" + userId);
+      return prepareLineWriteAction({
+        action: 'UPDATE_ORDER',
+        customerName: state.customerName,
+        targetDate: state.deliveryDate,
+        forcedOrderId: state.orderId,
+        items: [{ productName: state.productName, quantity: qty, unit: qtyMatch[2] || state.unit || '斤', mode }]
+      }, lineUser, ss, todayStr, tz);
+    }
+    // 若使用者輸入的不是數字，清除精靈改交給一般智慧解析
+    cache.remove("LINE_WIZARD_" + userId);
+    return processLineCommandOrQuery(text, userId);
+  }
+
+  // 4. 輸入新備註
+  if (state.mode === 'INPUT_NOTE') {
+    const noteVal = (text === '清空' || text === '無') ? '' : text;
+    cache.remove("LINE_WIZARD_" + userId);
+    return prepareLineWriteAction({
+      action: 'UPDATE_ORDER',
+      customerName: state.customerName,
+      targetDate: state.deliveryDate,
+      forcedOrderId: state.orderId,
+      items: [],
+      note: noteVal
+    }, lineUser, ss, todayStr, tz);
+  }
+
+  // 5. 輸入特定公休日期或星期 (支援「5/25」、「取消 5/25」、「週三」)
+  if (state.mode === 'INPUT_HOLIDAY_DATE') {
+    const isRemove = /^(?:取消|移除|刪除)/.test(text);
+    const cleaned = text.replace(/^(?:取消|移除|刪除|設定|新增)\s*/, '').trim();
+    const tokens = cleaned.split(/[\s,、，]+/).filter(Boolean);
+    const dates = [];
+    const wds = [];
+    tokens.forEach(tok => {
+      const d = parseRelativeOrCalendarDate(tok, todayStr, tz);
+      if (d) dates.push(d);
+      const wd = parseChineseWeekdayNumber(tok);
+      if (wd !== null) wds.push(wd);
+    });
+    if (dates.length > 0 || wds.length > 0) {
+      cache.remove("LINE_WIZARD_" + userId);
+      return prepareLineWriteAction({
+        action: 'SET_HOLIDAY',
+        customerName: state.customerName,
+        holidayAction: isRemove ? 'REMOVE' : 'ADD',
+        holidayDates: dates,
+        offDays: wds
+      }, lineUser, ss, todayStr, tz);
+    }
+  }
+
+  cache.remove("LINE_WIZARD_" + userId);
+  return processLineCommandOrQuery(text, userId);
+}
+
+/**
+ * 處理 LINE 按鈕 Postback 事件
+ */
+function handleLinePostbackEvent(event, channelToken) {
+  const userId = event.source ? event.source.userId : '';
+  const replyToken = event.replyToken;
+  const params = parseLinePostbackData(event.postback ? event.postback.data : '');
+  const cmd = String(params.cmd || '').trim();
+  const cache = CacheService.getScriptCache();
+
+  const lineUser = getUserByLineId(userId);
+
+  // 免費免登入即可喚醒主面板查看綁定狀態與按鈕
+  if (cmd === 'SHOW_MENU') {
+    cache.remove("LINE_WIZARD_" + userId);
+    cache.remove("LINE_PENDING_" + userId);
+    cache.remove("LINE_PICK_" + userId);
+    sendLineReply(replyToken, channelToken, buildLineControlMenuMessage(lineUser));
+    return;
+  }
+
+  if (cmd === 'W_CANCEL') {
+    cache.remove("LINE_WIZARD_" + userId);
+    cache.remove("LINE_PENDING_" + userId);
+    cache.remove("LINE_PICK_" + userId);
+    sendLineReply(replyToken, channelToken, "❌ 已取消本次操作，您可點選下方按鈕進行其他操作。");
+    return;
+  }
+
+  if (!lineUser) {
+    sendLineReply(replyToken, channelToken, "🔒 權限驗證失敗：您的 LINE 尚未綁定系統工號。\n請先輸入「#綁定 您的工號」完成綁定（例如：#綁定 staff3）。");
+    return;
+  }
+  if (!lineUser.isActive) {
+    sendLineReply(replyToken, channelToken, `🔒 帳號【${lineUser.name}】目前已停用，無法執行此操作。`);
+    return;
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const todayStr = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd");
+  const role = String(lineUser.role || 'staff').trim().toLowerCase();
+
+  // 0. 今日訂單一覽
+  if (cmd === 'W_TODAY') {
+    const orders = getGroupedActiveOrdersForDate(ss, todayStr, lineUser, '');
+    if (orders.length === 0) {
+      sendLineReply(replyToken, channelToken, `📋 今日 (${todayStr.substring(5)}) 目前尚無有效訂單。`);
+      return;
+    }
+    const summary = orders.slice(0, 15).map((o, i) => {
+      const itemsStr = o.items.map(it => `${it.productName}×${it.quantity}${it.unit}`).join('、');
+      return `${i + 1}. 【${o.customerName}】${o.trip ? `(${o.trip}) ` : ''}[${getOrderStatusChineseLabel(o.status)}]\n   ${itemsStr}`;
+    }).join('\n');
+    const extra = orders.length > 15 ? `\n...尚有 ${orders.length - 15} 筆，請點擊按鈕分頁檢視。` : '';
+    sendLineReply(replyToken, channelToken, `📋【今日訂單總覽】${todayStr}\n共 ${orders.length} 筆\n━━━━━━━━━━━━━━\n${summary}${extra}`);
+    return;
+  }
+
+  // 0-B. 按鈕引導精靈起始 (W_START)
+  if (cmd === 'W_START') {
+    const op = String(params.op || 'S').trim();
+    if (op === 'U' && !hasPermission(role, 'canEditOrderContent')) {
+      sendLineReply(replyToken, channelToken, `🔒 權限不足：您的職位（${role}）無權修改訂單內容。`);
+      return;
+    }
+    if (op === 'D' && !hasPermission(role, 'canDeleteOrders')) {
+      sendLineReply(replyToken, channelToken, `🔒 權限不足：刪除訂單僅限最高管理員（admin）執行。`);
+      return;
+    }
+    if (op === 'H' && role !== 'admin' && role !== 'manager') {
+      sendLineReply(replyToken, channelToken, `🔒 權限不足：設定店家公休僅限管理員／領班執行。`);
+      return;
+    }
+    if (op === 'H') {
+      sendLineReply(replyToken, channelToken, buildWizardCustomerPickerMessage(ss, lineUser, Number(params.p) || 0, params.q || ''));
+    } else {
+      sendLineReply(replyToken, channelToken, buildWizardOrderPickerMessage(ss, lineUser, op, params.day || 'T', Number(params.p) || 0, params.q || ''));
+    }
+    return;
+  }
+
+  // 0-C. 精靈：已選定某張訂單 (W_PO)
+  if (cmd === 'W_PO') {
+    const op = String(params.op || 'S').trim();
+    const orderId = String(params.oid || '').trim();
+    const allOrders = getAllOrdersFromSheet(ss);
+    const rows = allOrders.filter(o => String(o.id).trim() === orderId);
+    if (rows.length === 0) {
+      sendLineReply(replyToken, channelToken, `⚪ 找不到該筆訂單（編號：${orderId}），可能已被刪除。`);
+      return;
+    }
+    const first = rows[0];
+
+    // 刪單直接進確認卡片
+    if (op === 'D') {
+      const stageReply = prepareLineWriteAction({
+        action: 'DELETE_ORDER',
+        customerName: first.customerName,
+        targetDate: first.deliveryDate,
+        forcedOrderId: orderId
+      }, lineUser, ss, todayStr, tz);
+      sendLineReply(replyToken, channelToken, stageReply);
+      return;
+    }
+
+    // 改狀態：顯示 5 顆狀態按鈕
+    if (op === 'S') {
+      const itemsStr = rows.map(r => `• ${r.productName} × ${r.quantity} ${r.unit || '斤'}`).join('\n');
+      const statusMsg = {
+        type: "text",
+        text: `📊【更改訂單狀態】\n🏪 客戶：${first.customerName}\n📅 日期：${first.deliveryDate}\n📌 目前狀態：${getOrderStatusChineseLabel(first.status)}\n📦 品項：\n${itemsStr}\n━━━━━━━━━━━━━━\n請點選要變更的新狀態：`,
+        quickReply: {
+          items: [
+            { type: "action", action: { type: "postback", label: "🚚 已送達 / 已出貨", data: `cmd=W_SS&oid=${encodeURIComponent(orderId)}&st=SHIPPED`, displayText: "改為：已送達 / 已出貨" } },
+            { type: "action", action: { type: "postback", label: "💰 已收款 (結清)", data: `cmd=W_SS&oid=${encodeURIComponent(orderId)}&st=PAID`, displayText: "改為：已收款" } },
+            { type: "action", action: { type: "postback", label: "⏳ 待出貨", data: `cmd=W_SS&oid=${encodeURIComponent(orderId)}&st=PENDING`, displayText: "改為：待出貨" } },
+            { type: "action", action: { type: "postback", label: "💵 已收款未出貨", data: `cmd=W_SS&oid=${encodeURIComponent(orderId)}&st=PAID_UNSHIPPED`, displayText: "改為：已收款未出貨" } },
+            { type: "action", action: { type: "postback", label: "🚫 已取消訂單", data: `cmd=W_SS&oid=${encodeURIComponent(orderId)}&st=CANCELLED`, displayText: "改為：已取消" } },
+            { type: "action", action: { type: "postback", label: "❌ 取消操作", data: "cmd=W_CANCEL", displayText: "❌ 取消" } }
+          ]
+        }
+      };
+      sendLineReply(replyToken, channelToken, statusMsg);
+      return;
+    }
+
+    // 改單：顯示該訂單目前品項按鈕 + 新增品項 + 改備註
+    if (op === 'U') {
+      const itemsStr = rows.map((r, i) => `${i + 1}. ${r.productName} × ${r.quantity} ${r.unit || '斤'}`).join('\n');
+      const quickItems = rows.slice(0, 8).map((r, i) => ({
+        type: "action",
+        action: {
+          type: "postback",
+          label: `${r.productName}(${r.quantity}${r.unit || ''})`.substring(0, 20),
+          data: `cmd=W_PI&oid=${encodeURIComponent(orderId)}&idx=${i}`,
+          displayText: `修改品項：${r.productName}`
+        }
+      }));
+      quickItems.push({
+        type: "action",
+        action: { type: "postback", label: "➕ 新增品項", data: `cmd=W_AI&oid=${encodeURIComponent(orderId)}&p=0`, displayText: "➕ 新增品項" }
+      });
+      quickItems.push({
+        type: "action",
+        action: { type: "postback", label: "📝 修改備註", data: `cmd=W_EN&oid=${encodeURIComponent(orderId)}`, displayText: "📝 修改備註" }
+      });
+      quickItems.push({
+        type: "action",
+        action: { type: "postback", label: "❌ 取消", data: "cmd=W_CANCEL", displayText: "❌ 取消" }
+      });
+
+      sendLineReply(replyToken, channelToken, {
+        type: "text",
+        text: `✏️【修改訂單】${first.customerName} (${first.deliveryDate})\n📝 目前備註：${first.note || '無'}\n📦 目前品項：\n${itemsStr}\n━━━━━━━━━━━━━━\n請點選要調整的品項或功能：`,
+        quickReply: { items: quickItems.slice(0, 13) }
+      });
+      return;
+    }
+    return;
+  }
+
+  // 0-D. 精靈：已點選目標狀態 (W_SS) -> 進入確認
+  if (cmd === 'W_SS') {
+    const orderId = String(params.oid || '').trim();
+    const st = String(params.st || '').trim();
+    const allOrders = getAllOrdersFromSheet(ss);
+    const first = allOrders.find(o => String(o.id).trim() === orderId);
+    if (!first) {
+      sendLineReply(replyToken, channelToken, `⚪ 找不到該筆訂單（${orderId}）。`);
+      return;
+    }
+    const stageReply = prepareLineWriteAction({
+      action: 'UPDATE_ORDER_STATUS',
+      customerName: first.customerName,
+      targetDate: first.deliveryDate,
+      forcedOrderId: orderId,
+      status: st
+    }, lineUser, ss, todayStr, tz);
+    sendLineReply(replyToken, channelToken, stageReply);
+    return;
+  }
+
+  // 0-E. 精靈：已選品項 (W_PI) 或已選目錄新品項 (W_AP) -> 顯示常用數量按鈕＋支援輸入數字
+  if (cmd === 'W_PI' || cmd === 'W_AP') {
+    const orderId = String(params.oid || '').trim();
+    const allOrders = getAllOrdersFromSheet(ss);
+    const rows = allOrders.filter(o => String(o.id).trim() === orderId);
+    if (rows.length === 0) {
+      sendLineReply(replyToken, channelToken, `⚪ 找不到該筆訂單（${orderId}）。`);
+      return;
+    }
+    const first = rows[0];
+    let prodName = '';
+    let prodUnit = '斤';
+    let currentQty = 0;
+
+    if (cmd === 'W_PI') {
+      const idx = Number(params.idx) || 0;
+      const picked = rows[idx];
+      if (!picked) {
+        sendLineReply(replyToken, channelToken, "❌ 找不到該品項，請重新選擇。");
+        return;
+      }
+      prodName = picked.productName;
+      prodUnit = picked.unit || '斤';
+      currentQty = Number(picked.quantity) || 0;
+    } else {
+      const prodSheet = ss.getSheetByName("PRODUCTS") || ss.getSheetByName("Products");
+      const prods = prodSheet && prodSheet.getLastRow() > 1 ? getSheetData(prodSheet) : [];
+      const idx = Number(params.pidx) || 0;
+      const pObj = prods[idx];
+      if (!pObj) {
+        sendLineReply(replyToken, channelToken, "❌ 找不到該商品，請重新選擇。");
+        return;
+      }
+      prodName = String(pObj.Name || pObj.name || pObj.品項 || '').trim();
+      prodUnit = String(pObj.Unit || pObj.unit || pObj.單位 || '斤').trim();
+      const existing = rows.find(r => r.productName === prodName);
+      currentQty = existing ? (Number(existing.quantity) || 0) : 0;
+    }
+
+    cache.put("LINE_WIZARD_" + userId, JSON.stringify({
+      mode: 'INPUT_QTY',
+      orderId: orderId,
+      customerName: first.customerName,
+      deliveryDate: first.deliveryDate,
+      productName: prodName,
+      unit: prodUnit,
+      currentQty: currentQty
+    }), 180);
+
+    const qtyItems = [
+      { type: "action", action: { type: "postback", label: `+5 ${prodUnit}`, data: "cmd=W_SQ&m=A&v=5", displayText: `+5 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `+10 ${prodUnit}`, data: "cmd=W_SQ&m=A&v=10", displayText: `+10 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `-5 ${prodUnit}`, data: "cmd=W_SQ&m=A&v=-5", displayText: `-5 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `改為 10 ${prodUnit}`, data: "cmd=W_SQ&m=S&v=10", displayText: `改為 10 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `改為 15 ${prodUnit}`, data: "cmd=W_SQ&m=S&v=15", displayText: `改為 15 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `改為 20 ${prodUnit}`, data: "cmd=W_SQ&m=S&v=20", displayText: `改為 20 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `改為 25 ${prodUnit}`, data: "cmd=W_SQ&m=S&v=25", displayText: `改為 25 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `改為 30 ${prodUnit}`, data: "cmd=W_SQ&m=S&v=30", displayText: `改為 30 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `改為 40 ${prodUnit}`, data: "cmd=W_SQ&m=S&v=40", displayText: `改為 40 ${prodUnit}` } },
+      { type: "action", action: { type: "postback", label: `改為 50 ${prodUnit}`, data: "cmd=W_SQ&m=S&v=50", displayText: `改為 50 ${prodUnit}` } }
+    ];
+    if (currentQty > 0) {
+      qtyItems.push({ type: "action", action: { type: "postback", label: "🗑️ 刪除該品項", data: "cmd=W_SQ&m=S&v=0", displayText: "移除此品項" } });
+    }
+    qtyItems.push({ type: "action", action: { type: "postback", label: "❌ 取消", data: "cmd=W_CANCEL", displayText: "❌ 取消" } });
+
+    sendLineReply(replyToken, channelToken, {
+      type: "text",
+      text: `📦【調整品項數量】\n🏪 客戶：${first.customerName}\n🍜 品項：${prodName}（目前：${currentQty} ${prodUnit}）\n━━━━━━━━━━━━━━\n請直接點選下方常用按鈕，或直接打字輸入數字（例如 35 或 +8）：`,
+      quickReply: { items: qtyItems.slice(0, 13) }
+    });
+    return;
+  }
+
+  // 0-F. 精靈：新增品項列表 (W_AI)
+  if (cmd === 'W_AI') {
+    const orderId = String(params.oid || '').trim();
+    const prodSheet = ss.getSheetByName("PRODUCTS") || ss.getSheetByName("Products");
+    const prods = prodSheet && prodSheet.getLastRow() > 1 ? getSheetData(prodSheet) : [];
+    if (prods.length === 0) {
+      sendLineReply(replyToken, channelToken, "⚠️ 系統尚無商品目錄資料。");
+      return;
+    }
+    const pageSize = 10;
+    const totalPages = Math.max(1, Math.ceil(prods.length / pageSize));
+    const page = Math.max(0, Math.min(Number(params.p) || 0, totalPages - 1));
+    const startIdx = page * pageSize;
+    const slice = prods.slice(startIdx, startIdx + pageSize);
+
+    const quickItems = slice.map((p, i) => {
+      const name = String(p.Name || p.name || p.品項 || '').trim();
+      return {
+        type: "action",
+        action: {
+          type: "postback",
+          label: `➕ ${name}`.substring(0, 20),
+          data: `cmd=W_AP&oid=${encodeURIComponent(orderId)}&pidx=${startIdx + i}`,
+          displayText: `選擇品項：${name}`
+        }
+      };
+    });
+    if (page + 1 < totalPages) {
+      quickItems.push({
+        type: "action",
+        action: { type: "postback", label: "➡️ 下一頁商品", data: `cmd=W_AI&oid=${encodeURIComponent(orderId)}&p=${page + 1}`, displayText: "下一頁商品" }
+      });
+    }
+    quickItems.push({ type: "action", action: { type: "postback", label: "❌ 取消", data: "cmd=W_CANCEL", displayText: "❌ 取消" } });
+
+    sendLineReply(replyToken, channelToken, {
+      type: "text",
+      text: `➕【新增訂購品項】請點選要加入的商品（第 ${page + 1}/${totalPages} 頁）：`,
+      quickReply: { items: quickItems.slice(0, 13) }
+    });
+    return;
+  }
+
+  // 0-G. 精靈：套用數量按鈕 (W_SQ)
+  if (cmd === 'W_SQ') {
+    const wizRaw = cache.get("LINE_WIZARD_" + userId);
+    if (!wizRaw) {
+      sendLineReply(replyToken, channelToken, "⏳ 操作已逾時，請重新點選「✏️ 改單」。");
+      return;
+    }
+    try {
+      const state = JSON.parse(wizRaw);
+      const mode = params.m === 'A' ? 'ADD' : 'SET';
+      const val = Number(params.v);
+      cache.remove("LINE_WIZARD_" + userId);
+      const stageReply = prepareLineWriteAction({
+        action: 'UPDATE_ORDER',
+        customerName: state.customerName,
+        targetDate: state.deliveryDate,
+        forcedOrderId: state.orderId,
+        items: [{ productName: state.productName, quantity: val, unit: state.unit || '斤', mode }]
+      }, lineUser, ss, todayStr, tz);
+      sendLineReply(replyToken, channelToken, stageReply);
+    } catch (e) {
+      sendLineReply(replyToken, channelToken, "❌ 處理數量時發生錯誤：" + (e.message || String(e)));
+    }
+    return;
+  }
+
+  // 0-H. 精靈：修改備註 (W_EN / W_SN)
+  if (cmd === 'W_EN') {
+    const orderId = String(params.oid || '').trim();
+    const allOrders = getAllOrdersFromSheet(ss);
+    const first = allOrders.find(o => String(o.id).trim() === orderId);
+    if (!first) {
+      sendLineReply(replyToken, channelToken, `⚪ 找不到該筆訂單（${orderId}）。`);
+      return;
+    }
+    cache.put("LINE_WIZARD_" + userId, JSON.stringify({
+      mode: 'INPUT_NOTE',
+      orderId: orderId,
+      customerName: first.customerName,
+      deliveryDate: first.deliveryDate
+    }), 180);
+
+    sendLineReply(replyToken, channelToken, {
+      type: "text",
+      text: `📝【修改訂單備註】${first.customerName}\n目前備註：${first.note || '無'}\n請直接打字輸入新的備註內容，或點選常用備註：`,
+      quickReply: {
+        items: [
+          { type: "action", action: { type: "postback", label: "🗑️ 清空備註", data: `cmd=W_SN&oid=${encodeURIComponent(orderId)}&n=`, displayText: "清空備註" } },
+          { type: "action", action: { type: "postback", label: "分袋包裝", data: `cmd=W_SN&oid=${encodeURIComponent(orderId)}&n=${encodeURIComponent('分袋包裝')}`, displayText: "備註：分袋包裝" } },
+          { type: "action", action: { type: "postback", label: "放門口即可", data: `cmd=W_SN&oid=${encodeURIComponent(orderId)}&n=${encodeURIComponent('放門口即可')}`, displayText: "備註：放門口即可" } },
+          { type: "action", action: { type: "postback", label: "改上午配送", data: `cmd=W_SN&oid=${encodeURIComponent(orderId)}&n=${encodeURIComponent('改上午配送')}`, displayText: "備註：改上午配送" } },
+          { type: "action", action: { type: "postback", label: "❌ 取消", data: "cmd=W_CANCEL", displayText: "❌ 取消" } }
+        ]
+      }
+    });
+    return;
+  }
+
+  if (cmd === 'W_SN') {
+    const orderId = String(params.oid || '').trim();
+    const newNote = String(params.n || '');
+    const allOrders = getAllOrdersFromSheet(ss);
+    const first = allOrders.find(o => String(o.id).trim() === orderId);
+    if (!first) {
+      sendLineReply(replyToken, channelToken, `⚪ 找不到該筆訂單（${orderId}）。`);
+      return;
+    }
+    cache.remove("LINE_WIZARD_" + userId);
+    const stageReply = prepareLineWriteAction({
+      action: 'UPDATE_ORDER',
+      customerName: first.customerName,
+      targetDate: first.deliveryDate,
+      forcedOrderId: orderId,
+      items: [],
+      note: newNote
+    }, lineUser, ss, todayStr, tz);
+    sendLineReply(replyToken, channelToken, stageReply);
+    return;
+  }
+
+  // 0-I. 精靈：已選公休目標店家 (W_PC) -> 顯示今日/明日/後天/週日..週六/移除公休按鈕
+  if (cmd === 'W_PC') {
+    const custId = String(params.cid || '').trim();
+    const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+    const custRows = custSheet && custSheet.getLastRow() > 1 ? getSheetData(custSheet) : [];
+    const matched = custRows.find(c => String(c.ID || c.id || '').trim() === custId);
+    if (!matched) {
+      sendLineReply(replyToken, channelToken, "⚪ 找不到該店家資料，請重新選擇。");
+      return;
+    }
+
+    const custName = String(matched.Name || matched.name || matched.客戶名稱 || '').trim();
+    const lookup = findCustomerRecordForLine(ss, custName);
+    const custObj = lookup.customer || { id: custId, name: custName, offDays: [], holidayDates: [] };
+
+    cache.put("LINE_WIZARD_" + userId, JSON.stringify({
+      mode: 'INPUT_HOLIDAY_DATE',
+      customerId: custObj.id,
+      customerName: custObj.name
+    }), 180);
+
+    const d0 = todayStr;
+    const d1Obj = new Date(todayStr + 'T00:00:00'); d1Obj.setDate(d1Obj.getDate() + 1);
+    const d1 = Utilities.formatDate(d1Obj, tz, "yyyy-MM-dd");
+    const d2Obj = new Date(todayStr + 'T00:00:00'); d2Obj.setDate(d2Obj.getDate() + 2);
+    const d2 = Utilities.formatDate(d2Obj, tz, "yyyy-MM-dd");
+
+    const hasDate = dt => (custObj.holidayDates || []).indexOf(dt) !== -1;
+    const hasWd = wd => (custObj.offDays || []).indexOf(wd) !== -1;
+    const cidShort = encodeURIComponent(custObj.id);
+
+    const quickItems = [
+      {
+        type: "action",
+        action: {
+          type: "postback",
+          label: hasDate(d0) ? `取消今休(${d0.substring(5)})` : `休今天(${d0.substring(5)})`,
+          data: `cmd=W_SH&cid=${cidShort}&a=${hasDate(d0) ? 'R' : 'A'}&dt=${d0}`,
+          displayText: hasDate(d0) ? `取消今日公休` : `設定今日公休`
+        }
+      },
+      {
+        type: "action",
+        action: {
+          type: "postback",
+          label: hasDate(d1) ? `取消明休(${d1.substring(5)})` : `休明天(${d1.substring(5)})`,
+          data: `cmd=W_SH&cid=${cidShort}&a=${hasDate(d1) ? 'R' : 'A'}&dt=${d1}`,
+          displayText: hasDate(d1) ? `取消明日公休` : `設定明日公休`
+        }
+      },
+      {
+        type: "action",
+        action: {
+          type: "postback",
+          label: hasDate(d2) ? `取消後休(${d2.substring(5)})` : `休後天(${d2.substring(5)})`,
+          data: `cmd=W_SH&cid=${cidShort}&a=${hasDate(d2) ? 'R' : 'A'}&dt=${d2}`,
+          displayText: hasDate(d2) ? `取消後天公休` : `設定後天公休`
+        }
+      }
+    ];
+
+    const wdNames = ['日', '一', '二', '三', '四', '五', '六'];
+    for (let w = 0; w <= 6; w++) {
+      const isOff = hasWd(w);
+      quickItems.push({
+        type: "action",
+        action: {
+          type: "postback",
+          label: isOff ? `取消週${wdNames[w]}` : `固定休週${wdNames[w]}`,
+          data: `cmd=W_SH&cid=${cidShort}&a=${isOff ? 'R' : 'A'}&wd=${w}`,
+          displayText: isOff ? `取消固定休週${wdNames[w]}` : `設每週${wdNames[w]}公休`
+        }
+      });
+    }
+
+    const upcoming = (custObj.holidayDates || []).filter(d => d >= todayStr && d !== d0 && d !== d1 && d !== d2).slice(0, 2);
+    upcoming.forEach(dt => {
+      quickItems.push({
+        type: "action",
+        action: {
+          type: "postback",
+          label: `取消休 ${dt.substring(5)}`,
+          data: `cmd=W_SH&cid=${cidShort}&a=R&dt=${dt}`,
+          displayText: `取消公休 ${dt}`
+        }
+      });
+    });
+
+    quickItems.push({ type: "action", action: { type: "postback", label: "❌ 取消", data: "cmd=W_CANCEL", displayText: "❌ 取消" } });
+
+    sendLineReply(replyToken, channelToken, {
+      type: "text",
+      text: `🏖️【設定店家公休】${custObj.name}\n🛌 目前固定公休：${formatOffDaysToChinese(custObj.offDays)}\n📌 目前特定公休：${(custObj.holidayDates || []).filter(d => d >= todayStr).join('、') || '無'}\n━━━━━━━━━━━━━━\n請直接點選下方按鈕切換公休，或直接輸入特定日期（例如 5/25）：`,
+      quickReply: { items: quickItems.slice(0, 13) }
+    });
+    return;
+  }
+
+  // 0-J. 精靈：已點選公休日期或星期 (W_SH) -> 進入確認
+  if (cmd === 'W_SH') {
+    const custId = String(params.cid || '').trim();
+    const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+    const custRows = custSheet && custSheet.getLastRow() > 1 ? getSheetData(custSheet) : [];
+    const matched = custRows.find(c => String(c.ID || c.id || '').trim() === custId);
+    if (!matched) {
+      sendLineReply(replyToken, channelToken, "⚪ 找不到該店家資料，請重新選擇。");
+      return;
+    }
+    const custName = String(matched.Name || matched.name || matched.客戶名稱 || '').trim();
+    cache.remove("LINE_WIZARD_" + userId);
+
+    const stageReply = prepareLineWriteAction({
+      action: 'SET_HOLIDAY',
+      customerName: custName,
+      holidayAction: params.a === 'R' ? 'REMOVE' : 'ADD',
+      holidayDates: params.dt ? [params.dt] : [],
+      offDays: params.wd !== undefined ? [Number(params.wd)] : []
+    }, lineUser, ss, todayStr, tz);
+    sendLineReply(replyToken, channelToken, stageReply);
+    return;
+  }
+
+  // 1. 一鍵「✅ 我已送達」回報 (司機點擊派工卡片按鈕直接寫入 SHIPPED)
+  if (cmd === 'DELIVERED') {
+    const orderId = String(params.orderId || '').trim();
+    if (!orderId) {
+      sendLineReply(replyToken, channelToken, "❌ 按鈕缺少訂單編號，請聯繫管理員確認派工通知。");
+      return;
+    }
+
+    try {
+      const allOrders = getAllOrdersFromSheet(ss);
+      const orderRows = allOrders.filter(o => String(o.id).trim() === orderId);
+
+      if (orderRows.length === 0) {
+        sendLineReply(replyToken, channelToken, `⚪ 找不到訂單（編號：${orderId}），可能已被刪除或尚無資料。`);
+        return;
+      }
+
+      const first = orderRows[0];
+      const currentStatus = String(first.status || '').trim().toUpperCase();
+      if (currentStatus === 'SHIPPED' || currentStatus === 'PAID') {
+        sendLineReply(
+          replyToken,
+          channelToken,
+          `ℹ️【${first.customerName}】此筆訂單目前狀態已為「${getOrderStatusChineseLabel(currentStatus)}」，無需重複回報！`
+        );
+        return;
+      }
+
+      // updateOrderStatus 內部自帶 RBAC 檢驗：staff 僅能更新指派給自己的訂單
+      updateOrderStatus({ id: orderId, status: 'SHIPPED', force: true }, lineUser);
+      updateGlobalTimestamp();
+      SpreadsheetApp.flush();
+      notifyFirebase();
+      writeSystemLog(
+        "LINE_ONE_CLICK_DELIVERED",
+        `${first.customerName} (${orderId})`,
+        JSON.stringify({
+          operator: lineUser.name,
+          userId: lineUser.userId,
+          role: lineUser.role,
+          deliveryDate: first.deliveryDate,
+          newStatus: "SHIPPED"
+        })
+      );
+
+      const itemsSummary = orderRows.map(o => `• ${o.productName} × ${o.quantity} ${o.unit || '斤'}`).join('\n');
+      sendLineReply(
+        replyToken,
+        channelToken,
+        `✅ 送達回報成功！\n` +
+        `━━━━━━━━━━━━━━\n` +
+        `🏪 配送客戶：${first.customerName}\n` +
+        `📅 配送日期：${first.deliveryDate}\n` +
+        `📊 最新狀態：已出貨 / 已送達\n` +
+        `👤 回報同仁：${lineUser.name}\n` +
+        `📦 品項明細：\n${itemsSummary}`
+      );
+    } catch (err) {
+      const msg = err.message || String(err);
+      if (msg.includes("FORBIDDEN_ACTION")) {
+        sendLineReply(replyToken, channelToken, "🔒 權限不足：此筆訂單目前並未指派給您，無法代為回報送達。");
+      } else {
+        sendLineReply(replyToken, channelToken, "❌ 送達回報失敗：" + msg);
+      }
+    }
+    return;
+  }
+
+  // 2. 多筆同名訂單消歧選擇
+  if (cmd === 'PICK_ORDER') {
+    const pickRaw = cache.get("LINE_PICK_" + userId);
+    if (!pickRaw) {
+      sendLineReply(replyToken, channelToken, "⏳ 此選擇清單已逾時失效，請重新輸入指令。");
+      return;
+    }
+    try {
+      const pickState = JSON.parse(pickRaw);
+      if (params.token && pickState.token !== params.token) {
+        sendLineReply(replyToken, channelToken, "⏳ 此選擇已過期，請依最新訊息操作。");
+        return;
+      }
+      const chosenId = String(params.orderId || '').trim();
+      const matchedCandidate = (pickState.candidates || []).find(c => String(c.orderId) === chosenId);
+      if (!matchedCandidate) {
+        sendLineReply(replyToken, channelToken, "❌ 找不到選擇的訂單項目，請重新輸入指令。");
+        return;
+      }
+      cache.remove("LINE_PICK_" + userId);
+      const intent = Object.assign({}, pickState.intent, { forcedOrderId: chosenId });
+      const stageReply = prepareLineWriteAction(intent, lineUser, ss, todayStr, tz);
+      sendLineReply(replyToken, channelToken, stageReply);
+    } catch (e) {
+      cache.remove("LINE_PICK_" + userId);
+      sendLineReply(replyToken, channelToken, "❌ 處理選擇時發生錯誤：" + (e.message || String(e)));
+    }
+    return;
+  }
+
+  // 3. 確認執行異動
+  if (cmd === 'CONFIRM_PENDING') {
+    const pendingRaw = cache.get("LINE_PENDING_" + userId);
+    if (!pendingRaw) {
+      sendLineReply(replyToken, channelToken, "⏳ 此確認請求已逾時或已完成處理，請重新輸入指令。");
+      return;
+    }
+    try {
+      const pending = JSON.parse(pendingRaw);
+      if (params.token && pending.token !== params.token) {
+        sendLineReply(replyToken, channelToken, "⏳ 您點選的是舊的確認按鈕，請依最新訊息操作或重新輸入指令。");
+        return;
+      }
+      cache.remove("LINE_PENDING_" + userId);
+      cache.remove("LINE_WIZARD_" + userId);
+      const execMsg = executeLinePendingAction(pending, lineUser);
+      sendLineReply(replyToken, channelToken, execMsg);
+    } catch (e) {
+      cache.remove("LINE_PENDING_" + userId);
+      sendLineReply(replyToken, channelToken, "❌ 執行異動失敗：" + (e.message || String(e)));
+    }
+    return;
+  }
+
+  // 4. 取消操作
+  if (cmd === 'CANCEL_PENDING') {
+    cache.remove("LINE_PENDING_" + userId);
+    cache.remove("LINE_PICK_" + userId);
+    cache.remove("LINE_WIZARD_" + userId);
+    sendLineReply(replyToken, channelToken, "❌ 已取消本次操作，系統資料未變更。");
+    return;
+  }
+}
+
+/**
+ * 雙模式智慧處理器：優先解析結構化 # 指令，再透過 Gemini AI / 規則引擎解析口語寫入與查詢
+ */
+function processLineCommandOrQuery(rawText, lineUserId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const timeZone = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
   const now = new Date();
   const currentYear = Utilities.formatDate(now, timeZone, "yyyy");
   const todayStr = Utilities.formatDate(now, timeZone, "yyyy-MM-dd");
 
-  const cleanText = rawText.replace(/\s+/g, ' ').trim();
+  const cleanText = String(rawText || '').replace(/\s+/g, ' ').trim();
+  const writeActions = ['UPDATE_ORDER', 'SET_HOLIDAY', 'DELETE_ORDER', 'UPDATE_ORDER_STATUS'];
 
-  // 1. 嘗試使用 Gemini AI 進行深度語意理解 (若有設定 GEMINI_API_KEY)
+  const handleWriteIntent = function(intentObj) {
+    if (!lineUserId) {
+      return "🔒 權限驗證失敗：無法識別您的 LINE 帳號。";
+    }
+    const lineUser = getUserByLineId(lineUserId);
+    if (!lineUser) {
+      return "🔒 權限驗證失敗：您的 LINE 尚未綁定系統帳號。\n請先輸入「#綁定 您的工號」完成綁定（例如：#綁定 staff3）。";
+    }
+    if (!lineUser.isActive) {
+      return `🔒 帳號【${lineUser.name}】目前已停用，無法執行系統異動操作。`;
+    }
+    return prepareLineWriteAction(intentObj, lineUser, ss, todayStr, timeZone);
+  };
+
+  // 1. 結構化 # 指令解析 (零 AI 延遲、100% 確定性)
+  if (/^#(?:改單|修改訂單|狀態|改狀態|訂單狀態|公休|設定公休|刪單|刪除訂單)(?:\s|$)/i.test(cleanText)) {
+    const cmdIntent = parseStructuredLineCommand(cleanText, ss, todayStr, timeZone);
+    if (cmdIntent && cmdIntent.error) {
+      return cmdIntent.error;
+    }
+    if (cmdIntent && writeActions.indexOf(cmdIntent.action) !== -1) {
+      return handleWriteIntent(cmdIntent);
+    }
+  }
+
+  // 2. 嘗試使用 Gemini AI 進行深度語意理解 (支援查詢 + 寫入共 12 種意圖)
   const aiIntent = parseQueryIntentWithGemini(cleanText, todayStr);
   if (aiIntent && aiIntent.action) {
+    if (writeActions.indexOf(aiIntent.action) !== -1) {
+      return handleWriteIntent(aiIntent);
+    }
     if (aiIntent.action === 'BUSINESS_STATUS' && aiIntent.customerName) {
       return queryCustomerBusinessStatus(ss, aiIntent.customerName, todayStr, timeZone);
     }
@@ -4622,7 +6101,64 @@ function processLineOrderQuery(rawText) {
     }
   }
 
-  // 2. Fallback：使用精確正規表達式 (規則引擎) 解析
+  // 3. Fallback 規則引擎：口語寫入指令保底 (未設 Gemini Key 時仍可用口語操作)
+  const fallbackWrite = parseNaturalLanguageWriteFallback(cleanText, ss, todayStr, timeZone);
+  if (fallbackWrite && writeActions.indexOf(fallbackWrite.action) !== -1) {
+    return handleWriteIntent(fallbackWrite);
+  }
+
+  // 4. Fallback 規則引擎：既有的查詢解析
+  return processLineOrderQuery(cleanText, true);
+}
+
+/**
+ * 相容舊有呼叫與測試函式 testLineBotQuery
+ */
+function processLineOrderQuery(rawText, skipAi) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const timeZone = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const now = new Date();
+  const currentYear = Utilities.formatDate(now, timeZone, "yyyy");
+  const todayStr = Utilities.formatDate(now, timeZone, "yyyy-MM-dd");
+
+  const cleanText = String(rawText || '').replace(/\s+/g, ' ').trim();
+
+  if (!skipAi) {
+    const aiIntent = parseQueryIntentWithGemini(cleanText, todayStr);
+    if (aiIntent && aiIntent.action) {
+      if (aiIntent.action === 'BUSINESS_STATUS' && aiIntent.customerName) {
+        return queryCustomerBusinessStatus(ss, aiIntent.customerName, todayStr, timeZone);
+      }
+      if (aiIntent.action === 'HOLIDAY_INFO' && aiIntent.customerName) {
+        return queryCustomerHolidayInfo(ss, aiIntent.customerName, todayStr, timeZone);
+      }
+      if (aiIntent.action === 'DELIVERY_STATUS' && aiIntent.customerName) {
+        return queryDeliveryStatusOnly(ss, aiIntent.customerName, todayStr);
+      }
+      if (aiIntent.action === 'CUSTOMER_PROFILE' && aiIntent.customerName) {
+        return queryCustomerProfileOverview(ss, aiIntent.customerName, todayStr, timeZone);
+      }
+      if (aiIntent.action === 'TODAY_STATUS' && aiIntent.customerName) {
+        return queryTodayOrderStatus(ss, aiIntent.customerName, todayStr);
+      }
+      if (aiIntent.action === 'DATE_ORDER' && aiIntent.customerName) {
+        const targetDate = aiIntent.targetDate || todayStr;
+        const displayDate = targetDate.substring(5);
+        return queryDateOrders(ss, aiIntent.customerName, targetDate, displayDate);
+      }
+      if (aiIntent.action === 'MONTHLY_BILL' && aiIntent.customerName) {
+        const monthNum = aiIntent.month || parseInt(todayStr.split('-')[1], 10);
+        const yearStr = aiIntent.year || currentYear;
+        return queryMonthlyBill(ss, aiIntent.customerName, monthNum, yearStr);
+      }
+      if (aiIntent.action === 'GENERATE_PDF' && aiIntent.customerName) {
+        const monthNum = aiIntent.month || parseInt(todayStr.split('-')[1], 10);
+        const yearStr = aiIntent.year || currentYear;
+        return generateMonthlyStatementPDF(ss, aiIntent.customerName, monthNum, yearStr);
+      }
+    }
+  }
+
   // ----------------------------------------------------
   // 情境 A：公休日查詢 (例如：「誠石什麼時候公休」、「大埔哪天休息」、「阿石公休日」)
   // ----------------------------------------------------
@@ -4658,7 +6194,6 @@ function processLineOrderQuery(rawText) {
 
   // ----------------------------------------------------
   // 情境 4：產生/下載 PDF 報表
-  // 例：「C店家 5月報表」、「誠石5月PDF」、「印 誠石 5月對帳單」
   // ----------------------------------------------------
   const pdfMatch = cleanText.match(/(?:印|產出|產生|下載|匯出)?\s*(.+?)\s*(\d{1,2})月\s*(?:報表|對帳單|PDF|pdf)/i);
   if (pdfMatch) {
@@ -4669,7 +6204,6 @@ function processLineOrderQuery(rawText) {
 
   // ----------------------------------------------------
   // 情境 3：查詢月份貨款 / 帳單
-  // 例：「B店家 5月貨款是多少？」、「誠石5月帳單」、「大埔 5月份 金額」
   // ----------------------------------------------------
   const monthlyBillMatch = cleanText.match(/(?:查|查詢|看|算)?\s*(.+?)\s*(\d{1,2})月(?:份)?\s*(?:的)?(?:貨款|帳單|帳款|金額|總額|總計|是多少)/);
   if (monthlyBillMatch) {
@@ -4680,7 +6214,6 @@ function processLineOrderQuery(rawText) {
 
   // ----------------------------------------------------
   // 情境 2：查詢指定日期訂單
-  // 例：「A店家 5/30 訂了多少貨？」、「誠石 5/30 訂單」、「誠石 5-30」、「大埔 05/30」
   // ----------------------------------------------------
   const dateMatch = cleanText.match(/(.+?)\s*(\d{1,2})[\/\-\.](\d{1,2})(?:號|日)?(?:\s*(?:訂單|叫貨|貨|訂了多少|訂了什麼|有訂嗎))?/);
   if (dateMatch) {
@@ -4693,7 +6226,6 @@ function processLineOrderQuery(rawText) {
 
   // ----------------------------------------------------
   // 情境 1：今日訂單明細與叫貨狀態
-  // 例：「鵝肉亭有叫麵?」、「鵝肉亭有訂貨?」、「有叫麵嗎」、「有訂貨嗎」
   // ----------------------------------------------------
   const todayOrderMatch = cleanText.match(/(.+?)(?:有叫麵|有叫貨|有訂貨|有叫嗎|有訂嗎|有訂貨嗎|有叫麵嗎|訂了沒|叫了沒|叫麵了嗎|叫貨了嗎|訂貨了嗎|今天有叫|今天有訂)/);
   if (todayOrderMatch) {
@@ -4707,29 +6239,828 @@ function processLineOrderQuery(rawText) {
   }
 
   // ----------------------------------------------------
-  // 純店家名稱查詢：提供完整的「店家總覽資料」（包含今日訂單、配送趟次、營業/公休時間、聯絡資訊）
+  // 純店家名稱查詢：提供完整的「店家總覽資料」
   // ----------------------------------------------------
   if (cleanText.length >= 2 && cleanText.length <= 15 && !cleanText.includes("說明") && !cleanText.includes("http")) {
     const custName = cleanText.replace(/^(?:查|查詢|看)\s*/, '').trim();
     return queryCustomerProfileOverview(ss, custName, todayStr, timeZone);
   }
 
-  // 模糊關鍵字 fallback
-  return "🤖 抱歉，未能完全理解您的提問。\n\n" +
-         "💡 您可以嘗試這樣問：\n" +
-         "• 查營業狀態：「鵝肉亭今天有營業嗎？」\n" +
-         "• 查公休時間：「鵝肉亭什麼時候公休？」\n" +
-         "• 查配送進度：「鵝肉亭今天有去嗎？」、「送到了沒？」\n" +
-         "• 查叫貨明細：「鵝肉亭有叫麵嗎？」\n" +
-         "• 查店家檔案：「正宗民雄鵝肉亭」（輸入純店名）\n" +
-         "• 查特定日期：「誠石 5/30 訂單」\n" +
-         "• 查月份貨款：「誠石 5月貨款是多少？」\n" +
-         "• 生成月報表：「誠石 5月報表」\n\n" +
-         "輸入「說明」可查看所有指令範例。";
+  return "🤖 抱歉，未能完全理解您的指令或提問。\n\n" +
+         "💡 系統控制指令範例：\n" +
+         "• #改單 誠石 油麵 30\n" +
+         "• #狀態 誠石 已送達\n" +
+         "• #公休 鵝肉亭 5/20\n" +
+         "• #刪單 誠石 5/30\n\n" +
+         "💡 也可直接口語詢問或下達：\n" +
+         "• 「把誠石今天的油麵改成30斤」\n" +
+         "• 「鵝肉亭今天有營業嗎？」\n\n" +
+         "輸入「說明」可查看完整功能與範例。";
 }
 
 /**
- * 透過 Google Gemini AI 進行自然語言意圖理解
+ * 輔助：從 Customers 表中以最長前綴/模糊比對出顧客與剩餘參數字串
+ */
+function extractCustomerFromCommandArgs(ss, argsStr) {
+  const cleanArgs = String(argsStr || '').trim();
+  const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+  if (custSheet && custSheet.getLastRow() > 1) {
+    const custData = getSheetData(custSheet);
+    const names = custData
+      .map(c => String(c.Name || c.name || c.客戶名稱 || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+
+    for (let i = 0; i < names.length; i++) {
+      const fullName = names[i];
+      if (cleanArgs.toLowerCase().startsWith(fullName.toLowerCase())) {
+        const rest = cleanArgs.substring(fullName.length).trim();
+        if (rest === '' || /^[\s,;，、]/.test(cleanArgs.substring(fullName.length))) {
+          return { customerName: fullName, restArgs: rest };
+        }
+      }
+    }
+  }
+  const firstSpace = cleanArgs.search(/\s+/);
+  if (firstSpace === -1) {
+    return { customerName: cleanArgs, restArgs: '' };
+  }
+  return {
+    customerName: cleanArgs.substring(0, firstSpace).trim(),
+    restArgs: cleanArgs.substring(firstSpace).trim()
+  };
+}
+
+/**
+ * 解析結構化 # 指令 (#改單 / #狀態 / #公休 / #刪單)
+ */
+function parseStructuredLineCommand(cleanText, ss, todayStr, timeZone) {
+  const m = cleanText.match(/^(#\S+)(?:\s+(.*))?$/);
+  if (!m) return null;
+  const cmdWord = m[1].toLowerCase();
+  const body = String(m[2] || '').trim();
+
+  // 1. #刪單 / #刪除訂單
+  if (cmdWord === '#刪單' || cmdWord === '#刪除訂單') {
+    if (!body) {
+      return { error: "❓ 格式提示：請輸入店家名稱\n範例：\n• #刪單 誠石\n• #刪單 誠石 5/30" };
+    }
+    const { customerName, restArgs } = extractCustomerFromCommandArgs(ss, body);
+    let targetDate = todayStr;
+    if (restArgs) {
+      const tokens = restArgs.split(/\s+/).filter(Boolean);
+      for (let i = 0; i < tokens.length; i++) {
+        const parsedDate = parseRelativeOrCalendarDate(tokens[i], todayStr, timeZone);
+        if (parsedDate) {
+          targetDate = parsedDate;
+          break;
+        }
+      }
+    }
+    return { action: 'DELETE_ORDER', customerName, targetDate };
+  }
+
+  // 2. #狀態 / #改狀態 / #訂單狀態
+  if (cmdWord === '#狀態' || cmdWord === '#改狀態' || cmdWord === '#訂單狀態') {
+    if (!body) {
+      return { error: "❓ 格式提示：請提供店家名稱與目標狀態\n範例：\n• #狀態 誠石 已送達\n• #狀態 誠石 5/30 已收款\n可用狀態：待出貨、已送達(已出貨)、已收款、已收款未出貨、已取消" };
+    }
+    const { customerName, restArgs } = extractCustomerFromCommandArgs(ss, body);
+    const tokens = restArgs.split(/\s+/).filter(Boolean);
+    let targetDate = todayStr;
+    let status = null;
+
+    tokens.forEach(tok => {
+      const d = parseRelativeOrCalendarDate(tok, todayStr, timeZone);
+      if (d) {
+        targetDate = d;
+        return;
+      }
+      const st = normalizeLineOrderStatus(tok);
+      if (st) {
+        status = st;
+      }
+    });
+
+    if (!customerName || !status) {
+      return { error: "❓ 無法辨識目標狀態。\n範例：\n• #狀態 誠石 已送達\n• #狀態 誠石 5/30 已收款\n支援狀態：待出貨、已送達、已出貨、已收款、已收款未出貨、已取消" };
+    }
+    return { action: 'UPDATE_ORDER_STATUS', customerName, targetDate, status };
+  }
+
+  // 3. #公休 / #設定公休
+  if (cmdWord === '#公休' || cmdWord === '#設定公休') {
+    if (!body) {
+      return { error: "❓ 格式提示：請提供店家名稱與公休日期或星期\n範例：\n• #公休 鵝肉亭 5/20\n• #公休 鵝肉亭 週日\n• #公休 鵝肉亭 取消 5/20" };
+    }
+    const { customerName, restArgs } = extractCustomerFromCommandArgs(ss, body);
+    if (!restArgs) {
+      return { error: "❓ 請填寫要設定或取消的公休日期或星期（例如：#公休 鵝肉亭 5/20 或 週日）" };
+    }
+    const tokens = restArgs.split(/[\s,、，]+/).filter(Boolean);
+    let holidayAction = 'ADD';
+    const holidayDates = [];
+    const offDays = [];
+
+    tokens.forEach(tok => {
+      if (/^(?:取消|移除|刪除|解除|delete|remove|off)$/i.test(tok)) {
+        holidayAction = 'REMOVE';
+        return;
+      }
+      if (/^(?:新增|設定|加上|add)$/i.test(tok)) {
+        holidayAction = 'ADD';
+        return;
+      }
+      const d = parseRelativeOrCalendarDate(tok, todayStr, timeZone);
+      if (d) {
+        holidayDates.push(d);
+        return;
+      }
+      const wd = parseChineseWeekdayNumber(tok);
+      if (wd !== null) {
+        offDays.push(wd);
+      }
+    });
+
+    if (holidayDates.length === 0 && offDays.length === 0) {
+      return { error: "❓ 找不到可辨識的公休日期或星期。\n範例：\n• #公休 鵝肉亭 5/20\n• #公休 鵝肉亭 週日\n• #公休 鵝肉亭 取消 5/20" };
+    }
+    return { action: 'SET_HOLIDAY', customerName, holidayAction, holidayDates, offDays };
+  }
+
+  // 4. #改單 / #修改訂單
+  if (cmdWord === '#改單' || cmdWord === '#修改訂單') {
+    if (!body) {
+      return { error: "❓ 格式提示：請提供店家名稱與品項數量\n範例：\n• #改單 誠石 油麵 30\n• #改單 誠石 5/30 油麵 30斤 陽春麵 10斤\n• #改單 誠石 +油麵 5（原有數量加 5）\n• #改單 誠石 備註:早上送" };
+    }
+    const { customerName, restArgs } = extractCustomerFromCommandArgs(ss, body);
+    if (!restArgs) {
+      return { error: "❓ 請填寫要修改的品項數量或備註（例如：#改單 誠石 油麵 30）" };
+    }
+
+    let working = restArgs;
+    let note = undefined;
+    const noteMatch = working.match(/(?:備註[:：\s]+)([^\s].*)$/);
+    if (noteMatch) {
+      note = noteMatch[1].trim();
+      working = working.substring(0, noteMatch.index).trim();
+    }
+
+    const tokens = working.split(/\s+/).filter(Boolean);
+    let targetDate = todayStr;
+    const leftoverTokens = [];
+    let dateAssigned = false;
+
+    tokens.forEach(tok => {
+      if (!dateAssigned) {
+        const d = parseRelativeOrCalendarDate(tok, todayStr, timeZone);
+        if (d) {
+          targetDate = d;
+          dateAssigned = true;
+          return;
+        }
+      }
+      leftoverTokens.push(tok);
+    });
+
+    const items = [];
+    let idx = 0;
+    while (idx < leftoverTokens.length) {
+      let tok = leftoverTokens[idx];
+      // Case A: 連寫形式 e.g. 油麵30斤, +油麵5, 油麵×30, 油麵*30
+      const inlineMatch = tok.match(/^([+\-]?)([^\d+\-×*]+?)(?:[×*]\s*)?([+\-]?\d+(?:\.\d+)?)(斤|包|箱|顆|袋|份|條|塊|罐|瓶|盒)?$/);
+      if (inlineMatch) {
+        const prefixSign = inlineMatch[1];
+        const prod = inlineMatch[2].trim();
+        const numStr = inlineMatch[3];
+        const unit = inlineMatch[4] || '';
+        const mode = (prefixSign === '+' || prefixSign === '-' || /^[+\-]/.test(numStr)) ? 'ADD' : 'SET';
+        const val = (prefixSign === '-' && !numStr.startsWith('-')) ? -Number(numStr) : Number(numStr);
+        items.push({ productName: prod, quantity: val, unit: unit || undefined, mode });
+        idx += 1;
+        continue;
+      }
+
+      // Case B: 空白分隔形式 e.g. 油麵 30 / +油麵 5斤 / 油麵 -5
+      if (idx + 1 < leftoverTokens.length) {
+        const nextTok = leftoverTokens[idx + 1];
+        const qtyMatch = nextTok.match(/^([+\-]?\d+(?:\.\d+)?)(斤|包|箱|顆|袋|份|條|塊|罐|瓶|盒)?$/);
+        if (qtyMatch) {
+          const prefixSign = tok.startsWith('+') ? '+' : (tok.startsWith('-') ? '-' : '');
+          const prod = prefixSign ? tok.substring(1).trim() : tok.trim();
+          const numStr = qtyMatch[1];
+          const unit = qtyMatch[2] || '';
+          const mode = (prefixSign || numStr.startsWith('+') || numStr.startsWith('-')) ? 'ADD' : 'SET';
+          const val = (prefixSign === '-' && !numStr.startsWith('-')) ? -Number(numStr) : Number(numStr);
+          items.push({ productName: prod, quantity: val, unit: unit || undefined, mode });
+          idx += 2;
+          continue;
+        }
+      }
+
+      idx += 1;
+    }
+
+    if (items.length === 0 && note === undefined) {
+      return { error: "❓ 無法解析欲修改的品項數量。\n範例：\n• #改單 誠石 油麵 30\n• #改單 誠石 5/30 +油麵 5\n• #改單 誠石 備註:分兩袋" };
+    }
+    return { action: 'UPDATE_ORDER', customerName, targetDate, items, note };
+  }
+
+  return null;
+}
+
+/**
+ * 規則引擎保底：無 Gemini Key 時亦可支援常見口語寫入指令
+ */
+function parseNaturalLanguageWriteFallback(cleanText, ss, todayStr, timeZone) {
+  // 1. 口語刪除訂單
+  const delMatch = cleanText.match(/^(?:幫我|請幫我|請)?(?:刪除|刪掉|移除)(.+?)(今天|今日|明天|明日|後天|\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}月\d{1,2}[號日]?)?(?:的)?訂單$/);
+  if (delMatch) {
+    const cust = delMatch[1].replace(/的$/, '').trim();
+    const dateToken = delMatch[2];
+    const targetDate = dateToken ? (parseRelativeOrCalendarDate(dateToken, todayStr, timeZone) || todayStr) : todayStr;
+    if (cust) return { action: 'DELETE_ORDER', customerName: cust, targetDate };
+  }
+
+  // 2. 口語設定/取消公休
+  const holMatch = cleanText.match(/^(?:幫我|請幫我|請)?(設定|新增|取消|移除)?(.+?)(今天|今日|明天|明日|後天|\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}月\d{1,2}[號日]?|(?:每)?(?:週|星期|禮拜)[日天一二三四五六])\s*(?:公休|休息)$/);
+  if (holMatch) {
+    const verb = holMatch[1] || '設定';
+    const cust = holMatch[2].replace(/(?:固定|每週|每周|的)$/g, '').trim();
+    const targetTok = holMatch[3].replace(/^每/, '').trim();
+    const holidayAction = (verb === '取消' || verb === '移除') ? 'REMOVE' : 'ADD';
+    const d = parseRelativeOrCalendarDate(targetTok, todayStr, timeZone);
+    const wd = parseChineseWeekdayNumber(targetTok);
+    if (cust && (d || wd !== null)) {
+      return {
+        action: 'SET_HOLIDAY',
+        customerName: cust,
+        holidayAction,
+        holidayDates: d ? [d] : [],
+        offDays: wd !== null ? [wd] : []
+      };
+    }
+  }
+
+  // 3. 口語更改訂單狀態
+  const statusMatch = cleanText.match(/^(?:幫我|請幫我|請)?(?:把|將)?(.+?)(今天|今日|明天|明日|後天|\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}月\d{1,2}[號日]?)?(?:的)?(?:訂單|單)?(?:改成|改為|標記為|設為|更新為|已|改)?\s*(待出貨|未出貨|已送達|已出貨|送達|已收款未出貨|已收款|已付款|已結清|已取消)$/);
+  if (statusMatch) {
+    const cust = statusMatch[1].replace(/(?:今天|今日|明天|明日|的)$/g, '').trim();
+    const dateToken = statusMatch[2];
+    const st = normalizeLineOrderStatus(statusMatch[3]);
+    const targetDate = dateToken ? (parseRelativeOrCalendarDate(dateToken, todayStr, timeZone) || todayStr) : todayStr;
+    if (cust && st) {
+      return { action: 'UPDATE_ORDER_STATUS', customerName: cust, targetDate, status: st };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 在 Customers 表搜尋唯一/最精確的店家
+ */
+function findCustomerRecordForLine(ss, customerName) {
+  const query = String(customerName || '').trim().toLowerCase();
+  if (!query) return { error: "請提供店家名稱。" };
+
+  const custSheet = ss.getSheetByName("CUSTOMERS") || ss.getSheetByName("Customers");
+  if (!custSheet || custSheet.getLastRow() <= 1) {
+    return { error: "⚠️ 系統中目前尚無客戶資料表。" };
+  }
+
+  const allCusts = getSheetData(custSheet);
+  const toObj = function(c) {
+    const parseArr = function(val) {
+      if (Array.isArray(val)) return val;
+      if (!val) return [];
+      try {
+        const p = JSON.parse(String(val));
+        return Array.isArray(p) ? p : [val];
+      } catch (e) {
+        return String(val).split(/[,、，\s]+/).filter(Boolean);
+      }
+    };
+    return {
+      id: String(c.ID || c.id || '').trim(),
+      name: String(c.Name || c.name || c.客戶名稱 || '').trim(),
+      phone: String(c.Phone || c.phone || c.電話 || '').trim(),
+      offDays: parseArr(c.OffDays || c.offDays || c.公休日週期JSON || c.公休日週期).map(x => parseChineseWeekdayNumber(x) !== null ? parseChineseWeekdayNumber(x) : Number(x)).filter(n => !isNaN(n) && n >= 0 && n <= 6),
+      holidayDates: parseArr(c.HolidayDates || c.holidayDates || c.特定公休日JSON || c.特定公休日).map(d => String(d).trim().replace(/\//g, '-')).filter(Boolean)
+    };
+  };
+
+  const exact = allCusts.find(c => String(c.Name || c.name || c.客戶名稱 || '').trim().toLowerCase() === query);
+  if (exact) return { customer: toObj(exact) };
+
+  const partials = allCusts.filter(c => {
+    const cName = String(c.Name || c.name || c.客戶名稱 || '').trim().toLowerCase();
+    return cName && (cName.includes(query) || query.includes(cName));
+  });
+
+  if (partials.length === 0) {
+    return { error: `⚪ 找不到名稱包含「${customerName}」的店家資料，請確認店名是否正確。` };
+  }
+  if (partials.length > 1) {
+    const candidateNames = partials.slice(0, 6).map(c => String(c.Name || c.name || c.客戶名稱).trim()).join('、');
+    return { error: `🔍 名稱「${customerName}」符合多間店家：${candidateNames}\n請輸入更完整的店名後再試一次。` };
+  }
+  return { customer: toObj(partials[0]) };
+}
+
+/**
+ * 讀取商品目錄做模糊品名匹配
+ */
+function resolveProductForLine(ss, rawProductName, existingItems) {
+  const q = String(rawProductName || '').trim();
+  const qLower = q.toLowerCase();
+
+  // 1. 先從此筆訂單既有品項比對 (最符合使用者改單直覺)
+  if (Array.isArray(existingItems) && existingItems.length > 0) {
+    const exactInOrder = existingItems.find(it => String(it.productName || '').trim().toLowerCase() === qLower);
+    if (exactInOrder) return { productName: exactInOrder.productName, unit: exactInOrder.unit || '斤', unitPrice: exactInOrder.unitPrice };
+
+    const partialInOrder = existingItems.find(it => {
+      const n = String(it.productName || '').trim().toLowerCase();
+      return n && (n.includes(qLower) || qLower.includes(n));
+    });
+    if (partialInOrder) return { productName: partialInOrder.productName, unit: partialInOrder.unit || '斤', unitPrice: partialInOrder.unitPrice };
+  }
+
+  // 2. 再從 Products 資料表比對
+  const prodSheet = ss.getSheetByName("PRODUCTS") || ss.getSheetByName("Products");
+  if (prodSheet && prodSheet.getLastRow() > 1) {
+    const prods = getSheetData(prodSheet);
+    const exactProd = prods.find(p => String(p.Name || p.name || p.品項 || '').trim().toLowerCase() === qLower);
+    if (exactProd) {
+      return {
+        productName: String(exactProd.Name || exactProd.name || exactProd.品項).trim(),
+        unit: String(exactProd.Unit || exactProd.unit || exactProd.單位 || '斤').trim(),
+        unitPrice: Number(exactProd.Price || exactProd.price || exactProd.單價) || undefined
+      };
+    }
+    const partialProd = prods.find(p => {
+      const n = String(p.Name || p.name || p.品項 || '').trim().toLowerCase();
+      return n && (n.includes(qLower) || qLower.includes(n));
+    });
+    if (partialProd) {
+      return {
+        productName: String(partialProd.Name || partialProd.name || partialProd.品項).trim(),
+        unit: String(partialProd.Unit || partialProd.unit || partialProd.單位 || '斤').trim(),
+        unitPrice: Number(partialProd.Price || partialProd.price || partialProd.單價) || undefined
+      };
+    }
+  }
+
+  return { productName: q, unit: '斤', unitPrice: undefined };
+}
+
+/**
+ * 第一階段 (Dry-Run)：權限檢核、目標搜尋、預覽差異與暫存確認按鈕
+ */
+function prepareLineWriteAction(intent, lineUser, ss, todayStr, timeZone) {
+  const role = String(lineUser.role || 'staff').trim().toLowerCase();
+  const action = intent.action;
+  const cache = CacheService.getScriptCache();
+
+  // 1. RBAC 權限前置把關
+  if (action === 'UPDATE_ORDER' && !hasPermission(role, 'canEditOrderContent')) {
+    return `🔒 權限不足：您的職位（${role}）無權修改訂單內容，僅管理員／領班可執行改單。`;
+  }
+  if (action === 'DELETE_ORDER' && !hasPermission(role, 'canDeleteOrders')) {
+    return `🔒 權限不足：刪除訂單僅限最高管理員（admin）執行。\n（若需標記取消，請改用「#狀態 店名 已取消」）`;
+  }
+  if (action === 'SET_HOLIDAY' && role !== 'admin' && role !== 'manager') {
+    return `🔒 權限不足：設定店家公休僅限管理員／領班執行。`;
+  }
+
+  // 2. 搜尋目標店家
+  const custLookup = findCustomerRecordForLine(ss, intent.customerName);
+  if (custLookup.error) {
+    return custLookup.error;
+  }
+  const customer = custLookup.customer;
+
+  // 3. 若為「設定店家公休」
+  if (action === 'SET_HOLIDAY') {
+    const holidayAction = String(intent.holidayAction || 'ADD').toUpperCase() === 'REMOVE' ? 'REMOVE' : 'ADD';
+    const incomingDates = Array.isArray(intent.holidayDates) ? intent.holidayDates.map(d => parseRelativeOrCalendarDate(d, todayStr, timeZone) || String(d).trim()).filter(Boolean) : [];
+    const incomingOffDays = Array.isArray(intent.offDays) ? intent.offDays.map(x => parseChineseWeekdayNumber(x) !== null ? parseChineseWeekdayNumber(x) : Number(x)).filter(n => !isNaN(n) && n >= 0 && n <= 6) : [];
+
+    if (incomingDates.length === 0 && incomingOffDays.length === 0) {
+      return "❓ 未偵測到有效的公休日期或星期，請再說清楚一次（例如：#公休 鵝肉亭 5/20）。";
+    }
+
+    const oldOffDays = customer.offDays.slice();
+    const oldHolidayDates = customer.holidayDates.slice();
+    let newOffDays = oldOffDays.slice();
+    let newHolidayDates = oldHolidayDates.slice();
+
+    if (holidayAction === 'ADD') {
+      incomingOffDays.forEach(d => { if (newOffDays.indexOf(d) === -1) newOffDays.push(d); });
+      incomingDates.forEach(dt => { if (newHolidayDates.indexOf(dt) === -1) newHolidayDates.push(dt); });
+    } else {
+      newOffDays = newOffDays.filter(d => incomingOffDays.indexOf(d) === -1);
+      newHolidayDates = newHolidayDates.filter(dt => incomingDates.indexOf(dt) === -1);
+    }
+
+    newOffDays.sort((a, b) => a - b);
+    newHolidayDates.sort();
+
+    const token = Utilities.getUuid().slice(0, 8);
+    const pendingPayload = {
+      token,
+      action: 'SET_HOLIDAY',
+      customerId: customer.id,
+      customerName: customer.name,
+      phone: customer.phone,
+      offDays: newOffDays,
+      holidayDates: newHolidayDates,
+      summary: `${holidayAction === 'REMOVE' ? '移除' : '設定'}公休（週期：${formatOffDaysToChinese(newOffDays)}；特定日：${newHolidayDates.join('、') || '無'}）`
+    };
+    cache.put("LINE_PENDING_" + lineUser.lineUserId, JSON.stringify(pendingPayload), 180);
+
+    const previewText =
+      `⚠️【請確認店家公休變更】\n` +
+      `━━━━━━━━━━━━━━\n` +
+      `🏪 店家：${customer.name}\n` +
+      `🔧 操作：${holidayAction === 'REMOVE' ? '移除公休' : '新增／設定公休'}\n` +
+      `📅 變更前固定公休：${formatOffDaysToChinese(oldOffDays)}\n` +
+      `📅 變更後固定公休：${formatOffDaysToChinese(newOffDays)}\n` +
+      `📌 變更前特定公休：${oldHolidayDates.filter(d => d >= todayStr).join('、') || '無'}\n` +
+      `📌 變更後特定公休：${newHolidayDates.filter(d => d >= todayStr).join('、') || '無'}\n` +
+      `━━━━━━━━━━━━━━\n` +
+      `請點擊下方按鈕確認執行（3 分鐘內有效）：`;
+
+    return {
+      type: "text",
+      text: previewText,
+      quickReply: {
+        items: [
+          {
+            type: "action",
+            action: {
+              type: "postback",
+              label: "✅ 確認執行",
+              data: `cmd=CONFIRM_PENDING&token=${token}`,
+              displayText: "✅ 確認更新公休設定"
+            }
+          },
+          {
+            type: "action",
+            action: {
+              type: "postback",
+              label: "❌ 取消操作",
+              data: `cmd=CANCEL_PENDING&token=${token}`,
+              displayText: "❌ 取消"
+            }
+          }
+        ]
+      }
+    };
+  }
+
+  // 4. 訂單操作 (UPDATE_ORDER / UPDATE_ORDER_STATUS / DELETE_ORDER)：先檢索該店家目標日期訂單
+  const targetDate = intent.targetDate
+    ? (parseRelativeOrCalendarDate(intent.targetDate, todayStr, timeZone) || intent.targetDate)
+    : todayStr;
+
+  const allOrders = getAllOrdersFromSheet(ss);
+  const matchingRows = allOrders.filter(o =>
+    o.deliveryDate === targetDate &&
+    o.customerName &&
+    (o.customerName.toLowerCase() === customer.name.toLowerCase() ||
+     o.customerName.toLowerCase().includes(customer.name.toLowerCase()) ||
+     customer.name.toLowerCase().includes(o.customerName.toLowerCase()))
+  );
+
+  if (matchingRows.length === 0) {
+    return `⚪ 找不到【${customer.name}】在 ${targetDate} 的有效訂單。`;
+  }
+
+  // 依 order.id 分組
+  const orderGroupsMap = new Map();
+  matchingRows.forEach(row => {
+    const oid = String(row.id || '').trim();
+    if (!oid) return;
+    if (!orderGroupsMap.has(oid)) {
+      orderGroupsMap.set(oid, {
+        orderId: oid,
+        customerName: row.customerName,
+        deliveryDate: row.deliveryDate,
+        deliveryTime: row.deliveryTime || '',
+        status: row.status || 'PENDING',
+        trip: row.trip || '',
+        note: row.note || '',
+        deliveryMethod: row.deliveryMethod || '',
+        source: row.source || '',
+        assignedTo: String(row.assignedTo || '').trim(),
+        assignedName: String(row.assignedName || '').trim(),
+        items: []
+      });
+    }
+    orderGroupsMap.get(oid).items.push({
+      productName: row.productName,
+      quantity: Number(row.quantity) || 0,
+      unit: row.unit || '斤',
+      unitPrice: row.unitPrice
+    });
+  });
+
+  let candidates = Array.from(orderGroupsMap.values());
+
+  // staff 在 UPDATE_ORDER_STATUS 時過濾並檢查是否為指派給自己的訂單
+  if (action === 'UPDATE_ORDER_STATUS' && !hasPermission(role, 'canUpdateAnyOrderStatus')) {
+    const myId = String(lineUser.userId || '').trim();
+    const myName = String(lineUser.name || '').trim();
+    const myOrders = candidates.filter(c =>
+      (myId && c.assignedTo === myId) || (myName && (c.assignedName === myName || c.assignedTo === myName))
+    );
+    if (myOrders.length === 0) {
+      return `🔒 權限不足：【${customer.name}】於 ${targetDate} 的訂單未指派給您（${lineUser.name}），您只能變更指派給自己的訂單狀態。`;
+    }
+    candidates = myOrders;
+  }
+
+  // 若指定了 forcedOrderId (從消歧按鈕選進來)
+  if (intent.forcedOrderId) {
+    const picked = candidates.find(c => c.orderId === intent.forcedOrderId);
+    if (picked) candidates = [picked];
+  }
+
+  // 多筆同日訂單消歧
+  if (candidates.length > 1) {
+    const pickToken = Utilities.getUuid().slice(0, 8);
+    cache.put("LINE_PICK_" + lineUser.lineUserId, JSON.stringify({
+      token: pickToken,
+      intent: intent,
+      candidates: candidates.map(c => ({ orderId: c.orderId }))
+    }), 180);
+
+    const listText = candidates.map((c, i) => {
+      const itemStr = c.items.map(it => `${it.productName}×${it.quantity}${it.unit}`).join('、');
+      return `${i + 1}. ${c.trip || '未分趟'} ${c.deliveryTime ? `(${c.deliveryTime})` : ''}｜${getOrderStatusChineseLabel(c.status)}\n   ${itemStr}`;
+    }).join('\n');
+
+    const quickItems = candidates.slice(0, 10).map((c, i) => {
+      const labelBase = `${i + 1}.${c.trip || c.deliveryTime || c.orderId.slice(-4)} (${c.items[0]?.productName || ''})`;
+      return {
+        type: "action",
+        action: {
+          type: "postback",
+          label: labelBase.substring(0, 20),
+          data: `cmd=PICK_ORDER&token=${pickToken}&orderId=${encodeURIComponent(c.orderId)}`,
+          displayText: `選擇第 ${i + 1} 筆訂單`
+        }
+      };
+    });
+    quickItems.push({
+      type: "action",
+      action: {
+        type: "postback",
+        label: "❌ 取消操作",
+        data: `cmd=CANCEL_PENDING&token=${pickToken}`,
+        displayText: "❌ 取消"
+      }
+    });
+
+    return {
+      type: "text",
+      text: `📋【${customer.name}】在 ${targetDate} 共有 ${candidates.length} 筆訂單，請點選要操作的那一筆：\n━━━━━━━━━━━━━━\n${listText}`,
+      quickReply: { items: quickItems.slice(0, 13) }
+    };
+  }
+
+  const targetOrder = candidates[0];
+  const token = Utilities.getUuid().slice(0, 8);
+  let pendingPayload = null;
+  let previewText = "";
+
+  if (action === 'UPDATE_ORDER_STATUS') {
+    const newStatus = normalizeLineOrderStatus(intent.status);
+    if (!newStatus) {
+      return "❓ 無法辨識目標狀態，支援狀態：待出貨、已送達(已出貨)、已收款、已收款未出貨、已取消。";
+    }
+    pendingPayload = {
+      token,
+      action: 'UPDATE_ORDER_STATUS',
+      orderId: targetOrder.orderId,
+      customerName: targetOrder.customerName,
+      deliveryDate: targetOrder.deliveryDate,
+      newStatus: newStatus
+    };
+    const itemsStr = targetOrder.items.map(it => `• ${it.productName} × ${it.quantity} ${it.unit}`).join('\n');
+    previewText =
+      `⚠️【請確認變更訂單狀態】\n` +
+      `━━━━━━━━━━━━━━\n` +
+      `🏪 客戶：${targetOrder.customerName}\n` +
+      `📅 日期：${targetOrder.deliveryDate}${targetOrder.trip ? ` (${targetOrder.trip})` : ''}\n` +
+      `📊 狀態變更：${getOrderStatusChineseLabel(targetOrder.status)} ➡️【${getOrderStatusChineseLabel(newStatus)}】\n` +
+      `📦 訂單品項：\n${itemsStr}\n` +
+      `━━━━━━━━━━━━━━\n` +
+      `請點擊下方按鈕確認執行（3 分鐘內有效）：`;
+  } else if (action === 'DELETE_ORDER') {
+    pendingPayload = {
+      token,
+      action: 'DELETE_ORDER',
+      orderId: targetOrder.orderId,
+      customerName: targetOrder.customerName,
+      deliveryDate: targetOrder.deliveryDate
+    };
+    const itemsStr = targetOrder.items.map(it => `• ${it.productName} × ${it.quantity} ${it.unit}`).join('\n');
+    previewText =
+      `🗑️【請確認刪除訂單】\n` +
+      `━━━━━━━━━━━━━━\n` +
+      `🏪 客戶：${targetOrder.customerName}\n` +
+      `📅 日期：${targetOrder.deliveryDate}${targetOrder.trip ? ` (${targetOrder.trip})` : ''}\n` +
+      `📊 目前狀態：${getOrderStatusChineseLabel(targetOrder.status)}\n` +
+      `📦 刪除品項：\n${itemsStr}\n` +
+      `━━━━━━━━━━━━━━\n` +
+      `⚠️ 刪除後訂單將自列表移除，請點擊下方按鈕確認：`;
+  } else if (action === 'UPDATE_ORDER') {
+    const oldItems = targetOrder.items.map(it => Object.assign({}, it));
+    const newItems = targetOrder.items.map(it => Object.assign({}, it));
+    const incomingItems = Array.isArray(intent.items) ? intent.items : [];
+
+    incomingItems.forEach(chg => {
+      if (!chg || !chg.productName) return;
+      const resolved = resolveProductForLine(ss, chg.productName, newItems);
+      const qtyVal = Number(chg.quantity);
+      if (isNaN(qtyVal)) return;
+      const mode = String(chg.mode || 'SET').toUpperCase();
+      const existingIdx = newItems.findIndex(it => String(it.productName).trim().toLowerCase() === resolved.productName.toLowerCase());
+
+      if (existingIdx !== -1) {
+        const nextQty = mode === 'ADD' ? (Number(newItems[existingIdx].quantity) + qtyVal) : qtyVal;
+        if (nextQty <= 0) {
+          newItems.splice(existingIdx, 1);
+        } else {
+          newItems[existingIdx].quantity = nextQty;
+          if (chg.unit) newItems[existingIdx].unit = chg.unit;
+        }
+      } else if (qtyVal > 0) {
+        newItems.push({
+          productName: resolved.productName,
+          quantity: qtyVal,
+          unit: chg.unit || resolved.unit || '斤',
+          unitPrice: resolved.unitPrice
+        });
+      }
+    });
+
+    if (newItems.length === 0) {
+      return "⚠️ 修改後訂單將無任何品項（數量皆為 0）。若要整筆移除，請使用「#刪單」或「#狀態 店名 已取消」。";
+    }
+
+    const newNote = intent.note !== undefined ? String(intent.note) : targetOrder.note;
+    pendingPayload = {
+      token,
+      action: 'UPDATE_ORDER',
+      orderData: {
+        id: targetOrder.orderId,
+        customerName: targetOrder.customerName,
+        deliveryDate: targetOrder.deliveryDate,
+        deliveryTime: targetOrder.deliveryTime,
+        items: newItems,
+        note: newNote,
+        status: targetOrder.status,
+        deliveryMethod: targetOrder.deliveryMethod,
+        trip: targetOrder.trip,
+        source: targetOrder.source || 'LINE_BOT',
+        force: true
+      }
+    };
+
+    const oldStr = oldItems.map(it => `• ${it.productName} × ${it.quantity} ${it.unit}`).join('\n');
+    const newStr = newItems.map(it => `• ${it.productName} × ${it.quantity} ${it.unit}`).join('\n');
+    previewText =
+      `✏️【請確認修改訂單明細】\n` +
+      `━━━━━━━━━━━━━━\n` +
+      `🏪 客戶：${targetOrder.customerName}\n` +
+      `📅 日期：${targetOrder.deliveryDate}${targetOrder.trip ? ` (${targetOrder.trip})` : ''}\n` +
+      `📦 修改前：\n${oldStr}\n` +
+      `📦 修改後：\n${newStr}\n` +
+      (intent.note !== undefined ? `📝 備註：${targetOrder.note || '無'} ➡️ ${newNote || '無'}\n` : '') +
+      `━━━━━━━━━━━━━━\n` +
+      `請點擊下方按鈕確認寫入（3 分鐘內有效）：`;
+  }
+
+  if (!pendingPayload) {
+    return "❓ 無法建立異動預覽，請檢查指令格式或輸入「說明」查看範例。";
+  }
+
+  cache.put("LINE_PENDING_" + lineUser.lineUserId, JSON.stringify(pendingPayload), 180);
+
+  return {
+    type: "text",
+    text: previewText,
+    quickReply: {
+      items: [
+        {
+          type: "action",
+          action: {
+            type: "postback",
+            label: "✅ 確認執行",
+            data: `cmd=CONFIRM_PENDING&token=${token}`,
+            displayText: "✅ 確認執行變更"
+          }
+        },
+        {
+          type: "action",
+          action: {
+            type: "postback",
+            label: "❌ 取消操作",
+            data: `cmd=CANCEL_PENDING&token=${token}`,
+            displayText: "❌ 取消"
+          }
+        }
+      ]
+    }
+  };
+}
+
+/**
+ * 第二階段：確認後正式寫入 Google Sheets 並觸發全端即時同步
+ */
+function executeLinePendingAction(pending, lineUser) {
+  const role = String(lineUser.role || 'staff').trim().toLowerCase();
+  const action = pending.action;
+
+  if (action === 'UPDATE_ORDER') {
+    if (!hasPermission(role, 'canEditOrderContent')) {
+      return "🔒 權限不足：無法修改訂單內容。";
+    }
+    updateOrderContent(pending.orderData);
+    updateGlobalTimestamp();
+    SpreadsheetApp.flush();
+    notifyFirebase();
+    writeSystemLog(
+      "LINE_UPDATE_ORDER",
+      `${pending.orderData.customerName} (${pending.orderData.id})`,
+      JSON.stringify({ operator: lineUser.name, role: role, orderData: pending.orderData })
+    );
+    const itemsStr = (pending.orderData.items || []).map(it => `• ${it.productName} × ${it.quantity} ${it.unit}`).join('\n');
+    return `✅ 訂單修改完成！\n━━━━━━━━━━━━━━\n🏪 客戶：${pending.orderData.customerName}\n📅 日期：${pending.orderData.deliveryDate}\n📦 最新明細：\n${itemsStr}\n👤 操作同仁：${lineUser.name}`;
+  }
+
+  if (action === 'UPDATE_ORDER_STATUS') {
+    updateOrderStatus({ id: pending.orderId, status: pending.newStatus, force: true }, lineUser);
+    updateGlobalTimestamp();
+    SpreadsheetApp.flush();
+    notifyFirebase();
+    writeSystemLog(
+      "LINE_UPDATE_STATUS",
+      `${pending.customerName} (${pending.orderId})`,
+      JSON.stringify({ operator: lineUser.name, role: role, newStatus: pending.newStatus })
+    );
+    return `✅ 訂單狀態已更新！\n━━━━━━━━━━━━━━\n🏪 客戶：${pending.customerName}\n📅 日期：${pending.deliveryDate}\n📊 最新狀態：【${getOrderStatusChineseLabel(pending.newStatus)}】\n👤 操作同仁：${lineUser.name}`;
+  }
+
+  if (action === 'DELETE_ORDER') {
+    if (!hasPermission(role, 'canDeleteOrders')) {
+      return "🔒 權限不足：僅限最高管理員可刪除訂單。";
+    }
+    deleteOrder({ id: pending.orderId, force: true });
+    updateGlobalTimestamp();
+    SpreadsheetApp.flush();
+    notifyFirebase();
+    writeSystemLog(
+      "LINE_DELETE_ORDER",
+      `${pending.customerName} (${pending.orderId})`,
+      JSON.stringify({ operator: lineUser.name, role: role, deliveryDate: pending.deliveryDate })
+    );
+    return `✅ 訂單已刪除！\n━━━━━━━━━━━━━━\n🏪 客戶：${pending.customerName}\n📅 日期：${pending.deliveryDate}\n🆔 單號：${pending.orderId}\n👤 操作同仁：${lineUser.name}`;
+  }
+
+  if (action === 'SET_HOLIDAY') {
+    if (role !== 'admin' && role !== 'manager') {
+      return "🔒 權限不足：無法修改店家公休設定。";
+    }
+    updateCustomer({
+      id: pending.customerId,
+      name: pending.customerName,
+      phone: pending.phone || '',
+      offDays: pending.offDays,
+      holidayDates: pending.holidayDates,
+      force: true
+    });
+    updateGlobalTimestamp();
+    SpreadsheetApp.flush();
+    notifyFirebase();
+    writeSystemLog(
+      "LINE_SET_HOLIDAY",
+      pending.customerName,
+      JSON.stringify({ operator: lineUser.name, role: role, offDays: pending.offDays, holidayDates: pending.holidayDates })
+    );
+    return `✅ 店家公休設定已更新！\n━━━━━━━━━━━━━━\n🏪 店家：${pending.customerName}\n🛌 固定公休：${formatOffDaysToChinese(pending.offDays)}\n📌 特定公休：${(pending.holidayDates || []).join('、') || '無'}\n👤 操作同仁：${lineUser.name}`;
+  }
+
+  return "❓ 未知的操作類型，未寫入任何資料。";
+}
+
+/**
+ * 透過 Google Gemini AI 進行自然語言意圖理解 (查詢 + 寫入共 12 種意圖)
  */
 function parseQueryIntentWithGemini(userText, todayStr) {
   try {
@@ -4744,45 +7075,53 @@ function parseQueryIntentWithGemini(userText, todayStr) {
         } catch (e) {}
       }
     }
-    
-    // 若未設定 Gemini Key 則回傳 null 走規則引擎
+
     if (!geminiApiKey) {
       console.warn("⚠️ 系統尚未在 Config 設定 GeminiApiKey");
       return null;
     }
 
-    const prompt = `你是一個專業製麵廠 ERP 系統的 AI 助理。請精準分析使用者這句口語化的提問，將其精確分類為以下 8 種專屬意圖之一，並提取「店家名稱」：
-使用者提問："${userText}"
+    const prompt = `你是一個專業製麵廠 ERP 系統的 AI 助理。請精準分析使用者這句訊息，將其分類為以下 12 種意圖之一，並提取對應結構化欄位：
+使用者輸入："${userText}"
 今天日期：${todayStr}
 
-意圖定義與分類準則：
-1. "BUSINESS_STATUS"：詢問某店家「今天有沒有營業 / 有開嗎 / 有開門嗎 / 今天休息嗎 / 今天公休嗎」。
-   - 範例：「誠石今天有營業嗎？」、「鵝肉亭今天有開嗎？」、「大埔今天有休息嗎？」
-2. "HOLIDAY_INFO"：詢問某店家「什麼時候公休 / 哪天休息 / 公休日是哪天 / 特定公休日」。
-   - 範例：「鵝肉亭什麼時候公休？」、「誠石休哪天？」、「大埔公休日是禮拜幾？」
-3. "DELIVERY_STATUS"：詢問司機「今天送去了嗎 / 今天有去送嗎 / 送到了沒 / 去了沒 / 送了沒」（專注在司機配送進度）。
-   - 範例：「誠石今天有去嗎？」、「鵝肉亭送到了沒？」、「阿石去了沒？」
-4. "TODAY_STATUS"：詢問某店家「今天有沒有叫麵 / 有沒有叫貨 / 有沒有訂貨 / 今天叫了什麼」（專注在叫貨數量品項）。
-   - 範例：「鵝肉亭有叫麵嗎？」、「誠石今天有訂貨嗎？」、「今天有叫貨嗎？」
-5. "CUSTOMER_PROFILE"：使用者只輸入了「純店家名稱」或詢問店家基本檔案。
-   - 範例：「鵝肉亭」、「正宗民雄鵝肉亭」、「查 誠石」
-6. "DATE_ORDER"：詢問某店家在特定日期的叫貨量、品項或金額。
-   - 範例：「大埔 5/30 叫了啥」、「誠石 8-15 訂單」
-7. "MONTHLY_BILL"：詢問某店家特定月份的貨款、帳款、要收多少錢。
-   - 範例：「誠石五月要收多少」、「大埔 5月 帳單」
-8. "GENERATE_PDF"：要求產出、下載、列印某店家特定月份的對帳單/報表/PDF。
-   - 範例：「幫我做一份大埔 5 月對帳單」、「誠石 5月 PDF」
+查詢類意圖 (Read)：
+1. "BUSINESS_STATUS"：詢問某店家今天有沒有營業/休息。
+2. "HOLIDAY_INFO"：詢問某店家什麼時候公休/哪天休息。
+3. "DELIVERY_STATUS"：詢問司機今天送去了嗎/送到了沒。
+4. "TODAY_STATUS"：詢問某店家今天有沒有叫麵/叫了什麼。
+5. "CUSTOMER_PROFILE"：純店家名稱或查詢店家檔案。
+6. "DATE_ORDER"：詢問特定日期訂單明細。
+7. "MONTHLY_BILL"：詢問某店家月份貨款金額。
+8. "GENERATE_PDF"：要求產出某店家月份對帳單 PDF。
 
-請僅回傳 JSON 物件，格式如下（不要加任何 markdown 標記或反引號）：
+操作類意圖 (Write)：
+9. "UPDATE_ORDER"：要求修改某店家訂單的品項數量或備註。
+   - 範例：「幫我把誠石今天的油麵改成30斤」、「誠石明天油麵加10斤」、「大埔 5/30 陽春麵改15斤」
+   - items 陣列中：若說「改成/改為/調成 N」則 mode="SET", quantity=N；若說「加/多叫 N」則 mode="ADD", quantity=N；若說「減/少 N」則 mode="ADD", quantity=-N。
+10. "SET_HOLIDAY"：設定或取消某店家的特定公休日或每週固定公休星期。
+   - 範例：「設定鵝肉亭 5/20 公休」、「大埔改每週日公休」、「取消鵝肉亭 5/20 公休」
+   - holidayAction 為 "ADD" 或 "REMOVE"；holidayDates 為 ["YYYY-MM-DD"]；offDays 為數字陣列 0(週日)~6(週六)。
+11. "DELETE_ORDER"：要求刪除某店家的訂單（注意與更改狀態為已取消區分）。
+   - 範例：「把誠石今天的訂單刪掉」、「刪除大埔 5/30 訂單」
+12. "UPDATE_ORDER_STATUS"：要求將某店家的訂單狀態更改為 待出貨(PENDING)、已送達/已出貨(SHIPPED)、已收款(PAID)、已收款未出貨(PAID_UNSHIPPED)、已取消(CANCELLED)。
+   - 範例：「把誠石今天的單改成已送達」、「鵝肉亭今天已經收款了」、「大埔 5/30 取消訂單」
+
+請僅回傳純 JSON 物件（不要加任何 markdown 標記或反引號）：
 {
-  "action": "BUSINESS_STATUS" | "HOLIDAY_INFO" | "DELIVERY_STATUS" | "TODAY_STATUS" | "CUSTOMER_PROFILE" | "DATE_ORDER" | "MONTHLY_BILL" | "GENERATE_PDF" | "UNKNOWN",
-  "customerName": "提取出的精確店家名稱（去掉今天、營業、公休、有去嗎、有叫麵、查、幫我等所有贅詞）",
-  "targetDate": "YYYY-MM-DD (若為 DATE_ORDER 且有提到日期)",
-  "month": 數字月份 (例如 5, 若為 MONTHLY_BILL 或 GENERATE_PDF),
-  "year": "YYYY (年份，預設當前年份)"
+  "action": "BUSINESS_STATUS" | "HOLIDAY_INFO" | "DELIVERY_STATUS" | "TODAY_STATUS" | "CUSTOMER_PROFILE" | "DATE_ORDER" | "MONTHLY_BILL" | "GENERATE_PDF" | "UPDATE_ORDER" | "SET_HOLIDAY" | "DELETE_ORDER" | "UPDATE_ORDER_STATUS" | "UNKNOWN",
+  "customerName": "提取出的精確店家名稱",
+  "targetDate": "YYYY-MM-DD (若有提到日期或今天/明天/後天，否則可為 null)",
+  "month": 數字月份或null,
+  "year": "YYYY 或 null",
+  "status": "PENDING | SHIPPED | PAID | PAID_UNSHIPPED | CANCELLED (僅 UPDATE_ORDER_STATUS 時提供)",
+  "items": [{"productName": "品項", "quantity": 數字, "unit": "斤或單位", "mode": "SET | ADD"}],
+  "note": "新備註字串或null",
+  "holidayAction": "ADD | REMOVE",
+  "holidayDates": ["YYYY-MM-DD"],
+  "offDays": [0]
 }`;
 
-    // 支援最新 gemini-2.5-flash 與 gemini-1.5-flash
     const modelsToTry = [
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + geminiApiKey,
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + geminiApiKey
@@ -5635,12 +7974,17 @@ function getAllOrdersFromSheet(ss) {
       productName: pName,
       quantity: qty,
       unit: o.Unit || o.unit || o.單位 || '斤',
+      note: o.Note || o.note || o.備註 || '',
       status: String(o.Status || o.status || o.狀態 || 'PENDING').trim(),
+      deliveryMethod: o.DeliveryMethod || o.deliveryMethod || o.配送方式 || '',
+      source: o.Source || o.source || o.資料來源 || '',
       unitPrice: unitPrice > 0 ? unitPrice : undefined,
       subtotal: subtotal > 0 ? subtotal : undefined,
-      trip: o.Trip || o.trip || o.趟次 || ''
+      trip: o.Trip || o.trip || o.趟次 || '',
+      assignedTo: o.assigned_to || o.AssignedTo || o.指派人員ID || o.指派人員 || '',
+      assignedName: o.assigned_name || o.AssignedName || o.指派人員姓名 || ''
     };
-  });
+  }).filter(o => String(o.status || '').trim().toUpperCase() !== 'DELETED');
 }
 
 // 1. 初始化與獲取 Log 表單
@@ -6297,6 +8641,127 @@ function getLineMessagingToken() {
 }
 
 /**
+ * 一鍵建立並部署 LINE 聊天室底部固定圖文選單 (Rich Menu 2500x843，6 格快速操作按鈕)
+ */
+function handleSetupLineRichMenu(data, currentUser) {
+  const role = currentUser ? String(currentUser.role || '').toLowerCase() : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { success: false, error: "FORBIDDEN: 僅管理員或領班可設定 LINE 底部圖文選單" };
+  }
+
+  const token = String((data && data.lineChannelToken) || getLineMessagingToken() || '').trim();
+  if (!token) {
+    return { success: false, error: "系統尚未設定 LINE Channel Access Token，請先於上方欄位填入並儲存" };
+  }
+
+  let base64Raw = String((data && data.imageBase64) || '').trim();
+  if (!base64Raw) {
+    return { success: false, error: "缺少圖文選單圖片資料 (imageBase64)" };
+  }
+  base64Raw = base64Raw.replace(/^data:image\/\w+;base64,/, '');
+
+  try {
+    // 1. 清理先前由本系統建立的舊 Rich Menu，避免帳號上限堆積
+    const listRes = UrlFetchApp.fetch("https://api.line.me/v2/bot/richmenu/list", {
+      method: "get",
+      headers: { "Authorization": "Bearer " + token },
+      muteHttpExceptions: true
+    });
+    if (listRes.getResponseCode() === 200) {
+      const listJson = JSON.parse(listRes.getContentText() || "{}");
+      const oldMenus = Array.isArray(listJson.richmenus) ? listJson.richmenus : [];
+      oldMenus.forEach(m => {
+        if (m && m.richMenuId && m.name === "ERP_CONTROL_PANEL_V1") {
+          UrlFetchApp.fetch(`https://api.line.me/v2/bot/richmenu/${m.richMenuId}`, {
+            method: "delete",
+            headers: { "Authorization": "Bearer " + token },
+            muteHttpExceptions: true
+          });
+        }
+      });
+    }
+
+    // 2. 建立新 Rich Menu 結構 (2500 x 843，2列3欄共 6 個按鈕)
+    const menuDef = {
+      size: { width: 2500, height: 843 },
+      selected: true,
+      name: "ERP_CONTROL_PANEL_V1",
+      chatBarText: "🎛️ 系統快捷操作選單",
+      areas: [
+        {
+          bounds: { x: 0, y: 0, width: 833, height: 421 },
+          action: { type: "postback", label: "修改訂單", data: "cmd=W_START&op=U&day=T&p=0", displayText: "✏️ 修改訂單" }
+        },
+        {
+          bounds: { x: 833, y: 0, width: 834, height: 421 },
+          action: { type: "postback", label: "更改狀態", data: "cmd=W_START&op=S&day=T&p=0", displayText: "📊 更改訂單狀態" }
+        },
+        {
+          bounds: { x: 1667, y: 0, width: 833, height: 421 },
+          action: { type: "postback", label: "設定公休", data: "cmd=W_START&op=H&p=0", displayText: "🏖️ 設定店家公休" }
+        },
+        {
+          bounds: { x: 0, y: 421, width: 833, height: 422 },
+          action: { type: "postback", label: "刪除訂單", data: "cmd=W_START&op=D&day=T&p=0", displayText: "🗑️ 刪除訂單" }
+        },
+        {
+          bounds: { x: 833, y: 421, width: 834, height: 422 },
+          action: { type: "postback", label: "今日訂單", data: "cmd=W_TODAY", displayText: "📋 查看今日訂單" }
+        },
+        {
+          bounds: { x: 1667, y: 421, width: 833, height: 422 },
+          action: { type: "postback", label: "控制選單", data: "cmd=SHOW_MENU", displayText: "🎛️ 顯示控制選單" }
+        }
+      ]
+    };
+
+    const createRes = UrlFetchApp.fetch("https://api.line.me/v2/bot/richmenu", {
+      method: "post",
+      contentType: "application/json",
+      headers: { "Authorization": "Bearer " + token },
+      payload: JSON.stringify(menuDef),
+      muteHttpExceptions: true
+    });
+    if (createRes.getResponseCode() !== 200) {
+      return { success: false, error: `建立 Rich Menu 失敗 (${createRes.getResponseCode()}): ${createRes.getContentText()}` };
+    }
+    const richMenuId = JSON.parse(createRes.getContentText()).richMenuId;
+
+    // 3. 上傳 PNG 圖片至 LINE Data API
+    const imgBytes = Utilities.base64Decode(base64Raw);
+    const imgBlob = Utilities.newBlob(imgBytes, "image/png", "richmenu.png");
+    const uploadRes = UrlFetchApp.fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
+      method: "post",
+      contentType: "image/png",
+      headers: { "Authorization": "Bearer " + token },
+      payload: imgBlob,
+      muteHttpExceptions: true
+    });
+    if (uploadRes.getResponseCode() !== 200) {
+      return { success: false, error: `上傳圖文選單圖片失敗 (${uploadRes.getResponseCode()}): ${uploadRes.getContentText()}` };
+    }
+
+    // 4. 設為所有聊天室預設圖文選單
+    const defaultRes = UrlFetchApp.fetch(`https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`, {
+      method: "post",
+      headers: { "Authorization": "Bearer " + token },
+      muteHttpExceptions: true
+    });
+    if (defaultRes.getResponseCode() !== 200) {
+      return { success: false, error: `啟用預設選單失敗 (${defaultRes.getResponseCode()}): ${defaultRes.getContentText()}` };
+    }
+
+    return {
+      success: true,
+      richMenuId: richMenuId,
+      message: "LINE 聊天室底部圖文選單已成功部署並對全員啟用！請重新開啟 LINE 聊天室即可看到 6 格快捷按鈕。"
+    };
+  } catch (err) {
+    return { success: false, error: "部署 Rich Menu 發生異常: " + (err.message || String(err)) };
+  }
+}
+
+/**
  * 測試發送 LINE 訊息給特定同仁
  */
 function handleTestLineMessage(data, currentUser) {
@@ -6338,7 +8803,113 @@ function handleTestLineMessage(data, currentUser) {
 }
 
 /**
- * 針對特定同仁推播訂單配送明細
+ * 建置司機派工 Flex Bubble 卡片（內含「✅ 我已送達」一鍵按鈕）
+ */
+function buildDispatchFlexBubble(info) {
+  const staffName = String(info.staffName || '司機同仁');
+  const customerName = String(info.customerName || '未註記店家');
+  const deliveryDate = String(info.deliveryDate || '今日');
+  const deliveryTime = info.deliveryTime ? ` (${info.deliveryTime})` : '';
+  const itemSummary = String(info.itemSummary || '依出貨單據');
+  const note = info.note ? String(info.note) : '';
+  const orderId = String(info.orderId || '').trim();
+
+  const bodyContents = [
+    {
+      type: "box",
+      layout: "baseline",
+      spacing: "sm",
+      contents: [
+        { type: "text", text: "配送客戶", color: "#64748B", size: "sm", flex: 2 },
+        { type: "text", text: customerName, weight: "bold", color: "#0F172A", size: "md", flex: 5, wrap: true }
+      ]
+    },
+    {
+      type: "box",
+      layout: "baseline",
+      spacing: "sm",
+      margin: "sm",
+      contents: [
+        { type: "text", text: "負責同仁", color: "#64748B", size: "sm", flex: 2 },
+        { type: "text", text: staffName, color: "#334155", size: "sm", flex: 5, wrap: true }
+      ]
+    },
+    {
+      type: "box",
+      layout: "baseline",
+      spacing: "sm",
+      margin: "sm",
+      contents: [
+        { type: "text", text: "配送時段", color: "#64748B", size: "sm", flex: 2 },
+        { type: "text", text: `${deliveryDate}${deliveryTime}`, color: "#334155", size: "sm", flex: 5, wrap: true }
+      ]
+    },
+    { type: "separator", margin: "md" },
+    { type: "text", text: "品項內容", color: "#64748B", size: "xs", margin: "md" },
+    { type: "text", text: itemSummary, color: "#1E293B", size: "sm", margin: "xs", wrap: true }
+  ];
+
+  if (note) {
+    bodyContents.push(
+      { type: "text", text: "備註提醒", color: "#B45309", size: "xs", margin: "md" },
+      { type: "text", text: note, color: "#92400E", size: "sm", margin: "xs", wrap: true }
+    );
+  }
+
+  const bubble = {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box",
+      layout: "vertical",
+      backgroundColor: "#1E293B",
+      paddingAll: "14px",
+      contents: [
+        {
+          type: "text",
+          text: "🚚 麵廠訂單派工通知",
+          weight: "bold",
+          color: "#FFFFFF",
+          size: "md"
+        }
+      ]
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      contents: bodyContents
+    }
+  };
+
+  if (orderId) {
+    bubble.footer = {
+      type: "box",
+      layout: "vertical",
+      spacing: "sm",
+      paddingAll: "12px",
+      contents: [
+        {
+          type: "button",
+          style: "primary",
+          color: "#10B981",
+          height: "sm",
+          action: {
+            type: "postback",
+            label: "✅ 我已送達",
+            data: `cmd=DELIVERED&orderId=${encodeURIComponent(orderId)}`,
+            displayText: `✅ 我已送達：${customerName}`
+          }
+        }
+      ]
+    };
+  }
+
+  return bubble;
+}
+
+/**
+ * 針對特定同仁推播訂單配送明細（支援單筆 Flex 卡片或批次 Carousel，附「✅ 我已送達」一鍵按鈕）
  */
 function handleSendStaffDispatchNotification(data, currentUser) {
   const staffUserId = String(data.staffUserId || data.targetUserId || '').trim();
@@ -6357,20 +8928,67 @@ function handleSendStaffDispatchNotification(data, currentUser) {
   }
 
   const staffName = data.staffName || staffUserId;
-  const customerName = data.customerName || '未註記店家';
-  const deliveryDate = data.deliveryDate || '今日';
-  const deliveryTime = data.deliveryTime ? ` (${data.deliveryTime})` : '';
-  const itemSummary = data.itemSummary || data.itemsText || '依出貨單據';
-  const note = data.note ? `\n備註：${data.note}` : '';
+  const singleOrderId = String(data.orderId || data.id || '').trim();
+  const ordersList = Array.isArray(data.orders) ? data.orders.filter(o => o && o.orderId) : [];
 
-  const msgText = `🚚【麵廠訂單派工通知】\n` +
-                  `━━━━━━━━━━━━━━\n` +
-                  `負責同仁：${staffName}\n` +
-                  `配送客戶：${customerName}\n` +
-                  `配送時段：${deliveryDate}${deliveryTime}\n` +
-                  `品項內容：\n${itemSummary}${note}\n` +
-                  `━━━━━━━━━━━━━━\n` +
-                  `請同仁確認出貨車次與準時送達，感謝辛勞！`;
+  let messagesToSend = [];
+
+  if (ordersList.length > 1) {
+    // 批次彙整：拆分為每組最多 10 張 Bubble 的 Flex Carousel，每家客戶各自帶「✅ 我已送達」按鈕
+    for (let i = 0; i < ordersList.length && messagesToSend.length < 5; i += 10) {
+      const chunk = ordersList.slice(i, i + 10);
+      const bubbles = chunk.map(o => buildDispatchFlexBubble({
+        orderId: o.orderId,
+        staffName: staffName,
+        customerName: o.customerName,
+        deliveryDate: o.deliveryDate || data.deliveryDate || '今日',
+        deliveryTime: o.deliveryTime || '',
+        itemSummary: o.itemSummary || '依出貨單據',
+        note: o.note || ''
+      }));
+      messagesToSend.push({
+        type: "flex",
+        altText: `🚚 麵廠派工通知（共 ${ordersList.length} 筆）`,
+        contents: {
+          type: "carousel",
+          contents: bubbles
+        }
+      });
+    }
+  } else if (singleOrderId || (ordersList.length === 1 && ordersList[0].orderId)) {
+    const targetInfo = ordersList.length === 1 ? ordersList[0] : data;
+    const bubble = buildDispatchFlexBubble({
+      orderId: singleOrderId || targetInfo.orderId,
+      staffName: staffName,
+      customerName: targetInfo.customerName || data.customerName || '未註記店家',
+      deliveryDate: targetInfo.deliveryDate || data.deliveryDate || '今日',
+      deliveryTime: targetInfo.deliveryTime || data.deliveryTime || '',
+      itemSummary: targetInfo.itemSummary || data.itemSummary || data.itemsText || '依出貨單據',
+      note: targetInfo.note !== undefined ? targetInfo.note : (data.note || '')
+    });
+    messagesToSend.push({
+      type: "flex",
+      altText: `🚚 派工通知：${targetInfo.customerName || data.customerName || '配送訂單'}`,
+      contents: bubble
+    });
+  } else {
+    // 若呼叫端未傳入 orderId，維持純文字相容格式
+    const customerName = data.customerName || '未註記店家';
+    const deliveryDate = data.deliveryDate || '今日';
+    const deliveryTime = data.deliveryTime ? ` (${data.deliveryTime})` : '';
+    const itemSummary = data.itemSummary || data.itemsText || '依出貨單據';
+    const note = data.note ? `\n備註：${data.note}` : '';
+
+    const msgText = `🚚【麵廠訂單派工通知】\n` +
+                    `━━━━━━━━━━━━━━\n` +
+                    `負責同仁：${staffName}\n` +
+                    `配送客戶：${customerName}\n` +
+                    `配送時段：${deliveryDate}${deliveryTime}\n` +
+                    `品項內容：\n${itemSummary}${note}\n` +
+                    `━━━━━━━━━━━━━━\n` +
+                    `請同仁確認出貨車次與準時送達，感謝辛勞！`;
+    messagesToSend.push({ type: "text", text: msgText });
+  }
 
   try {
     const res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
@@ -6379,7 +8997,7 @@ function handleSendStaffDispatchNotification(data, currentUser) {
       headers: { "Authorization": "Bearer " + token },
       payload: JSON.stringify({
         to: lineUserId,
-        messages: [{ type: "text", text: msgText }]
+        messages: messagesToSend
       }),
       muteHttpExceptions: true
     });
