@@ -417,7 +417,7 @@ function doPost(e) {
 
     const unneededNotifyActions = [
       "login", "liffLogin", "edgeWebhookDispatch", "saveEdgeConfig", "getEdgeConfigStatus", "syncEdgeMirror",
-      "checkUpdates", "getOrder", "testLineMessage", "dryRunRule", "getNotificationLogs", "getSystemLogs", "createOrder"
+      "checkUpdates", "getOrder", "testLineMessage", "dryRunRule", "getNotificationLogs", "getSystemLogs"
     ];
     if (!unneededNotifyActions.includes(action)) {
       SpreadsheetApp.flush(); // 先強制寫入 Sheets 再觸發 Firebase 推播，避免前端搶先抓到舊快照
@@ -9326,7 +9326,7 @@ function handleSetupLineRichMenu(data, currentUser) {
       `https://liff.line.me/${encodeURIComponent(liffId)}?quick=${quickKey}&action=${actionKey}&liffId=${encodeURIComponent(liffId)}`;
 
     // 2. 建立新 Rich Menu 結構 (2500 x 843，2列3欄共 6 個按鈕)
-    // 若已填寫 LIFF ID：前 4 格採用 LIFF 極速網頁直達，後 2 格保留秒回 Postback
+    // 若已填寫 LIFF ID：前 5 格採用 LIFF 極速網頁直達，第 6 格保留秒回主選單
     const menuDef = {
       size: { width: 2500, height: 843 },
       selected: true,
@@ -9359,7 +9359,9 @@ function handleSetupLineRichMenu(data, currentUser) {
         },
         {
           bounds: { x: 833, y: 421, width: 834, height: 422 },
-          action: { type: "postback", label: "今日訂單", data: "cmd=W_TODAY", displayText: "📋 查看今日訂單" }
+          action: useLiffHybrid
+            ? { type: "uri", label: "新增訂單", uri: buildLiffUri("orders", "create") }
+            : { type: "postback", label: "今日訂單", data: "cmd=W_TODAY", displayText: "📋 查看今日訂單" }
         },
         {
           bounds: { x: 1667, y: 421, width: 833, height: 422 },
@@ -9409,7 +9411,7 @@ function handleSetupLineRichMenu(data, currentUser) {
       richMenuId: richMenuId,
       mode: useLiffHybrid ? "liff_hybrid" : "postback",
       message: useLiffHybrid
-        ? "LINE 混合型極速選單（前 4 格 LIFF 微型網頁 ＋ 後 2 格秒回指令）部署成功！請重開 LINE 聊天室生效。"
+        ? "LINE 混合型極速選單（前 5 格 LIFF 微型網頁 ＋ 第 6 格秒回主選單）部署成功！請重開 LINE 聊天室生效。"
         : "LINE 聊天室底部圖文選單（6 格純對話指令版）已成功部署並對全員啟用！請重新開啟 LINE 聊天室即可看到 6 格快捷按鈕。"
     };
   } catch (err) {

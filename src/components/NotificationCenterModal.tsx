@@ -683,7 +683,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
       { col: 1, row: 0, bg: '#047857', accent: '#34D399', emoji: '📊', title: '更改狀態', sub: '已送達／已收款／待出貨' },
       { col: 2, row: 0, bg: '#B45309', accent: '#FBBF24', emoji: '🏖️', title: '設定公休', sub: '特定公休日／每週固定休' },
       { col: 0, row: 1, bg: '#B91C1C', accent: '#F87171', emoji: '🗑️', title: '刪除訂單', sub: '點選移除誤建或重複單' },
-      { col: 1, row: 1, bg: '#334155', accent: '#94A3B8', emoji: '📋', title: '今日訂單', sub: '快速檢視本日出貨明細' },
+      { col: 1, row: 1, bg: '#0F766E', accent: '#2DD4BF', emoji: '➕', title: '新增訂單', sub: '選店家一鍵帶入或加單' },
       { col: 2, row: 1, bg: '#1E293B', accent: '#38BDF8', emoji: '🎛️', title: '控制主選單', sub: '開啟完整互動操作面板' },
     ];
 
@@ -2037,7 +2037,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
                          🎛️ LINE 聊天室底部固定按鈕選單 (Rich Menu)
                        </h4>
                        <p className="text-xs text-slate-500 mt-1">
-                         一鍵將「改單、更改狀態、設定公休、刪除訂單、今日訂單、控制選單」6 大按鍵固定在 LINE 對話框最下方，填入 LIFF ID 即開啟零延遲手機網頁版。
+                         一鍵將「改單、更改狀態、設定公休、刪除訂單、新增訂單、控制選單」6 大按鍵固定在 LINE 對話框最下方，填入 LIFF ID 即開啟零延遲手機網頁版。
                        </p>
                      </div>
                      <button
@@ -2052,10 +2052,10 @@ export const NotificationCenterModal: React.FC<Props> = ({
                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                        <label className="text-xs font-bold text-slate-700">
-                         ⚡ LIFF ID（選填，啟用「4 格極速網頁 ＋ 2 格 Bot 指令」）
+                         ⚡ LIFF ID（選填，啟用「5 格極速網頁 ＋ 1 格 Bot 指令」）
                        </label>
                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${liffIdInput.trim() ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
-                         {liffIdInput.trim() ? '⚡ 4 格 LIFF 極速網頁 + 2 格 Bot' : '💬 6 格純 Bot 指令'}
+                         {liffIdInput.trim() ? '⚡ 5 格 LIFF 極速網頁 + 1 格 Bot' : '💬 6 格純 Bot 指令'}
                        </span>
                      </div>
                      <div className="flex gap-2">
@@ -2098,9 +2098,9 @@ export const NotificationCenterModal: React.FC<Props> = ({
                        <div>🗑️ 刪除訂單</div>
                        <div className="text-[10px] font-normal text-red-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
                      </div>
-                     <div className="bg-slate-700/90 border border-slate-400/50 rounded-lg py-2.5 px-1">
-                       <div>📋 今日訂單</div>
-                       <div className="text-[10px] font-normal text-slate-200 mt-0.5">Bot 即時回覆</div>
+                     <div className="bg-teal-700/90 border border-teal-400/50 rounded-lg py-2.5 px-1">
+                       <div>➕ 新增訂單</div>
+                       <div className="text-[10px] font-normal text-teal-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
                      </div>
                      <div className="bg-slate-800 border border-sky-400/50 rounded-lg py-2.5 px-1">
                        <div>🎛️ 控制主選單</div>

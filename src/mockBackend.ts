@@ -273,7 +273,7 @@ export function setupMockBackend() {
               richMenuId: 'mock-richmenu-v1',
               mode: hasLiff ? 'liff_hybrid' : 'postback',
               message: hasLiff
-                ? '（模擬環境）LINE 混合型極速選單（4 格 LIFF ＋ 2 格秒回）部署成功！'
+                ? '（模擬環境）LINE 混合型極速選單（5 格 LIFF ＋ 1 格秒回）部署成功！'
                 : '（模擬環境）LINE 底部圖文選單（6 格指令）部署成功！'
             }), { status: 200 });
           }

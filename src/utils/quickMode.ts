@@ -1,4 +1,4 @@
-export type QuickModeAction = 'status' | 'edit' | 'holiday' | 'delete';
+export type QuickModeAction = 'status' | 'edit' | 'holiday' | 'delete' | 'create';
 export type QuickModeScope = 'orders' | 'holiday' | null;
 
 export interface QuickModeConfig {
@@ -66,7 +66,8 @@ export function parseQuickModeConfig(): QuickModeConfig {
   const isQuickMode = Boolean(validQuick || actionRaw);
 
   let action: QuickModeAction = 'status';
-  if (actionRaw === 'edit' || actionRaw === 'update') action = 'edit';
+  if (actionRaw === 'create' || actionRaw === 'add' || actionRaw === 'new') action = 'create';
+  else if (actionRaw === 'edit' || actionRaw === 'update') action = 'edit';
   else if (actionRaw === 'holiday' || validQuick === 'holiday') action = 'holiday';
   else if (actionRaw === 'delete') action = 'delete';
   else if (actionRaw === 'status') action = 'status';

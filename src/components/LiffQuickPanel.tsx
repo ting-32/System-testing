@@ -18,8 +18,8 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { Customer, Order, OrderItem, OrderStatus, Product, ToastType } from '../types';
-import { UNITS, WEEKDAYS } from '../constants';
-import { formatDateStr, getTomorrowDate } from '../utils';
+import { DELIVERY_METHODS, UNITS, WEEKDAYS } from '../constants';
+import { formatDateStr, formatTimeForInput, getTomorrowDate } from '../utils';
 import { triggerHaptic } from './animations';
 import { HolidayCalendar } from './HolidayCalendar';
 import { usePermission } from '../hooks/usePermission';
@@ -59,10 +59,11 @@ interface LiffQuickPanelProps {
 }
 
 const TAB_ITEMS: Array<{ key: QuickModeAction; label: string }> = [
-  { key: 'status', label: '更改狀態' },
-  { key: 'edit', label: '修改訂單' },
-  { key: 'holiday', label: '設定公休' },
-  { key: 'delete', label: '刪除訂單' },
+  { key: 'create', label: '新增' },
+  { key: 'status', label: '狀態' },
+  { key: 'edit', label: '改單' },
+  { key: 'holiday', label: '公休' },
+  { key: 'delete', label: '刪除' },
 ];
 
 const STATUS_BUTTONS: Array<{ value: OrderStatus; label: string; activeCls: string }> = [
@@ -150,6 +151,29 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
   // 刪除底部確認抽屜
   const [deleteTargetOrder, setDeleteTargetOrder] = useState<Order | null>(null);
 
+  // 新增訂單暫存表單
+  const [createCustomerSearch, setCreateCustomerSearch] = useState<string>('');
+  const [isSubmittingCreate, setIsSubmittingCreate] = useState<boolean>(false);
+  const [createDraft, setCreateDraft] = useState<{
+    customerId: string;
+    customerName: string;
+    date: string;
+    deliveryTime: string;
+    deliveryMethod: string;
+    trip: string;
+    items: OrderItem[];
+    note: string;
+  }>(() => ({
+    customerId: '',
+    customerName: '',
+    date: todayStr,
+    deliveryTime: '08:00',
+    deliveryMethod: '',
+    trip: trips[0] || '未分配',
+    items: [],
+    note: '',
+  }));
+
   const isMockEndpoint = !apiEndpoint || apiEndpoint === 'https://mock-api.local';
   const canEditOrder = can('edit_order');
   const canDeleteOrder = can('delete_order');
@@ -210,6 +234,277 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
     () => customers.find((c) => c.id === selectedCustomerId) || null,
     [customers, selectedCustomerId]
   );
+
+  // 供「新增訂單」分頁搜尋的未封存店家清單
+  const createFilteredCustomers = useMemo(() => {
+    const q = createCustomerSearch.trim().toLowerCase();
+    return customers
+      .filter((c) => !c.isArchived && (!q || (c.name || '').toLowerCase().includes(q)))
+      .sort((a, b) => {
+        if (Boolean(b.isWatchlist) !== Boolean(a.isWatchlist)) {
+          return b.isWatchlist ? 1 : -1;
+        }
+        return (a.name || '').localeCompare(b.name || '', 'zh-Hant');
+      });
+  }, [customers, createCustomerSearch]);
+
+  const createMatchedCustomer = useMemo(
+    () =>
+      customers.find(
+        (c) =>
+          (createDraft.customerId && c.id === createDraft.customerId) ||
+          (createDraft.customerName && c.name === createDraft.customerName)
+      ) || null,
+    [customers, createDraft.customerId, createDraft.customerName]
+  );
+
+  const latestCustomerOrder = useMemo(() => {
+    if (!createDraft.customerName) return null;
+    return (
+      orders.find(
+        (o) =>
+          o.customerName === createDraft.customerName &&
+          String(o.status) !== 'DELETED' &&
+          o.pendingAction !== 'delete' &&
+          Array.isArray(o.items) &&
+          o.items.length > 0
+      ) || null
+    );
+  }, [orders, createDraft.customerName]);
+
+  const createDateExistingCount = useMemo(() => {
+    if (!createDraft.customerName || !createDraft.date) return 0;
+    return orders.filter(
+      (o) =>
+        o.customerName === createDraft.customerName &&
+        o.deliveryDate === createDraft.date &&
+        String(o.status) !== 'DELETED' &&
+        o.pendingAction !== 'delete'
+    ).length;
+  }, [orders, createDraft.customerName, createDraft.date]);
+
+  const isCreateDateCustomerResting = useMemo(() => {
+    if (!createMatchedCustomer || !createDraft.date) return false;
+    if (createMatchedCustomer.isPaused) return true;
+    const d = new Date(createDraft.date + 'T00:00:00');
+    const dayOfWeek = isNaN(d.getTime()) ? -1 : d.getDay();
+    const offDays = Array.isArray(createMatchedCustomer.offDays) ? createMatchedCustomer.offDays : [];
+    const holidayDates = Array.isArray(createMatchedCustomer.holidayDates) ? createMatchedCustomer.holidayDates : [];
+    return offDays.includes(dayOfWeek) || holidayDates.includes(createDraft.date);
+  }, [createMatchedCustomer, createDraft.date]);
+
+  const buildDefaultRowItem = (): OrderItem => {
+    const firstProd = products[0];
+    return {
+      productId: firstProd?.id || '',
+      productName: firstProd?.name || '',
+      quantity: 5,
+      unit: firstProd?.unit || '斤',
+    };
+  };
+
+  const mapCustomerDefaultItems = (cust: Customer): OrderItem[] => {
+    if (!Array.isArray(cust.defaultItems) || cust.defaultItems.length === 0) return [];
+    return cust.defaultItems
+      .map((di) => {
+        const prod = productNameMap.get(di.productId);
+        return {
+          productId: prod?.id || di.productId,
+          productName: prod?.name || di.productId,
+          quantity: Number(di.quantity) > 0 ? Number(di.quantity) : 1,
+          unit: di.unit || prod?.unit || '斤',
+        };
+      })
+      .filter((it) => it.productId);
+  };
+
+  const selectCustomerForCreate = (cust: Customer) => {
+    triggerHaptic();
+    const defaultItems = mapCustomerDefaultItems(cust);
+    const histOrder =
+      orders.find(
+        (o) =>
+          o.customerName === cust.name &&
+          String(o.status) !== 'DELETED' &&
+          o.pendingAction !== 'delete' &&
+          Array.isArray(o.items) &&
+          o.items.length > 0
+      ) || null;
+    const histItems: OrderItem[] = histOrder
+      ? histOrder.items.map((it) => {
+          const prod = productNameMap.get(it.productId) || productNameMap.get(it.productName || '');
+          return {
+            productId: prod?.id || it.productId,
+            productName: it.productName || prod?.name || it.productId,
+            quantity: Number(it.quantity) > 0 ? Number(it.quantity) : 1,
+            unit: it.unit || prod?.unit || '斤',
+          };
+        })
+      : [];
+
+    const initialItems =
+      defaultItems.length > 0
+        ? defaultItems
+        : histItems.length > 0
+          ? histItems
+          : [buildDefaultRowItem()];
+
+    setCreateDraft((prev) => ({
+      ...prev,
+      customerId: cust.id,
+      customerName: cust.name,
+      date: prev.date || selectedDate || todayStr,
+      deliveryTime: cust.deliveryTime ? formatTimeForInput(cust.deliveryTime) : prev.deliveryTime || '08:00',
+      deliveryMethod: cust.deliveryMethod || '',
+      trip: cust.defaultTrip || trips[0] || '未分配',
+      items: initialItems,
+      note: '',
+    }));
+    setCreateCustomerSearch('');
+  };
+
+  const selectAdhocCustomerForCreate = (rawName: string) => {
+    const trimmed = rawName.trim();
+    if (!trimmed) return;
+    triggerHaptic();
+    setCreateDraft((prev) => ({
+      ...prev,
+      customerId: '',
+      customerName: trimmed,
+      date: prev.date || selectedDate || todayStr,
+      deliveryTime: prev.deliveryTime || '08:00',
+      deliveryMethod: prev.deliveryMethod || '',
+      trip: prev.trip || trips[0] || '未分配',
+      items: prev.items.length > 0 ? prev.items : [buildDefaultRowItem()],
+      note: '',
+    }));
+    setCreateCustomerSearch('');
+  };
+
+  const createDraftEstimatedTotal = useMemo(() => {
+    return createDraft.items.reduce((sum, it) => {
+      const qty = Math.max(0, Number(it.quantity) || 0);
+      if (it.unit === '元') return sum + qty;
+      const prod = productNameMap.get(it.productId);
+      const priceEntry = createMatchedCustomer?.priceList?.find((pl) => pl.productId === it.productId);
+      const unitPrice = priceEntry ? priceEntry.price : prod?.price || 0;
+      const targetUnit = prod?.unit || '斤';
+      const normalizedQty = it.unit === '公斤' && targetUnit === '斤' ? qty * (1000 / 600) : qty;
+      return sum + Math.round(normalizedQty * unitPrice);
+    }, 0);
+  }, [createDraft.items, createMatchedCustomer, productNameMap]);
+
+  const handleCreateOrder = async () => {
+    if (isSubmittingCreate) return;
+    const customerName = createDraft.customerName.trim();
+    if (!customerName) {
+      addToast('請先選擇或輸入店家名稱', 'error');
+      return;
+    }
+    const validItems = createDraft.items.filter((it) => it.productId && Number(it.quantity) > 0);
+    if (validItems.length === 0) {
+      addToast('請至少加入一項數量大於 0 的品項', 'error');
+      return;
+    }
+
+    setIsSubmittingCreate(true);
+    triggerHaptic();
+
+    const now = new Date();
+    const deliveryTime =
+      createDraft.deliveryTime ||
+      `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    const processedItems: OrderItem[] = validItems.map((it) => {
+      const prod = productNameMap.get(it.productId);
+      const targetUnit = prod?.unit || '斤';
+      const priceEntry = createMatchedCustomer?.priceList?.find((pl) => pl.productId === it.productId);
+      const unitPrice = priceEntry ? priceEntry.price : prod?.price || 0;
+
+      let finalQuantity = Math.max(0, Number(it.quantity) || 0);
+      let finalUnit = it.unit || targetUnit;
+
+      if (finalUnit === '元' && unitPrice > 0) {
+        finalQuantity = parseFloat((finalQuantity / unitPrice).toFixed(2));
+        finalUnit = targetUnit;
+      } else if (finalUnit === '公斤' && targetUnit === '斤') {
+        finalQuantity = parseFloat((finalQuantity * (1000 / 600)).toFixed(2));
+        finalUnit = '斤';
+      }
+
+      return {
+        productId: it.productId,
+        productName: it.productName || prod?.name || it.productId,
+        quantity: Math.max(0, finalQuantity),
+        unit: finalUnit,
+        unitPrice,
+        subtotal: Math.round(unitPrice * Math.max(0, finalQuantity)),
+      };
+    });
+
+    const timestamp = Date.now();
+    const targetDate = createDraft.date || todayStr;
+    const newOrder: Order = {
+      id: 'ORD-' + timestamp + Math.random().toString(36).substring(2, 6),
+      createdAt: new Date().toISOString(),
+      customerName,
+      deliveryDate: targetDate,
+      deliveryTime,
+      deliveryMethod: createDraft.deliveryMethod || '',
+      trip: createDraft.trip || '未分配',
+      source: 'LIFF',
+      items: processedItems,
+      note: createDraft.note.trim(),
+      status: OrderStatus.PENDING,
+      syncStatus: 'pending',
+      pendingAction: 'create',
+      _syncStatus: 'pending',
+      _localUpdatedTs: timestamp,
+      lastUpdated: timestamp,
+      unitPrice: processedItems[0]?.unitPrice,
+      subtotal: processedItems.reduce((acc, cur) => acc + (cur.subtotal || 0), 0),
+    };
+
+    setOrders((prev) => [newOrder, ...prev]);
+    setSelectedDate(targetDate);
+    setCreateDraft({
+      customerId: '',
+      customerName: '',
+      date: targetDate,
+      deliveryTime: '08:00',
+      deliveryMethod: '',
+      trip: trips[0] || '未分配',
+      items: [],
+      note: '',
+    });
+    setIsSubmittingCreate(false);
+    addToast(`已建立「${customerName}」訂單 (${targetDate})`, 'success');
+
+    await saveOrderToCloud(
+      newOrder,
+      'createOrder',
+      undefined,
+      () => {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === newOrder.id
+              ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' }
+              : o
+          )
+        );
+      },
+      (errMsg) => {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === newOrder.id
+              ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' }
+              : o
+          )
+        );
+        addToast('訂單建立同步失敗，請點擊重新整理', 'error');
+      }
+    );
+  };
 
   const canModifyThisOrderStatus = (order: Order): boolean => {
     if (canUpdateAnyStatus) return true;
@@ -397,9 +692,9 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
         </div>
       )}
 
-      {/* 4 大操作分段控制器（支援 0ms 互切，不須關掉 LINE WebView 重開） */}
+      {/* 5 大操作分段控制器（支援 0ms 互切，不須關掉 LINE WebView 重開） */}
       <div className="px-4 pt-3 pb-2">
-        <div className="grid grid-cols-4 gap-1 p-1 bg-[#E7E4DC]/80 rounded-xl">
+        <div className="grid grid-cols-5 gap-1 p-1 bg-[#E7E4DC]/80 rounded-xl">
           {TAB_ITEMS.map((tab) => {
             const isActive = activeTab === tab.key;
             return (
@@ -411,7 +706,7 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
                   setActiveTab(tab.key);
                   setExpandedOrderId(null);
                 }}
-                className={`min-h-[44px] px-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+                className={`min-h-[44px] px-1 rounded-lg text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                   isActive
                     ? 'bg-[#FFFFFF] text-[#3E3C3A] shadow-sm'
                     : 'text-[#8C8984] hover:text-[#3E3C3A]'
@@ -424,8 +719,9 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
         </div>
       </div>
 
-      {/* 搜尋列 + 訂單日期快切（公休分頁隱藏日期列） */}
-      <div className="px-4 pb-3 space-y-2">
+      {/* 搜尋列 + 訂單日期快切（新增訂單與公休分頁各有專屬操作列） */}
+      {activeTab !== 'create' && (
+        <div className="px-4 pb-3 space-y-2">
         <div className="relative">
           <Search className="w-4 h-4 text-[#8C8984] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -502,10 +798,459 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
             <span className="tabular-nums">共 {dateOrders.length} 筆</span>
           </div>
         )}
-      </div>
+        </div>
+      )}
 
       {/* 主操作清單區域 */}
       <main className="flex-1 px-4 space-y-3 pb-[max(24px,env(safe-area-inset-bottom))]">
+        {/* === 分頁 0：➕ 新增訂單 === */}
+        {activeTab === 'create' && (
+          <div className="space-y-3 pt-1">
+            {!createDraft.customerName ? (
+              <div className="bg-[#FFFFFF] rounded-2xl border border-black/[0.06] p-4 shadow-[0_2px_10px_rgba(62,60,58,0.03)] space-y-3">
+                <div>
+                  <h2 className="text-base font-bold text-[#3E3C3A]">選擇要建單的店家</h2>
+                  <p className="text-xs text-[#8C8984] mt-0.5">
+                    點選店家會自動帶入常規品項／上次訂單、時間與車趟
+                  </p>
+                </div>
+
+                <div className="relative">
+                  <Search className="w-4 h-4 text-[#8C8984] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="search"
+                    value={createCustomerSearch}
+                    onChange={(e) => setCreateCustomerSearch(e.target.value)}
+                    placeholder="搜尋店家名稱或輸入散客店名…"
+                    className="w-full min-h-[44px] pl-10 pr-9 bg-[#F2F0E9]/60 border border-black/[0.08] rounded-xl text-sm text-[#3E3C3A] placeholder:text-[#8C8984] outline-none focus:border-[#5D7586]"
+                  />
+                  {createCustomerSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setCreateCustomerSearch('')}
+                      aria-label="清除店家搜尋"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] flex items-center justify-center text-[#8C8984]"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {createCustomerSearch.trim() &&
+                  !customers.some(
+                    (c) => !c.isArchived && c.name.trim() === createCustomerSearch.trim()
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={() => selectAdhocCustomerForCreate(createCustomerSearch)}
+                      className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#F2F0E9] hover:bg-[#E7E4DC] text-left text-xs font-bold text-[#5D7586] flex items-center justify-between transition-colors"
+                    >
+                      <span>＋ 直接以「{createCustomerSearch.trim()}」新增散客訂單</span>
+                      <Plus className="w-4 h-4 shrink-0" />
+                    </button>
+                  )}
+
+                <div className="divide-y divide-slate-100 max-h-[58dvh] overflow-y-auto">
+                  {createFilteredCustomers.length === 0 ? (
+                    <p className="py-8 text-center text-xs text-[#8C8984]">
+                      查無符合的店家，可直接點上方按鈕建立散客訂單
+                    </p>
+                  ) : (
+                    createFilteredCustomers.map((cust) => {
+                      const d = new Date((createDraft.date || todayStr) + 'T00:00:00');
+                      const dow = isNaN(d.getTime()) ? -1 : d.getDay();
+                      const isResting =
+                        Boolean(cust.isPaused) ||
+                        (cust.offDays || []).includes(dow) ||
+                        (cust.holidayDates || []).includes(createDraft.date || todayStr);
+                      const hasDefault = Array.isArray(cust.defaultItems) && cust.defaultItems.length > 0;
+
+                      return (
+                        <button
+                          key={cust.id}
+                          type="button"
+                          onClick={() => selectCustomerForCreate(cust)}
+                          className="w-full py-3 px-1 text-left flex items-center justify-between gap-2 min-h-[48px] active:bg-[#F2F0E9]/60 rounded-lg transition-colors"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-[#3E3C3A] truncate">
+                              {cust.isWatchlist ? '★ ' : ''}
+                              {cust.name}
+                            </div>
+                            <div className="text-xs text-[#8C8984] mt-0.5 tabular-nums truncate">
+                              {cust.deliveryTime || '未設時間'}
+                              <span aria-hidden="true"> · </span>
+                              {cust.defaultTrip || '未設車趟'}
+                              {hasDefault && ` · 常規 ${cust.defaultItems.length} 項`}
+                              {isResting && ' · 公休／暫停'}
+                            </div>
+                          </div>
+                          <span className="text-xs font-semibold text-[#5D7586] shrink-0 whitespace-nowrap">
+                            選擇 →
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-[#FFFFFF] rounded-2xl border border-black/[0.06] p-4 shadow-[0_2px_10px_rgba(62,60,58,0.03)] space-y-4">
+                {/* 已選店家標頭 + 更換 + 一鍵帶入 */}
+                <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-[#8C8984]">新增訂單店家</div>
+                    <h2 className="text-lg font-bold text-[#3E3C3A] truncate">
+                      {createDraft.customerName}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCreateDraft((prev) => ({
+                        ...prev,
+                        customerId: '',
+                        customerName: '',
+                      }))
+                    }
+                    className="min-h-[36px] px-3 rounded-lg bg-[#F2F0E9] hover:bg-[#E7E4DC] text-xs font-bold text-[#3E3C3A] shrink-0 whitespace-nowrap"
+                  >
+                    更換店家
+                  </button>
+                </div>
+
+                {/* 一鍵快速帶入常規品項／上次訂單 */}
+                {(createMatchedCustomer?.defaultItems?.length || latestCustomerOrder) && (
+                  <div className="flex flex-wrap gap-2">
+                    {createMatchedCustomer && createMatchedCustomer.defaultItems?.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic();
+                          const mapped = mapCustomerDefaultItems(createMatchedCustomer);
+                          if (mapped.length > 0) {
+                            setCreateDraft((prev) => ({ ...prev, items: mapped }));
+                            addToast('已帶入店家常規品項', 'info');
+                          }
+                        }}
+                        className="min-h-[38px] px-3 rounded-lg bg-[#F2F0E9] hover:bg-[#E7E4DC] text-xs font-bold text-[#4A6356] whitespace-nowrap"
+                      >
+                        帶入常規品項（{createMatchedCustomer.defaultItems.length}）
+                      </button>
+                    )}
+                    {latestCustomerOrder && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic();
+                          const mapped = latestCustomerOrder.items.map((it) => {
+                            const prod =
+                              productNameMap.get(it.productId) ||
+                              productNameMap.get(it.productName || '');
+                            return {
+                              productId: prod?.id || it.productId,
+                              productName: it.productName || prod?.name || it.productId,
+                              quantity: Number(it.quantity) > 0 ? Number(it.quantity) : 1,
+                              unit: it.unit || prod?.unit || '斤',
+                            };
+                          });
+                          if (mapped.length > 0) {
+                            setCreateDraft((prev) => ({ ...prev, items: mapped }));
+                            addToast(`已帶入最近一次（${latestCustomerOrder.deliveryDate}）品項`, 'info');
+                          }
+                        }}
+                        className="min-h-[38px] px-3 rounded-lg bg-[#F2F0E9] hover:bg-[#E7E4DC] text-xs font-bold text-[#5D7586] whitespace-nowrap"
+                      >
+                        帶入上次訂單
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* 公休與重複訂單行內提醒 */}
+                {isCreateDateCustomerResting && (
+                  <div className="p-3 bg-[#F9F1E6] border border-[#9C7C58]/30 rounded-xl flex items-start gap-2 text-xs text-[#9C7C58]">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>
+                      注意：此店家在 {createDraft.date} 設定為公休／暫停供貨，若仍需配送可直接建立訂單。
+                    </span>
+                  </div>
+                )}
+
+                {createDateExistingCount > 0 && (
+                  <div className="p-3 bg-[#F2F0E9] border border-[#5D7586]/25 rounded-xl flex items-start gap-2 text-xs text-[#5D7586]">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>
+                      此店家在 {createDraft.date} 已有 {createDateExistingCount} 筆訂單，本次送出將「追加」一筆新訂單。
+                    </span>
+                  </div>
+                )}
+
+                {/* 配送日期快選 + 日期欄位 */}
+                <div className="space-y-1.5">
+                  <div className="text-xs font-semibold text-[#8C8984]">配送日期</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1 bg-[#F2F0E9]/80 p-1 rounded-xl">
+                      {[
+                        { label: '昨天', val: yesterdayStr },
+                        { label: '今天', val: todayStr },
+                        { label: '明天', val: tomorrowStr },
+                      ].map((d) => (
+                        <button
+                          key={d.val}
+                          type="button"
+                          onClick={() => setCreateDraft((prev) => ({ ...prev, date: d.val }))}
+                          className={`min-h-[36px] px-2.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                            createDraft.date === d.val
+                              ? 'bg-[#5D7586] text-white'
+                              : 'text-[#8C8984] hover:text-[#3E3C3A]'
+                          }`}
+                        >
+                          {d.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <input
+                      type="date"
+                      value={createDraft.date}
+                      onChange={(e) =>
+                        e.target.value && setCreateDraft((prev) => ({ ...prev, date: e.target.value }))
+                      }
+                      className="min-h-[44px] px-2.5 bg-[#F2F0E9]/60 border border-black/[0.08] rounded-xl text-xs font-semibold text-[#3E3C3A] tabular-nums outline-none focus:border-[#5D7586]"
+                    />
+                  </div>
+                </div>
+
+                {/* 品項步進器清單 */}
+                <div className="space-y-3 pt-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[#8C8984]">訂購品項明細</span>
+                    {createDraftEstimatedTotal > 0 && (
+                      <span className="text-xs font-bold text-[#4A6356] tabular-nums">
+                        預計金額：${createDraftEstimatedTotal.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+
+                  {createDraft.items.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="space-y-2 pb-2.5 border-b border-slate-100 last:border-b-0"
+                    >
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={item.productId}
+                          onChange={(e) => {
+                            const pid = e.target.value;
+                            const prod = productNameMap.get(pid);
+                            setCreateDraft((prev) => {
+                              const nextItems = [...prev.items];
+                              nextItems[idx] = {
+                                ...nextItems[idx],
+                                productId: pid,
+                                productName: prod?.name || pid,
+                                unit: prod?.unit || nextItems[idx].unit || '斤',
+                              };
+                              return { ...prev, items: nextItems };
+                            });
+                          }}
+                          className="flex-1 min-h-[44px] px-2.5 bg-[#F2F0E9]/70 rounded-xl text-sm font-semibold text-[#3E3C3A] border border-black/[0.08] outline-none"
+                        >
+                          {!productNameMap.has(item.productId) && (
+                            <option value={item.productId}>{item.productName || item.productId}</option>
+                          )}
+                          {products.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        {createDraft.items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCreateDraft((prev) => ({
+                                ...prev,
+                                items: prev.items.filter((_, i) => i !== idx),
+                              }))
+                            }
+                            aria-label="移除品項"
+                            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-rose-600 hover:bg-rose-50"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCreateDraft((prev) => {
+                              const nextItems = [...prev.items];
+                              const curr = Number(nextItems[idx].quantity) || 0;
+                              nextItems[idx] = { ...nextItems[idx], quantity: Math.max(0, curr - 1) };
+                              return { ...prev, items: nextItems };
+                            })
+                          }
+                          aria-label="減少數量"
+                          className="min-h-[44px] min-w-[48px] flex items-center justify-center rounded-xl bg-[#F2F0E9] text-[#3E3C3A] font-bold active:scale-95"
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.5"
+                          min="0"
+                          value={item.quantity === 0 ? '' : item.quantity}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setCreateDraft((prev) => {
+                              const nextItems = [...prev.items];
+                              nextItems[idx] = {
+                                ...nextItems[idx],
+                                quantity: isNaN(val) ? 0 : Math.max(0, val),
+                              };
+                              return { ...prev, items: nextItems };
+                            });
+                          }}
+                          className="flex-1 min-h-[44px] text-center text-base font-bold tabular-nums bg-[#FFFFFF] border border-black/[0.12] rounded-xl outline-none focus:border-[#5D7586]"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCreateDraft((prev) => {
+                              const nextItems = [...prev.items];
+                              const curr = Number(nextItems[idx].quantity) || 0;
+                              nextItems[idx] = { ...nextItems[idx], quantity: curr + 1 };
+                              return { ...prev, items: nextItems };
+                            })
+                          }
+                          aria-label="增加數量"
+                          className="min-h-[44px] min-w-[48px] flex items-center justify-center rounded-xl bg-[#F2F0E9] text-[#3E3C3A] font-bold active:scale-95"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+
+                        <select
+                          value={item.unit || '斤'}
+                          onChange={(e) =>
+                            setCreateDraft((prev) => {
+                              const nextItems = [...prev.items];
+                              nextItems[idx] = { ...nextItems[idx], unit: e.target.value };
+                              return { ...prev, items: nextItems };
+                            })
+                          }
+                          className="min-h-[44px] px-2.5 bg-[#F2F0E9]/70 rounded-xl text-sm font-semibold text-[#3E3C3A] border border-black/[0.08]"
+                        >
+                          {UNITS.map((u) => (
+                            <option key={u} value={u}>
+                              {u}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCreateDraft((prev) => ({
+                        ...prev,
+                        items: [...prev.items, buildDefaultRowItem()],
+                      }))
+                    }
+                    className="w-full min-h-[44px] rounded-xl border border-dashed border-[#5D7586]/50 text-xs font-bold text-[#5D7586] flex items-center justify-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" />
+                    新增品項
+                  </button>
+                </div>
+
+                {/* 時間 / 車趟 / 配送方式 / 備註 */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="relative">
+                    <Clock className="w-3.5 h-3.5 text-[#8C8984] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="time"
+                      value={createDraft.deliveryTime}
+                      onChange={(e) =>
+                        setCreateDraft((prev) => ({ ...prev, deliveryTime: e.target.value }))
+                      }
+                      className="w-full min-h-[44px] pl-8 pr-2 bg-[#F2F0E9]/60 border border-black/[0.08] rounded-xl text-xs font-semibold tabular-nums"
+                    />
+                  </div>
+
+                  <select
+                    value={createDraft.trip}
+                    onChange={(e) =>
+                      setCreateDraft((prev) => ({ ...prev, trip: e.target.value }))
+                    }
+                    className="w-full min-h-[44px] px-2.5 bg-[#F2F0E9]/60 border border-black/[0.08] rounded-xl text-xs font-semibold"
+                  >
+                    {!trips.includes('未分配') && <option value="未分配">未分配</option>}
+                    {createDraft.trip &&
+                      createDraft.trip !== '未分配' &&
+                      !trips.includes(createDraft.trip) && (
+                        <option value={createDraft.trip}>{createDraft.trip}</option>
+                      )}
+                    {trips.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <select
+                  value={createDraft.deliveryMethod}
+                  onChange={(e) =>
+                    setCreateDraft((prev) => ({ ...prev, deliveryMethod: e.target.value }))
+                  }
+                  className="w-full min-h-[44px] px-3 bg-[#F2F0E9]/60 border border-black/[0.08] rounded-xl text-xs font-semibold"
+                >
+                  <option value="">未指定配送方式</option>
+                  {DELIVERY_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="text"
+                  value={createDraft.note}
+                  onChange={(e) =>
+                    setCreateDraft((prev) => ({ ...prev, note: e.target.value }))
+                  }
+                  placeholder="訂單備註（選填，如：先冰存、放門口）"
+                  className="w-full min-h-[44px] px-3 bg-[#F2F0E9]/60 border border-black/[0.08] rounded-xl text-xs"
+                />
+
+                <button
+                  type="button"
+                  disabled={isSubmittingCreate}
+                  onClick={handleCreateOrder}
+                  className="w-full min-h-[48px] rounded-xl bg-[#4A6356] hover:bg-[#3D5247] disabled:opacity-60 text-white text-sm font-bold flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98] transition-all"
+                >
+                  {isSubmittingCreate ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  確認建立訂單
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 分頁 1 & 2 & 4 共用的無權限提示 */}
         {activeTab === 'edit' && !canEditOrder && (
           <div className="p-4 bg-[#FFFFFF] rounded-2xl border border-black/[0.06] flex items-center gap-3 text-sm text-[#8C8984]">
@@ -522,7 +1267,7 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
         )}
 
         {/* === 分頁 1 / 2 / 4：訂單操作卡片 === */}
-        {activeTab !== 'holiday' && (
+        {activeTab !== 'holiday' && activeTab !== 'create' && (
           <>
             {dateOrders.length === 0 ? (
               <div className="py-14 px-6 text-center bg-[#FFFFFF] rounded-2xl border border-black/[0.06]">
