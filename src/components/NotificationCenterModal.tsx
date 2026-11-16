@@ -192,6 +192,10 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const [briefingStaffSearch, setBriefingStaffSearch] = useState('');
   const [dryRunBriefingTarget, setDryRunBriefingTarget] = useState<DailyBriefingConfig | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [edgeConfigured, setEdgeConfigured] = useState(false);
+  const [edgeSecretInput, setEdgeSecretInput] = useState('');
+  const [firebaseDbAuthInput, setFirebaseDbAuthInput] = useState('');
+  const [isSyncingEdgeMirror, setIsSyncingEdgeMirror] = useState(false);
   const [staffList, setStaffList] = useState<StaffOption[]>([]);
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
   const [staffLoadError, setStaffLoadError] = useState<string | null>(null);
@@ -293,11 +297,21 @@ export const NotificationCenterModal: React.FC<Props> = ({
         setUnreadLogs(false);
       }
       loadStaffList();
+      if (apiEndpoint) {
+        apiFetch('getEdgeConfigStatus')
+          .then((res: any) => {
+            const payload = res?.data && typeof res.data === 'object' ? { ...res.data, ...res } : res;
+            if (payload?.success) {
+              setEdgeConfigured(Boolean(payload.configured));
+            }
+          })
+          .catch(() => {});
+      }
     } else {
       setEditingBriefing(null);
       setEditingRule(null);
     }
-  }, [isOpen, resetCloudUpdateFlag, activeTab, setUnreadLogs, loadStaffList]);
+  }, [isOpen, resetCloudUpdateFlag, activeTab, setUnreadLogs, loadStaffList, apiEndpoint, apiFetch]);
 
   useEffect(() => {
     if (hasCloudUpdate) {
@@ -752,6 +766,59 @@ export const NotificationCenterModal: React.FC<Props> = ({
       alert('部署圖文選單時發生錯誤：' + (e?.message || '未知錯誤'));
     } finally {
       setIsDeployingRichMenu(false);
+    }
+  };
+
+  const generateRandomEdgeSecret = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const arr = new Uint8Array(32);
+    crypto.getRandomValues(arr);
+    let out = '';
+    for (let i = 0; i < arr.length; i++) out += chars[arr[i] % chars.length];
+    setEdgeSecretInput(out);
+  };
+
+  const handleSaveEdgeConfig = async () => {
+    if (!apiEndpoint) return;
+    if (!edgeConfigured && edgeSecretInput.trim().length < 16) {
+      alert('請輸入至少 16 字元的 Edge Shared Secret（可點左側「🎲 隨機產生」自動生成）');
+      return;
+    }
+    setIsSyncingEdgeMirror(true);
+    try {
+      const res: any = await apiFetch('saveEdgeConfig', {
+        edgeSecret: edgeSecretInput.trim(),
+        ...(firebaseDbAuthInput.trim() ? { firebaseDbAuth: firebaseDbAuthInput.trim() } : {}),
+      });
+      const payload = res?.data && typeof res.data === 'object' ? { ...res.data, ...res } : res;
+      if (payload?.success) {
+        setEdgeConfigured(true);
+        alert(payload.message || 'Edge Webhook 設定已儲存並完成 Firebase 鏡像同步！');
+      } else {
+        alert('設定失敗：' + (payload?.error || '未知錯誤'));
+      }
+    } catch (e: any) {
+      alert('設定 Edge Webhook 失敗：' + (e?.message || '網路異常'));
+    } finally {
+      setIsSyncingEdgeMirror(false);
+    }
+  };
+
+  const handleSyncEdgeMirrorNow = async () => {
+    if (!apiEndpoint) return;
+    setIsSyncingEdgeMirror(true);
+    try {
+      const res: any = await apiFetch('syncEdgeMirror');
+      const payload = res?.data && typeof res.data === 'object' ? { ...res.data, ...res } : res;
+      if (payload?.success) {
+        alert(payload.message || 'Firebase 即時鏡像同步完成！');
+      } else {
+        alert('同步失敗：' + (payload?.error || '未知錯誤'));
+      }
+    } catch (e: any) {
+      alert('同步失敗：' + (e?.message || '網路異常'));
+    } finally {
+      setIsSyncingEdgeMirror(false);
     }
   };
 
@@ -1998,13 +2065,13 @@ export const NotificationCenterModal: React.FC<Props> = ({
                          onChange={(e) => setLiffIdInput(e.target.value)}
                          onBlur={() => setLineLiffId(liffIdInput.trim())}
                          placeholder="例如：2001234567-AbCdEfGh"
-                         className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                         className="min-w-0 flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
                        />
                        <button
                          type="button"
                          onClick={handleSaveSettingsOnly}
                          disabled={isSaving}
-                         className="px-3.5 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-700 disabled:opacity-50"
+                         className="shrink-0 px-3.5 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-700 disabled:opacity-50"
                        >
                          儲存
                        </button>
@@ -2039,6 +2106,91 @@ export const NotificationCenterModal: React.FC<Props> = ({
                        <div>🎛️ 控制主選單</div>
                        <div className="text-[10px] font-normal text-sky-200 mt-0.5">Bot 主選單</div>
                      </div>
+                   </div>
+                 </div>
+
+                 <div className="bg-white p-5 rounded-2xl border border-amber-200/80 shadow-sm space-y-3.5">
+                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                     <div>
+                       <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                         ⚡ Cloudflare Worker Edge Webhook 加速設定
+                       </h4>
+                       <p className="text-xs text-slate-500 mt-1">
+                         設定與 Worker 相同的 <code className="font-mono">EDGE_SHARED_SECRET</code> 後，GAS 會自動維持 Firebase <code className="font-mono">/edgeMirror</code> 輕量鏡像，讓「今日訂單、主選單、改狀態」在 0.3 秒內秒回。
+                       </p>
+                     </div>
+                     <span className={`shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-lg ${edgeConfigured ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+                       {edgeConfigured ? '✓ GAS 密鑰已就緒' : '尚未設定密鑰'}
+                     </span>
+                   </div>
+
+                   <div className="space-y-3">
+                     <div className="min-w-0">
+                       <label className="block text-xs font-bold text-slate-700 mb-1">
+                         Edge Shared Secret（需與 Cloudflare Worker 一致）
+                       </label>
+                       <div className="flex items-center gap-1.5">
+                         <input
+                           type="text"
+                           value={edgeSecretInput}
+                           onChange={(e) => setEdgeSecretInput(e.target.value)}
+                           placeholder={edgeConfigured ? '已設定（留空不變更，或貼新密鑰覆蓋）' : '至少 16 字元密鑰'}
+                           className="min-w-0 flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                         />
+                         <button
+                           type="button"
+                           onClick={generateRandomEdgeSecret}
+                           className="shrink-0 px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-lg text-xs font-bold whitespace-nowrap"
+                           title="產生 32 字元隨機密鑰"
+                         >
+                           🎲 產生
+                         </button>
+                         {edgeSecretInput.trim() && (
+                           <button
+                             type="button"
+                             onClick={() => {
+                               navigator.clipboard?.writeText(edgeSecretInput.trim());
+                               alert('已複製 Edge Shared Secret！請記得同步貼到 Cloudflare Worker 的 EDGE_SHARED_SECRET');
+                             }}
+                             className="shrink-0 px-3 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 rounded-lg text-xs font-bold whitespace-nowrap"
+                           >
+                             複製
+                           </button>
+                         )}
+                       </div>
+                     </div>
+
+                     <div className="min-w-0">
+                       <label className="block text-xs font-bold text-slate-700 mb-1">
+                         Firebase DB Secret（選填，若 RTDB 有開權限規則）
+                       </label>
+                       <input
+                         type="password"
+                         value={firebaseDbAuthInput}
+                         onChange={(e) => setFirebaseDbAuthInput(e.target.value)}
+                         placeholder="選填：Firebase Database Secret"
+                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
+                       />
+                     </div>
+                   </div>
+
+                   <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                     <button
+                       type="button"
+                       onClick={handleSyncEdgeMirrorNow}
+                       disabled={isSyncingEdgeMirror}
+                       className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold disabled:opacity-50"
+                     >
+                       {isSyncingEdgeMirror ? '同步中...' : '🔄 立即同步 Edge 鏡像'}
+                     </button>
+                     <button
+                       type="button"
+                       onClick={handleSaveEdgeConfig}
+                       disabled={isSyncingEdgeMirror}
+                       className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm disabled:opacity-50"
+                     >
+                       {isSyncingEdgeMirror ? '處理中...' : '儲存密鑰並同步鏡像'}
+                     </button>
                    </div>
                  </div>
 

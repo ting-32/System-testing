@@ -297,6 +297,40 @@ export function setupMockBackend() {
             }), { status: 200 });
           }
 
+          if (action === 'getEdgeConfigStatus') {
+            return new Response(JSON.stringify({
+              success: true,
+              configured: localStorage.getItem('mock_edge_configured') === 'true',
+              mirrorEnabled: localStorage.getItem('mock_edge_configured') === 'true',
+              hasFirebaseAuth: false,
+            }), { status: 200 });
+          }
+
+          if (action === 'saveEdgeConfig') {
+            localStorage.setItem('mock_edge_configured', 'true');
+            const ordersAll = getStorage('orders') || [];
+            const customersAll = getStorage('customers') || [];
+            const usersAll = getStorage('users') || [];
+            return new Response(JSON.stringify({
+              success: true,
+              configured: true,
+              mirrorEnabled: true,
+              counts: { users: usersAll.length, customers: customersAll.length, activeOrders: ordersAll.length },
+              message: 'Edge Webhook 密鑰已儲存，並已同步模擬鏡像資料！',
+            }), { status: 200 });
+          }
+
+          if (action === 'syncEdgeMirror') {
+            const ordersAll = getStorage('orders') || [];
+            const customersAll = getStorage('customers') || [];
+            const usersAll = getStorage('users') || [];
+            return new Response(JSON.stringify({
+              success: true,
+              counts: { users: usersAll.length, customers: customersAll.length, activeOrders: ordersAll.length },
+              message: `已同步鏡像（同仁 ${usersAll.length} 人、店家 ${customersAll.length} 間、活躍訂單 ${ordersAll.length} 筆）`,
+            }), { status: 200 });
+          }
+
           if (action === 'savePermissionMatrix') {
             const matrix = body.matrix || (data && data.matrix);
             if (matrix) {

@@ -163,8 +163,8 @@ function doPost(e) {
     const action = params.action;
     let tokenPayload = null;
     
-    // 【核心防護】除了 login / liffLogin 以外的所有操作，全部要驗證 Token (使用伺服器獨立 256-bit 高強度密鑰)
-    if (action !== "login" && action !== "liffLogin") {
+    // 【核心防護】除了 login / liffLogin / edgeWebhookDispatch 以外的所有操作，全部要驗證 Token
+    if (action !== "login" && action !== "liffLogin" && action !== "edgeWebhookDispatch") {
       tokenPayload = verifyTokenAndGetPayload(params.token);
       if (!tokenPayload) {
         // 優化：背景 checkUpdates 的過期視為正常 Session 結束，不寫入紅色 SYSTEM_UNAUTHORIZED_ACCESS
@@ -204,7 +204,7 @@ function doPost(e) {
         })).setMimeType(ContentService.MimeType.JSON);
       }
 
-      const adminOnlyActions = ["saveSettings", "deleteCustomer", "deleteProduct", "changePassword", "getSystemLogs", "setupLineRichMenu"];
+      const adminOnlyActions = ["saveSettings", "deleteCustomer", "deleteProduct", "changePassword", "getSystemLogs", "setupLineRichMenu", "saveEdgeConfig", "getEdgeConfigStatus", "syncEdgeMirror"];
       if (userRole === "staff" && adminOnlyActions.includes(action)) {
         writeSystemLog("SYSTEM_FORBIDDEN", "越權管理員操作阻擋", JSON.stringify({ action: action, employee: tokenPayload.name }));
         return ContentService.createTextOutput(JSON.stringify({ 
@@ -225,6 +225,18 @@ function doPost(e) {
         break;
       case "bindLiffAccount":
         result = handleBindLiffAccount(params.data || params, tokenPayload);
+        break;
+      case "edgeWebhookDispatch":
+        result = handleEdgeWebhookDispatch(params);
+        break;
+      case "saveEdgeConfig":
+        result = handleSaveEdgeConfig(params.data || params, tokenPayload);
+        break;
+      case "getEdgeConfigStatus":
+        result = handleGetEdgeConfigStatus(tokenPayload);
+        break;
+      case "syncEdgeMirror":
+        result = handleSyncEdgeMirrorAction(tokenPayload);
         break;
       case "changePassword":
         result = changePassword(params.data);
@@ -393,7 +405,8 @@ function doPost(e) {
 
     const mutationActions = [
       "changePassword", "createOrder", "updateOrderContent", "updateOrderStatus",
-      "batchUpdateOrders", "batchUpdatePaymentStatus", "deleteOrder",
+      "batchUpdateOrders", "batchUpdatePaymentStatus", "deleteOrder", "batchDeleteOrders",
+      "assignOrder", "saveUser", "bindLiffAccount",
       "reorderProducts", "updateCustomer", "deleteCustomer", 
       "updateProduct", "deleteProduct", "saveTrips", "saveSettings",
       "triggerAutoOrders"
@@ -402,10 +415,13 @@ function doPost(e) {
       updateGlobalTimestamp();
     }
 
-    const unneededNotifyActions = ["login", "checkUpdates", "getOrder", "testLineMessage", "dryRunRule", "getNotificationLogs", "getSystemLogs", "createOrder"];
+    const unneededNotifyActions = [
+      "login", "liffLogin", "edgeWebhookDispatch", "saveEdgeConfig", "getEdgeConfigStatus", "syncEdgeMirror",
+      "checkUpdates", "getOrder", "testLineMessage", "dryRunRule", "getNotificationLogs", "getSystemLogs", "createOrder"
+    ];
     if (!unneededNotifyActions.includes(action)) {
       SpreadsheetApp.flush(); // 先強制寫入 Sheets 再觸發 Firebase 推播，避免前端搶先抓到舊快照
-      notifyFirebase();
+      notifyFirebase({ action: action });
     }
 
     return ContentService.createTextOutput(JSON.stringify({ success: true, data: result }))
@@ -2620,9 +2636,14 @@ function generateTomorrowDefaultOrders(explicitDates) {
   }
 }
 
-// 🏠 門鈴發送器：負責發送 PATCH 請求到 Firebase
-function notifyFirebase() {
-  const firebaseUrl = "https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app/sync.json";
+// 🏠 門鈴發送器：負責發送 PATCH 請求到 Firebase，並視設定同步 Edge 輕量鏡像
+function notifyFirebase(opts) {
+  const props = PropertiesService.getScriptProperties();
+  const baseUrl = String(props.getProperty("EDGE_FIREBASE_DB_URL") || "https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app").replace(/\/+$/, "");
+  const fbAuth = String(props.getProperty("EDGE_FIREBASE_DB_AUTH") || "").trim();
+  const authQuery = fbAuth ? ("?auth=" + encodeURIComponent(fbAuth)) : "";
+
+  const firebaseUrl = baseUrl + "/sync.json" + authQuery;
   const payload = {
     lastUpdateTime: new Date().getTime()
   };
@@ -2636,6 +2657,27 @@ function notifyFirebase() {
     UrlFetchApp.fetch(firebaseUrl, options);
   } catch (e) {
     console.error("按門鈴失敗", e);
+  }
+
+  // 若已啟用 Edge 鏡像同步，根據異動類型做輕量範圍更新
+  try {
+    const mirrorEnabled = props.getProperty("EDGE_MIRROR_ENABLED") === "1" || Boolean(props.getProperty("EDGE_SHARED_SECRET"));
+    if (mirrorEnabled) {
+      const act = opts && opts.action ? String(opts.action) : '';
+      const syncUsers = !act || act === 'saveUser' || act === 'bindLiffAccount';
+      const syncCustomers = !act || act === 'updateCustomer' || act === 'deleteCustomer';
+      const syncOrders = !act || !['saveUser', 'bindLiffAccount', 'updateCustomer', 'deleteCustomer', 'saveSettings', 'updateProduct', 'deleteProduct', 'reorderProducts', 'saveTrips'].includes(act);
+      if (syncUsers || syncCustomers || syncOrders) {
+        syncEdgeMirrorToFirebase({
+          force: true,
+          users: syncUsers,
+          customers: syncCustomers,
+          orders: syncOrders
+        });
+      }
+    }
+  } catch (mirrorErr) {
+    console.warn("Edge mirror background sync warning:", mirrorErr);
   }
 }
 
@@ -9899,5 +9941,301 @@ function handleBatchDeleteOrders(data, user) {
     lock.releaseLock();
   }
 }
+
+function encodeFirebaseKey(rawKey) {
+  return encodeURIComponent(String(rawKey || '').trim()).replace(/\./g, '%2E');
+}
+
+function buildUsersByLineIdMirror() {
+  const sheet = SS.getSheetByName("Users") || SS.getSheetByName("USERS") || SS.getSheetByName("使用者");
+  if (!sheet || sheet.getLastRow() <= 1) return {};
+  const rows = readSheetRowsFast(SS, sheet, 0);
+  if (!rows || rows.length === 0) return {};
+
+  const headers = Object.keys(rows[0]);
+  const idKey = headers.find(h => findHeaderIndex([h], ["user_id", "userid", "id", "使用者id", "工號", "編號", "代號"]) === 0);
+  const userKey = headers.find(h => findHeaderIndex([h], ["username", "user", "帳號", "登入帳號", "使用者名稱"]) === 0);
+  const nameKey = headers.find(h => findHeaderIndex([h], ["name", "display_name", "displayname", "姓名", "顯示姓名", "同仁姓名", "員工姓名"]) === 0);
+  const roleKey = headers.find(h => findHeaderIndex([h], ["role", "職位", "角色", "職務", "職級", "職位角色"]) === 0);
+  const statusKey = headers.find(h => findHeaderIndex([h], ["status", "狀態", "帳號狀態", "啟用狀態"]) === 0);
+  const lineKey = headers.find(h => findHeaderIndex([h], ["line_user_id", "lineuserid", "line_id", "lineid", "line綁定id", "line"]) === 0);
+  if (!lineKey) return {};
+
+  const map = {};
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowLineId = String(row[lineKey] || '').trim();
+    if (!rowLineId) continue;
+    const rawId = idKey ? String(row[idKey] || '').trim() : '';
+    const rawUser = userKey ? String(row[userKey] || '').trim() : '';
+    const uId = rawId || rawUser;
+    const uName = nameKey && String(row[nameKey] || '').trim()
+      ? String(row[nameKey]).trim()
+      : (rawUser || uId || '同仁');
+    const role = roleKey && String(row[roleKey] || '').trim()
+      ? String(row[roleKey]).trim().toLowerCase()
+      : 'staff';
+    const rawStatus = statusKey ? String(row[statusKey] || '').trim().toUpperCase() : 'ACTIVE';
+    const isActive = (rawStatus !== 'DISABLED' && rawStatus !== 'FALSE');
+    map[encodeFirebaseKey(rowLineId)] = {
+      userId: uId,
+      username: rawUser || uId,
+      name: uName,
+      role: role,
+      isActive: isActive
+    };
+  }
+  return map;
+}
+
+/**
+ * 同步 Edge Webhook 所需的輕量即時鏡像到 Firebase RTDB (/edgeMirror)
+ * 可綁定 5 分鐘時間觸發器，或於異動後自動呼叫
+ */
+function syncEdgeMirrorToFirebase(opts) {
+  const props = PropertiesService.getScriptProperties();
+  const baseUrl = String(props.getProperty("EDGE_FIREBASE_DB_URL") || "https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app").replace(/\/+$/, "");
+  const fbAuth = String(props.getProperty("EDGE_FIREBASE_DB_AUTH") || "").trim();
+  const authQuery = fbAuth ? ("?auth=" + encodeURIComponent(fbAuth)) : "";
+
+  const includeUsers = !opts || opts.users !== false;
+  const includeCustomers = !opts || opts.customers !== false;
+  const includeOrders = !opts || opts.orders !== false;
+  const forceFresh = !opts || opts.force !== false;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone() || "Asia/Taipei";
+  const todayStr = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd");
+  const yObj = new Date(todayStr + 'T00:00:00'); yObj.setDate(yObj.getDate() - 1);
+  const yesterdayStr = Utilities.formatDate(yObj, tz, "yyyy-MM-dd");
+  const f7Obj = new Date(todayStr + 'T00:00:00'); f7Obj.setDate(f7Obj.getDate() + 7);
+  const plus7Str = Utilities.formatDate(f7Obj, tz, "yyyy-MM-dd");
+
+  const patchBody = {
+    updatedAt: new Date().getTime()
+  };
+  let userCount = 0;
+  let customerCount = 0;
+  let orderCount = 0;
+
+  if (includeUsers) {
+    const usersMap = buildUsersByLineIdMirror();
+    userCount = Object.keys(usersMap).length;
+    patchBody.usersByLineId = usersMap;
+  }
+
+  if (includeCustomers) {
+    const custList = getLineCustomersIndex(ss, forceFresh) || [];
+    const custMap = {};
+    custList.forEach(c => {
+      const key = encodeFirebaseKey(c.id || c.name);
+      if (!key) return;
+      custMap[key] = {
+        id: c.id || c.name,
+        name: c.name,
+        regularOffDays: c.regularOffDays || [],
+        offDays: c.offDays || [],
+        trip: c.trip || '',
+        deliveryTime: c.deliveryTime || '',
+        isPaused: !!c.isPaused
+      };
+    });
+    customerCount = Object.keys(custMap).length;
+    patchBody.customers = custMap;
+  }
+
+  if (includeOrders) {
+    const rawIdx = getLineOrdersIndex(ss, forceFresh) || [];
+    const groupedOrders = {};
+    rawIdx.forEach(r => {
+      if (!r || !r.id || !r.deliveryDate) return;
+      if (r.deliveryDate < yesterdayStr || r.deliveryDate > plus7Str) return;
+      const safeId = encodeFirebaseKey(r.id);
+      if (!groupedOrders[safeId]) {
+        groupedOrders[safeId] = {
+          id: r.id,
+          customerName: r.customerName,
+          deliveryDate: r.deliveryDate,
+          deliveryTime: r.deliveryTime || '',
+          status: r.status || 'PENDING',
+          trip: r.trip || '',
+          assignedTo: r.assignedTo || '',
+          assignedName: r.assignedName || '',
+          items: []
+        };
+      }
+      groupedOrders[safeId].items.push({
+        productName: r.productName,
+        quantity: Number(r.quantity) || 0,
+        unit: r.unit || '斤'
+      });
+    });
+    orderCount = Object.keys(groupedOrders).length;
+    patchBody.activeOrders = groupedOrders;
+  }
+
+  const res = UrlFetchApp.fetch(baseUrl + "/edgeMirror.json" + authQuery, {
+    method: "patch",
+    contentType: "application/json",
+    payload: JSON.stringify(patchBody),
+    muteHttpExceptions: true
+  });
+
+  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
+    throw new Error("Firebase edgeMirror 寫入失敗 (HTTP " + res.getResponseCode() + "): " + res.getContentText());
+  }
+
+  return {
+    success: true,
+    updatedAt: patchBody.updatedAt,
+    counts: { users: userCount, customers: customerCount, activeOrders: orderCount }
+  };
+}
+
+// 供 GAS 時間觸發器直接選用的無參數函式
+function syncEdgeMirror() {
+  return syncEdgeMirrorToFirebase({ force: true });
+}
+
+function handleGetEdgeConfigStatus(currentUser) {
+  const role = currentUser ? String(currentUser.role || '').toLowerCase() : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { success: false, error: "FORBIDDEN: 僅管理員或領班可檢視 Edge Webhook 設定" };
+  }
+  const props = PropertiesService.getScriptProperties();
+  return {
+    success: true,
+    configured: Boolean(props.getProperty("EDGE_SHARED_SECRET")),
+    mirrorEnabled: props.getProperty("EDGE_MIRROR_ENABLED") === "1",
+    hasFirebaseAuth: Boolean(props.getProperty("EDGE_FIREBASE_DB_AUTH")),
+    firebaseDbUrl: props.getProperty("EDGE_FIREBASE_DB_URL") || "https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app"
+  };
+}
+
+function handleSaveEdgeConfig(data, currentUser) {
+  const role = currentUser ? String(currentUser.role || '').toLowerCase() : '';
+  if (role !== 'admin') {
+    return { success: false, error: "FORBIDDEN: 僅最高管理員可修改 Edge Webhook 安全密鑰" };
+  }
+  const props = PropertiesService.getScriptProperties();
+  const secret = String((data && data.edgeSecret) || '').trim();
+  const fbAuth = data && data.firebaseDbAuth !== undefined ? String(data.firebaseDbAuth || '').trim() : null;
+  const fbUrl = data && data.firebaseDbUrl !== undefined ? String(data.firebaseDbUrl || '').trim() : '';
+
+  if (secret) {
+    if (secret.length < 16) {
+      return { success: false, error: "Edge Shared Secret 長度建議至少 16 字元" };
+    }
+    props.setProperty("EDGE_SHARED_SECRET", secret);
+  }
+  if (fbAuth !== null) {
+    if (fbAuth) props.setProperty("EDGE_FIREBASE_DB_AUTH", fbAuth);
+    else props.deleteProperty("EDGE_FIREBASE_DB_AUTH");
+  }
+  if (fbUrl) {
+    props.setProperty("EDGE_FIREBASE_DB_URL", fbUrl.replace(/\/+$/, ""));
+  }
+  props.setProperty("EDGE_MIRROR_ENABLED", "1");
+
+  const mirrorRes = syncEdgeMirrorToFirebase({ force: true });
+  writeSystemLog("SAVE_EDGE_CONFIG", "更新 Cloudflare Worker Edge 設定與 Firebase 鏡像", JSON.stringify({
+    operator: currentUser ? currentUser.name : 'admin',
+    counts: mirrorRes.counts
+  }));
+
+  return {
+    success: true,
+    configured: Boolean(props.getProperty("EDGE_SHARED_SECRET")),
+    mirrorEnabled: true,
+    counts: mirrorRes.counts,
+    message: "Edge Webhook 密鑰已儲存，並已同步 Firebase 即時鏡像資料！"
+  };
+}
+
+function handleSyncEdgeMirrorAction(currentUser) {
+  const role = currentUser ? String(currentUser.role || '').toLowerCase() : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { success: false, error: "FORBIDDEN: 僅管理員或領班可手動同步 Edge 鏡像" };
+  }
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty("EDGE_MIRROR_ENABLED", "1");
+  const mirrorRes = syncEdgeMirrorToFirebase({ force: true });
+  return {
+    success: true,
+    counts: mirrorRes.counts,
+    updatedAt: mirrorRes.updatedAt,
+    message: `已同步 Firebase 鏡像（同仁 ${mirrorRes.counts.users} 人、店家 ${mirrorRes.counts.customers} 間、活躍訂單 ${mirrorRes.counts.activeOrders} 筆）`
+  };
+}
+
+/**
+ * 接收來自 Cloudflare Worker Edge Server 的已驗簽內部請求
+ */
+function handleEdgeWebhookDispatch(params) {
+  const props = PropertiesService.getScriptProperties();
+  const expectedSecret = String(props.getProperty("EDGE_SHARED_SECRET") || '').trim();
+  const providedSecret = String((params && params.edgeSecret) || (params && params.data && params.data.edgeSecret) || '').trim();
+
+  if (!expectedSecret) {
+    return { success: false, error: "EDGE_SECRET_NOT_CONFIGURED" };
+  }
+  if (!providedSecret || providedSecret !== expectedSecret) {
+    writeSystemLog("SYSTEM_UNAUTHORIZED_EDGE", "Edge Webhook 密鑰驗證失敗", JSON.stringify({ providedLen: providedSecret.length }));
+    return { success: false, error: "UNAUTHORIZED_EDGE" };
+  }
+
+  const data = (params && params.data) || {};
+  const op = String(data.op || '').trim().toUpperCase();
+
+  if (op === 'REFRESH_MIRROR') {
+    return syncEdgeMirrorToFirebase({ force: true });
+  }
+
+  if (op === 'CLEAR_WIZARD') {
+    const uid = String(data.lineUserId || '').trim();
+    if (uid) {
+      const cache = CacheService.getScriptCache();
+      cache.remove("LINE_WIZARD_" + uid);
+      cache.remove("LINE_PENDING_" + uid);
+      cache.remove("LINE_PICK_" + uid);
+    }
+    return { success: true };
+  }
+
+  if (op === 'UPDATE_ORDER_STATUS') {
+    const lineUid = String(data.lineUserId || '').trim();
+    const orderId = String(data.orderId || '').trim();
+    const newStatus = normalizeLineOrderStatus(data.newStatus) || String(data.newStatus || '').trim().toUpperCase();
+    const lineUser = getUserByLineId(lineUid);
+    if (!lineUser || !lineUser.isActive) {
+      return { success: false, error: "帳號未綁定或已停用" };
+    }
+    updateOrderStatus({ id: orderId, status: newStatus, force: true }, lineUser);
+    updateGlobalTimestamp();
+    SpreadsheetApp.flush();
+    notifyFirebase({ action: 'updateOrderStatus' });
+    writeSystemLog(
+      data.isUndo ? "LINE_EDGE_UNDO_STATUS" : "LINE_EDGE_UPDATE_STATUS",
+      orderId,
+      JSON.stringify({ operator: lineUser.name, role: lineUser.role, newStatus: newStatus })
+    );
+    return { success: true, orderId: orderId, status: newStatus };
+  }
+
+  if (op === 'PROXY_EVENT' && data.event) {
+    handleLineWebhook({ events: [data.event] });
+    try {
+      const text = data.event && data.event.message && data.event.message.text ? String(data.event.message.text).trim() : '';
+      if (/^(?:#?綁定|#?bind)\s+/i.test(text)) {
+        invalidateLineCaches({ users: true });
+        syncEdgeMirrorToFirebase({ force: true, users: true, customers: false, orders: false });
+      }
+    } catch (e) {}
+    return { success: true };
+  }
+
+  return { success: false, error: "Unknown edgeWebhookDispatch op: " + op };
+}
+
 
 

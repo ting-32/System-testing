@@ -1,0 +1,15 @@
+name = "noodle-erp-line-edge"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[vars]
+# 預設指向現有 Firebase Realtime Database (asia-southeast1)
+FIREBASE_DB_URL = "https://orderapp-sync-default-rtdb.asia-southeast1.firebasedatabase.app"
+
+# 下列敏感環境變數請使用 Cloudflare Dashboard -> Settings -> Variables and Secrets
+# 或透過指令 `npx wrangler secret put <NAME>` 設定，切勿直接寫死於檔案中：
+# - LINE_CHANNEL_SECRET        (LINE Login/Messaging API 的 Channel secret，驗證 X-Line-Signature 用)
+# - LINE_CHANNEL_ACCESS_TOKEN  (LINE Messaging API 的 Channel access token)
+# - GAS_URL                    (Google Apps Script /exec 部署網址)
+# - EDGE_SHARED_SECRET         (與系統通知中心設定的 Edge Shared Secret 相同)
+# - FIREBASE_DB_AUTH           (選填：若 Firebase RTDB 規則有設寫入/讀取權限密鑰時填入)
