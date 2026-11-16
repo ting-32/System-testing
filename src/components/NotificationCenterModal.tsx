@@ -18,7 +18,9 @@ import {
   ListChecks,
   Send,
   ShieldAlert,
-  ClipboardCheck
+  ClipboardCheck,
+  Edit3,
+  Calendar
 } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import {
@@ -670,26 +672,119 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const generateRichMenuPngBase64 = (): string => {
     const canvas = document.createElement('canvas');
     canvas.width = 2500;
-    canvas.height = 843;
+    canvas.height = 1686;
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
 
-    // Deep slate background
-    ctx.fillStyle = '#0F172A';
-    ctx.fillRect(0, 0, 2500, 843);
+    // 方案 1：暖燕麥紙感底色 (#E7E4DC)
+    ctx.fillStyle = '#E7E4DC';
+    ctx.fillRect(0, 0, 2500, 1686);
 
-    const tiles = [
-      // 上排 2 格大按鈕（高頻操作：各佔 1250px 寬）
-      { x: 0, y: 0, w: 1250, h: 421, isWide: true, bg: '#0F766E', accent: '#2DD4BF', emoji: '➕', title: '新增訂單', sub: '選店家一鍵帶入或追加新單' },
-      { x: 1250, y: 0, w: 1250, h: 421, isWide: true, bg: '#047857', accent: '#34D399', emoji: '📊', title: '更改狀態', sub: '快速切換：已送達／已收款／待出貨' },
-      // 下排 3 格（修改、公休、刪除）
-      { x: 0, y: 421, w: 833, h: 422, isWide: false, bg: '#1D4ED8', accent: '#60A5FA', emoji: '✏️', title: '修改訂單', sub: '點選店家調品項／數量' },
-      { x: 833, y: 421, w: 834, h: 422, isWide: false, bg: '#B45309', accent: '#FBBF24', emoji: '🏖️', title: '設定公休', sub: '特定公休日／每週固定休' },
-      { x: 1667, y: 421, w: 833, h: 422, isWide: false, bg: '#B91C1C', accent: '#F87171', emoji: '🗑️', title: '刪除訂單', sub: '點選移除誤建或重複單' },
+    type RichMenuIconType = 'add' | 'status' | 'edit' | 'holiday' | 'delete';
+    interface RichMenuTile {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      isWide: boolean;
+      bg: string;
+      border: string;
+      badgeBg: string;
+      iconColor: string;
+      titleColor: string;
+      subColor: string;
+      icon: RichMenuIconType;
+      title: string;
+      sub: string;
+    }
+
+    const tiles: RichMenuTile[] = [
+      // 上排 2 格加大實色主操作（各 1250 × 843）
+      {
+        x: 0,
+        y: 0,
+        w: 1250,
+        h: 843,
+        isWide: true,
+        bg: '#4A6356',
+        border: '#3D5247',
+        badgeBg: 'rgba(255, 255, 255, 0.16)',
+        iconColor: '#FFFFFF',
+        titleColor: '#FFFFFF',
+        subColor: 'rgba(255, 255, 255, 0.86)',
+        icon: 'add',
+        title: '新增訂單',
+        sub: '選店家一鍵帶入或加單',
+      },
+      {
+        x: 1250,
+        y: 0,
+        w: 1250,
+        h: 843,
+        isWide: true,
+        bg: '#5D7586',
+        border: '#4B6070',
+        badgeBg: 'rgba(255, 255, 255, 0.16)',
+        iconColor: '#FFFFFF',
+        titleColor: '#FFFFFF',
+        subColor: 'rgba(255, 255, 255, 0.86)',
+        icon: 'status',
+        title: '更改狀態',
+        sub: '已送達 · 已收款 · 待出貨',
+      },
+      // 下排 3 格莫蘭迪紙卡輔助操作（各 833 × 843）
+      {
+        x: 0,
+        y: 843,
+        w: 833,
+        h: 843,
+        isWide: false,
+        bg: '#FFFFFF',
+        border: '#D8D3C8',
+        badgeBg: '#EDF2F5',
+        iconColor: '#5D7586',
+        titleColor: '#3E3C3A',
+        subColor: '#8C8984',
+        icon: 'edit',
+        title: '修改訂單',
+        sub: '調品項與數量',
+      },
+      {
+        x: 833,
+        y: 843,
+        w: 834,
+        h: 843,
+        isWide: false,
+        bg: '#F7F3E8',
+        border: '#E0C9A6',
+        badgeBg: '#EFE5D2',
+        iconColor: '#9C7C58',
+        titleColor: '#6E5A44',
+        subColor: '#9C7C58',
+        icon: 'holiday',
+        title: '設定公休',
+        sub: '特定休或週休',
+      },
+      {
+        x: 1667,
+        y: 843,
+        w: 833,
+        h: 843,
+        isWide: false,
+        bg: '#F9EEEC',
+        border: '#DFC0BB',
+        badgeBg: '#F1DCDA',
+        iconColor: '#A6635D',
+        titleColor: '#8F514B',
+        subColor: '#A6635D',
+        icon: 'delete',
+        title: '刪除訂單',
+        sub: '移除誤建重複',
+      },
     ];
 
-    const pad = 18;
-    const radius = 34;
+    const pad = 24;
+    const radius = 52;
 
     const drawRoundRect = (x: number, y: number, w: number, h: number, r: number) => {
       ctx.beginPath();
@@ -705,6 +800,108 @@ export const NotificationCenterModal: React.FC<Props> = ({
       ctx.closePath();
     };
 
+    const drawVectorIcon = (type: RichMenuIconType, cx: number, cy: number, color: string) => {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      if (type === 'add') {
+        ctx.lineWidth = 18;
+        ctx.beginPath();
+        ctx.moveTo(0, -46);
+        ctx.lineTo(0, 46);
+        ctx.moveTo(-46, 0);
+        ctx.lineTo(46, 0);
+        ctx.stroke();
+      } else if (type === 'status') {
+        ctx.lineWidth = 14;
+        ctx.beginPath();
+        ctx.arc(0, 0, 50, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.lineWidth = 15;
+        ctx.beginPath();
+        ctx.moveTo(-22, 2);
+        ctx.lineTo(-5, 20);
+        ctx.lineTo(26, -16);
+        ctx.stroke();
+      } else if (type === 'edit') {
+        // 筆身＋筆尖
+        ctx.save();
+        ctx.rotate(Math.PI / 4);
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.moveTo(-14, -42);
+        ctx.lineTo(14, -42);
+        ctx.lineTo(14, 24);
+        ctx.lineTo(0, 48);
+        ctx.lineTo(-14, 24);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-14, -22);
+        ctx.lineTo(14, -22);
+        ctx.stroke();
+        ctx.restore();
+        // 下底線
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.moveTo(-42, 46);
+        ctx.lineTo(42, 46);
+        ctx.stroke();
+      } else if (type === 'holiday') {
+        ctx.lineWidth = 12;
+        drawRoundRect(-46, -34, 92, 82, 16);
+        ctx.stroke();
+        // 上方扣環與分隔線
+        ctx.beginPath();
+        ctx.moveTo(-24, -48);
+        ctx.lineTo(-24, -22);
+        ctx.moveTo(24, -48);
+        ctx.lineTo(24, -22);
+        ctx.moveTo(-46, -8);
+        ctx.lineTo(46, -8);
+        ctx.stroke();
+        // 中間公休橫線標記
+        ctx.lineWidth = 14;
+        ctx.beginPath();
+        ctx.moveTo(-20, 20);
+        ctx.lineTo(20, 20);
+        ctx.stroke();
+      } else if (type === 'delete') {
+        ctx.lineWidth = 12;
+        // 上蓋與提把
+        ctx.beginPath();
+        ctx.moveTo(-44, -28);
+        ctx.lineTo(44, -28);
+        ctx.moveTo(-18, -28);
+        ctx.lineTo(-14, -46);
+        ctx.lineTo(14, -46);
+        ctx.lineTo(18, -28);
+        ctx.stroke();
+        // 桶身
+        ctx.beginPath();
+        ctx.moveTo(-34, -28);
+        ctx.lineTo(-26, 46);
+        ctx.lineTo(26, 46);
+        ctx.lineTo(34, -28);
+        ctx.stroke();
+        // 桶內兩條直線
+        ctx.lineWidth = 10;
+        ctx.beginPath();
+        ctx.moveTo(-11, -8);
+        ctx.lineTo(-9, 28);
+        ctx.moveTo(11, -8);
+        ctx.lineTo(9, 28);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    };
+
     tiles.forEach((t) => {
       const rx = t.x + pad;
       const ry = t.y + pad;
@@ -716,19 +913,30 @@ export const NotificationCenterModal: React.FC<Props> = ({
       ctx.fill();
 
       ctx.lineWidth = 5;
-      ctx.strokeStyle = t.accent;
+      ctx.strokeStyle = t.border;
       ctx.stroke();
+
+      // 圓角圖示徽章底框
+      const badgeSize = t.isWide ? 220 : 196;
+      const badgeX = rx + rw / 2 - badgeSize / 2;
+      const badgeY = ry + rh * 0.19;
+      drawRoundRect(badgeX, badgeY, badgeSize, badgeSize, 48);
+      ctx.fillStyle = t.badgeBg;
+      ctx.fill();
+
+      // 自繪粗線條向量 Icon
+      drawVectorIcon(t.icon, rx + rw / 2, badgeY + badgeSize / 2, t.iconColor);
 
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      ctx.font = `${t.isWide ? 96 : 86}px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(`${t.emoji}  ${t.title}`, rx + rw / 2, ry + rh * 0.42);
+      ctx.font = `bold ${t.isWide ? 104 : 88}px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
+      ctx.fillStyle = t.titleColor;
+      ctx.fillText(t.title, rx + rw / 2, ry + rh * 0.64);
 
-      ctx.font = `${t.isWide ? 42 : 38}px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
-      ctx.fillStyle = '#E2E8F0';
-      ctx.fillText(t.sub, rx + rw / 2, ry + rh * 0.73);
+      ctx.font = `600 ${t.isWide ? 44 : 38}px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
+      ctx.fillStyle = t.subColor;
+      ctx.fillText(t.sub, rx + rw / 2, ry + rh * 0.79);
     });
 
     return canvas.toDataURL('image/png');
@@ -2075,26 +2283,51 @@ export const NotificationCenterModal: React.FC<Props> = ({
                      </p>
                    </div>
 
-                   <div className="grid grid-cols-6 gap-2 p-2.5 bg-slate-900 rounded-xl text-white text-center text-xs font-bold">
-                     <div className="col-span-3 bg-teal-700/90 border border-teal-400/50 rounded-lg py-2.5 px-1">
-                       <div>➕ 新增訂單</div>
-                       <div className="text-[10px] font-normal text-teal-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁（寬版）' : 'Bot 指令'}</div>
+                   <div className="grid grid-cols-6 gap-2.5 p-3 bg-[#E7E4DC] rounded-2xl border border-black/[0.06] text-center font-bold">
+                     <div className="col-span-3 bg-[#4A6356] border border-[#3D5247] text-white rounded-xl py-4 px-2 flex flex-col items-center justify-center gap-1.5 shadow-sm">
+                       <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
+                         <Plus className="w-5 h-5" />
+                       </div>
+                       <div className="text-sm">新增訂單</div>
+                       <div className="text-[10px] font-medium text-white/80">
+                         {liffIdInput.trim() ? 'LIFF 滿版大鍵' : 'Bot 指令'}
+                       </div>
                      </div>
-                     <div className="col-span-3 bg-emerald-700/90 border border-emerald-400/50 rounded-lg py-2.5 px-1">
-                       <div>📊 更改狀態</div>
-                       <div className="text-[10px] font-normal text-emerald-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁（寬版）' : 'Bot 指令'}</div>
+                     <div className="col-span-3 bg-[#5D7586] border border-[#4B6070] text-white rounded-xl py-4 px-2 flex flex-col items-center justify-center gap-1.5 shadow-sm">
+                       <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
+                         <CheckCircle2 className="w-5 h-5" />
+                       </div>
+                       <div className="text-sm">更改狀態</div>
+                       <div className="text-[10px] font-medium text-white/80">
+                         {liffIdInput.trim() ? 'LIFF 滿版大鍵' : 'Bot 指令'}
+                       </div>
                      </div>
-                     <div className="col-span-2 bg-blue-700/90 border border-blue-400/50 rounded-lg py-2.5 px-1">
-                       <div>✏️ 修改訂單</div>
-                       <div className="text-[10px] font-normal text-blue-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
+                     <div className="col-span-2 bg-[#FFFFFF] border border-[#D8D3C8] text-[#3E3C3A] rounded-xl py-3.5 px-1.5 flex flex-col items-center justify-center gap-1 shadow-sm">
+                       <div className="w-8 h-8 rounded-lg bg-[#EDF2F5] text-[#5D7586] flex items-center justify-center">
+                         <Edit3 className="w-4 h-4" />
+                       </div>
+                       <div className="text-xs">修改訂單</div>
+                       <div className="text-[10px] font-medium text-[#8C8984]">
+                         {liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}
+                       </div>
                      </div>
-                     <div className="col-span-2 bg-amber-700/90 border border-amber-400/50 rounded-lg py-2.5 px-1">
-                       <div>🏖️ 設定公休</div>
-                       <div className="text-[10px] font-normal text-amber-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
+                     <div className="col-span-2 bg-[#F7F3E8] border border-[#E0C9A6] text-[#6E5A44] rounded-xl py-3.5 px-1.5 flex flex-col items-center justify-center gap-1 shadow-sm">
+                       <div className="w-8 h-8 rounded-lg bg-[#EFE5D2] text-[#9C7C58] flex items-center justify-center">
+                         <Calendar className="w-4 h-4" />
+                       </div>
+                       <div className="text-xs">設定公休</div>
+                       <div className="text-[10px] font-medium text-[#9C7C58]">
+                         {liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}
+                       </div>
                      </div>
-                     <div className="col-span-2 bg-red-700/90 border border-red-400/50 rounded-lg py-2.5 px-1">
-                       <div>🗑️ 刪除訂單</div>
-                       <div className="text-[10px] font-normal text-red-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
+                     <div className="col-span-2 bg-[#F9EEEC] border border-[#DFC0BB] text-[#8F514B] rounded-xl py-3.5 px-1.5 flex flex-col items-center justify-center gap-1 shadow-sm">
+                       <div className="w-8 h-8 rounded-lg bg-[#F1DCDA] text-[#A6635D] flex items-center justify-center">
+                         <Trash2 className="w-4 h-4" />
+                       </div>
+                       <div className="text-xs">刪除訂單</div>
+                       <div className="text-[10px] font-medium text-[#A6635D]">
+                         {liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}
+                       </div>
                      </div>
                    </div>
                  </div>
