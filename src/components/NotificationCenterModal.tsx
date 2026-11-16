@@ -679,16 +679,15 @@ export const NotificationCenterModal: React.FC<Props> = ({
     ctx.fillRect(0, 0, 2500, 843);
 
     const tiles = [
-      { col: 0, row: 0, bg: '#1D4ED8', accent: '#60A5FA', emoji: '✏️', title: '修改訂單', sub: '點選店家調品項／數量' },
-      { col: 1, row: 0, bg: '#047857', accent: '#34D399', emoji: '📊', title: '更改狀態', sub: '已送達／已收款／待出貨' },
-      { col: 2, row: 0, bg: '#B45309', accent: '#FBBF24', emoji: '🏖️', title: '設定公休', sub: '特定公休日／每週固定休' },
-      { col: 0, row: 1, bg: '#B91C1C', accent: '#F87171', emoji: '🗑️', title: '刪除訂單', sub: '點選移除誤建或重複單' },
-      { col: 1, row: 1, bg: '#0F766E', accent: '#2DD4BF', emoji: '➕', title: '新增訂單', sub: '選店家一鍵帶入或加單' },
-      { col: 2, row: 1, bg: '#1E293B', accent: '#38BDF8', emoji: '🎛️', title: '控制主選單', sub: '開啟完整互動操作面板' },
+      // 上排 2 格大按鈕（高頻操作：各佔 1250px 寬）
+      { x: 0, y: 0, w: 1250, h: 421, isWide: true, bg: '#0F766E', accent: '#2DD4BF', emoji: '➕', title: '新增訂單', sub: '選店家一鍵帶入或追加新單' },
+      { x: 1250, y: 0, w: 1250, h: 421, isWide: true, bg: '#047857', accent: '#34D399', emoji: '📊', title: '更改狀態', sub: '快速切換：已送達／已收款／待出貨' },
+      // 下排 3 格（修改、公休、刪除）
+      { x: 0, y: 421, w: 833, h: 422, isWide: false, bg: '#1D4ED8', accent: '#60A5FA', emoji: '✏️', title: '修改訂單', sub: '點選店家調品項／數量' },
+      { x: 833, y: 421, w: 834, h: 422, isWide: false, bg: '#B45309', accent: '#FBBF24', emoji: '🏖️', title: '設定公休', sub: '特定公休日／每週固定休' },
+      { x: 1667, y: 421, w: 833, h: 422, isWide: false, bg: '#B91C1C', accent: '#F87171', emoji: '🗑️', title: '刪除訂單', sub: '點選移除誤建或重複單' },
     ];
 
-    const colWidths = [833, 834, 833];
-    const rowHeights = [421, 422];
     const pad = 18;
     const radius = 34;
 
@@ -707,15 +706,10 @@ export const NotificationCenterModal: React.FC<Props> = ({
     };
 
     tiles.forEach((t) => {
-      const startX = t.col === 0 ? 0 : t.col === 1 ? 833 : 1667;
-      const startY = t.row === 0 ? 0 : 421;
-      const w = colWidths[t.col];
-      const h = rowHeights[t.row];
-
-      const rx = startX + pad;
-      const ry = startY + pad;
-      const rw = w - pad * 2;
-      const rh = h - pad * 2;
+      const rx = t.x + pad;
+      const ry = t.y + pad;
+      const rw = t.w - pad * 2;
+      const rh = t.h - pad * 2;
 
       drawRoundRect(rx, ry, rw, rh, radius);
       ctx.fillStyle = t.bg;
@@ -728,13 +722,13 @@ export const NotificationCenterModal: React.FC<Props> = ({
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      ctx.font = '88px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
+      ctx.font = `${t.isWide ? 96 : 86}px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
       ctx.fillStyle = '#FFFFFF';
       ctx.fillText(`${t.emoji}  ${t.title}`, rx + rw / 2, ry + rh * 0.42);
 
-      ctx.font = '40px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
+      ctx.font = `${t.isWide ? 42 : 38}px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
       ctx.fillStyle = '#E2E8F0';
-      ctx.fillText(t.sub, rx + rw / 2, ry + rh * 0.72);
+      ctx.fillText(t.sub, rx + rw / 2, ry + rh * 0.73);
     });
 
     return canvas.toDataURL('image/png');
@@ -758,7 +752,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
         liffId: trimmedLiffId,
       });
       if (res?.success) {
-        alert(res.message || 'LINE 底部圖文選單部署成功！請重新開啟 LINE 聊天室即可看到 6 格操作按鈕。');
+        alert(res.message || 'LINE 底部圖文選單部署成功！請重新開啟 LINE 聊天室即可看到 5 格大按鈕選單。');
       } else {
         alert('部署失敗：' + (res?.error || '未知錯誤'));
       }
@@ -2037,7 +2031,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
                          🎛️ LINE 聊天室底部固定按鈕選單 (Rich Menu)
                        </h4>
                        <p className="text-xs text-slate-500 mt-1">
-                         一鍵將「改單、更改狀態、設定公休、刪除訂單、新增訂單、控制選單」6 大按鍵固定在 LINE 對話框最下方，填入 LIFF ID 即開啟零延遲手機網頁版。
+                         一鍵將「新增訂單、更改狀態（加大寬版）＋ 修改訂單、設定公休、刪除訂單」5 大按鍵固定在 LINE 對話框最下方（輸入「選單」可隨時叫出文字備援面板）。
                        </p>
                      </div>
                      <button
@@ -2052,10 +2046,10 @@ export const NotificationCenterModal: React.FC<Props> = ({
                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                        <label className="text-xs font-bold text-slate-700">
-                         ⚡ LIFF ID（選填，啟用「5 格極速網頁 ＋ 1 格 Bot 指令」）
+                         ⚡ LIFF ID（選填，開啟「5 格極速大按鈕網頁版」）
                        </label>
                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${liffIdInput.trim() ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
-                         {liffIdInput.trim() ? '⚡ 5 格 LIFF 極速網頁 + 1 格 Bot' : '💬 6 格純 Bot 指令'}
+                         {liffIdInput.trim() ? '⚡ 5 格 LIFF 極速大按鈕' : '💬 5 格純 Bot 指令'}
                        </span>
                      </div>
                      <div className="flex gap-2">
@@ -2081,30 +2075,26 @@ export const NotificationCenterModal: React.FC<Props> = ({
                      </p>
                    </div>
 
-                   <div className="grid grid-cols-3 gap-2 p-2.5 bg-slate-900 rounded-xl text-white text-center text-xs font-bold">
-                     <div className="bg-blue-700/90 border border-blue-400/50 rounded-lg py-2.5 px-1">
+                   <div className="grid grid-cols-6 gap-2 p-2.5 bg-slate-900 rounded-xl text-white text-center text-xs font-bold">
+                     <div className="col-span-3 bg-teal-700/90 border border-teal-400/50 rounded-lg py-2.5 px-1">
+                       <div>➕ 新增訂單</div>
+                       <div className="text-[10px] font-normal text-teal-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁（寬版）' : 'Bot 指令'}</div>
+                     </div>
+                     <div className="col-span-3 bg-emerald-700/90 border border-emerald-400/50 rounded-lg py-2.5 px-1">
+                       <div>📊 更改狀態</div>
+                       <div className="text-[10px] font-normal text-emerald-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁（寬版）' : 'Bot 指令'}</div>
+                     </div>
+                     <div className="col-span-2 bg-blue-700/90 border border-blue-400/50 rounded-lg py-2.5 px-1">
                        <div>✏️ 修改訂單</div>
                        <div className="text-[10px] font-normal text-blue-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
                      </div>
-                     <div className="bg-emerald-700/90 border border-emerald-400/50 rounded-lg py-2.5 px-1">
-                       <div>📊 更改狀態</div>
-                       <div className="text-[10px] font-normal text-emerald-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
-                     </div>
-                     <div className="bg-amber-700/90 border border-amber-400/50 rounded-lg py-2.5 px-1">
+                     <div className="col-span-2 bg-amber-700/90 border border-amber-400/50 rounded-lg py-2.5 px-1">
                        <div>🏖️ 設定公休</div>
                        <div className="text-[10px] font-normal text-amber-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
                      </div>
-                     <div className="bg-red-700/90 border border-red-400/50 rounded-lg py-2.5 px-1">
+                     <div className="col-span-2 bg-red-700/90 border border-red-400/50 rounded-lg py-2.5 px-1">
                        <div>🗑️ 刪除訂單</div>
                        <div className="text-[10px] font-normal text-red-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
-                     </div>
-                     <div className="bg-teal-700/90 border border-teal-400/50 rounded-lg py-2.5 px-1">
-                       <div>➕ 新增訂單</div>
-                       <div className="text-[10px] font-normal text-teal-100 mt-0.5">{liffIdInput.trim() ? 'LIFF 快控頁' : 'Bot 指令'}</div>
-                     </div>
-                     <div className="bg-slate-800 border border-sky-400/50 rounded-lg py-2.5 px-1">
-                       <div>🎛️ 控制主選單</div>
-                       <div className="text-[10px] font-normal text-sky-200 mt-0.5">Bot 主選單</div>
                      </div>
                    </div>
                  </div>

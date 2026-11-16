@@ -9266,7 +9266,7 @@ function getLineMessagingToken() {
 }
 
 /**
- * 一鍵建立並部署 LINE 聊天室底部固定圖文選單 (Rich Menu 2500x843，6 格快速操作按鈕)
+ * 一鍵建立並部署 LINE 聊天室底部固定圖文選單 (Rich Menu 2500x843，5 格大按鈕操作面板)
  */
 function handleSetupLineRichMenu(data, currentUser) {
   const role = currentUser ? String(currentUser.role || '').toLowerCase() : '';
@@ -9325,8 +9325,8 @@ function handleSetupLineRichMenu(data, currentUser) {
     const buildLiffUri = (quickKey, actionKey) =>
       `https://liff.line.me/${encodeURIComponent(liffId)}?quick=${quickKey}&action=${actionKey}&liffId=${encodeURIComponent(liffId)}`;
 
-    // 2. 建立新 Rich Menu 結構 (2500 x 843，2列3欄共 6 個按鈕)
-    // 若已填寫 LIFF ID：前 5 格採用 LIFF 極速網頁直達，第 6 格保留秒回主選單
+    // 2. 建立新 Rich Menu 結構 (2500 x 843，上排 2 大格 + 下排 3 格共 5 個按鈕)
+    // 高頻「新增訂單、更改狀態」放上排寬版；修改、公休、刪除放下一排
     const menuDef = {
       size: { width: 2500, height: 843 },
       selected: true,
@@ -9334,38 +9334,34 @@ function handleSetupLineRichMenu(data, currentUser) {
       chatBarText: useLiffHybrid ? "⚡ 快速操作面板" : "🎛️ 系統快捷操作選單",
       areas: [
         {
-          bounds: { x: 0, y: 0, width: 833, height: 421 },
-          action: useLiffHybrid
-            ? { type: "uri", label: "修改訂單", uri: buildLiffUri("orders", "edit") }
-            : { type: "postback", label: "修改訂單", data: "cmd=W_START&op=U&day=T&p=0", displayText: "✏️ 修改訂單" }
-        },
-        {
-          bounds: { x: 833, y: 0, width: 834, height: 421 },
-          action: useLiffHybrid
-            ? { type: "uri", label: "更改狀態", uri: buildLiffUri("orders", "status") }
-            : { type: "postback", label: "更改狀態", data: "cmd=W_START&op=S&day=T&p=0", displayText: "📊 更改訂單狀態" }
-        },
-        {
-          bounds: { x: 1667, y: 0, width: 833, height: 421 },
-          action: useLiffHybrid
-            ? { type: "uri", label: "設定公休", uri: buildLiffUri("holiday", "holiday") }
-            : { type: "postback", label: "設定公休", data: "cmd=W_START&op=H&p=0", displayText: "🏖️ 設定店家公休" }
-        },
-        {
-          bounds: { x: 0, y: 421, width: 833, height: 422 },
-          action: useLiffHybrid
-            ? { type: "uri", label: "刪除訂單", uri: buildLiffUri("orders", "delete") }
-            : { type: "postback", label: "刪除訂單", data: "cmd=W_START&op=D&day=T&p=0", displayText: "🗑️ 刪除訂單" }
-        },
-        {
-          bounds: { x: 833, y: 421, width: 834, height: 422 },
+          bounds: { x: 0, y: 0, width: 1250, height: 421 },
           action: useLiffHybrid
             ? { type: "uri", label: "新增訂單", uri: buildLiffUri("orders", "create") }
             : { type: "postback", label: "今日訂單", data: "cmd=W_TODAY", displayText: "📋 查看今日訂單" }
         },
         {
+          bounds: { x: 1250, y: 0, width: 1250, height: 421 },
+          action: useLiffHybrid
+            ? { type: "uri", label: "更改狀態", uri: buildLiffUri("orders", "status") }
+            : { type: "postback", label: "更改狀態", data: "cmd=W_START&op=S&day=T&p=0", displayText: "📊 更改訂單狀態" }
+        },
+        {
+          bounds: { x: 0, y: 421, width: 833, height: 422 },
+          action: useLiffHybrid
+            ? { type: "uri", label: "修改訂單", uri: buildLiffUri("orders", "edit") }
+            : { type: "postback", label: "修改訂單", data: "cmd=W_START&op=U&day=T&p=0", displayText: "✏️ 修改訂單" }
+        },
+        {
+          bounds: { x: 833, y: 421, width: 834, height: 422 },
+          action: useLiffHybrid
+            ? { type: "uri", label: "設定公休", uri: buildLiffUri("holiday", "holiday") }
+            : { type: "postback", label: "設定公休", data: "cmd=W_START&op=H&p=0", displayText: "🏖️ 設定店家公休" }
+        },
+        {
           bounds: { x: 1667, y: 421, width: 833, height: 422 },
-          action: { type: "postback", label: "控制選單", data: "cmd=SHOW_MENU", displayText: "🎛️ 顯示控制選單" }
+          action: useLiffHybrid
+            ? { type: "uri", label: "刪除訂單", uri: buildLiffUri("orders", "delete") }
+            : { type: "postback", label: "刪除訂單", data: "cmd=W_START&op=D&day=T&p=0", displayText: "🗑️ 刪除訂單" }
         }
       ]
     };
@@ -9411,8 +9407,8 @@ function handleSetupLineRichMenu(data, currentUser) {
       richMenuId: richMenuId,
       mode: useLiffHybrid ? "liff_hybrid" : "postback",
       message: useLiffHybrid
-        ? "LINE 混合型極速選單（前 5 格 LIFF 微型網頁 ＋ 第 6 格秒回主選單）部署成功！請重開 LINE 聊天室生效。"
-        : "LINE 聊天室底部圖文選單（6 格純對話指令版）已成功部署並對全員啟用！請重新開啟 LINE 聊天室即可看到 6 格快捷按鈕。"
+        ? "LINE 5 格 LIFF 極速大按鈕選單（上 2 大格 ＋ 下 3 格）部署成功！請重開 LINE 聊天室生效。"
+        : "LINE 聊天室底部圖文選單（5 格純對話指令版）已成功部署並對全員啟用！請重新開啟 LINE 聊天室即可看到快捷按鈕。"
     };
   } catch (err) {
     return { success: false, error: "部署 Rich Menu 發生異常: " + (err.message || String(err)) };
