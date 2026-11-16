@@ -243,14 +243,40 @@ function doPost(e) {
         break;
       case "createOrder":
         result = createOrder(params.data);
-        writeSystemLog("CREATE_ORDER", params.data.customerName || "未知", JSON.stringify({ items: params.data.items, payload: params.data }));
+        writeSystemLog("CREATE_ORDER", params.data.customerName || "未知", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          role: tokenPayload ? tokenPayload.role : '',
+          source: params.data.source || '',
+          items: params.data.items,
+          payload: params.data
+        }));
         break;
       case "updateOrderContent":
         result = updateOrderContent(params.data);
-        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({ diff: params.data }));
+        writeSystemLog("UPDATE_ORDER", params.data.customerName || "未知", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          role: tokenPayload ? tokenPayload.role : '',
+          diff: params.data
+        }));
         break;
       case "updateOrderStatus":
         result = updateOrderStatus(params.data, tokenPayload);
+        writeSystemLog(
+          "UPDATE_ORDER_STATUS",
+          `${(result && result.customerName) || params.data?.customerName || '訂單'} (${params.data?.id || ''})`,
+          JSON.stringify({
+            operator: tokenPayload ? tokenPayload.name : '未知',
+            role: tokenPayload ? tokenPayload.role : '',
+            source: params.data?.source || '',
+            updates: [{
+              id: params.data?.id,
+              customerName: (result && result.customerName) || params.data?.customerName || '',
+              deliveryDate: (result && result.deliveryDate) || params.data?.deliveryDate || '',
+              originalStatus: result && result.prevStatus,
+              status: params.data?.status
+            }]
+          })
+        );
         break;
       case "assignOrder":
         result = assignOrder(params.data || params, tokenPayload);
@@ -278,15 +304,45 @@ function doPost(e) {
       case "sendStaffDispatchNotification":
         result = handleSendStaffDispatchNotification(params.data || params, tokenPayload);
         break;
-      case "batchUpdateOrders":
+      case "batchUpdateOrders": {
         result = batchUpdateOrders(params.data);
+        const summaries = (result && Array.isArray(result.logSummaries)) ? result.logSummaries : [];
+        if (summaries.length > 0) {
+          const isSingle = summaries.length === 1;
+          const firstSum = summaries[0];
+          writeSystemLog(
+            isSingle ? "UPDATE_ORDER_STATUS" : "UPDATE_ORDER_BATCH",
+            isSingle ? `${firstSum.customerName || '訂單'} (${firstSum.id})` : `批次更新 ${summaries.length} 筆訂單狀態`,
+            JSON.stringify({
+              operator: tokenPayload ? tokenPayload.name : '未知',
+              role: tokenPayload ? tokenPayload.role : '',
+              updates: summaries
+            })
+          );
+        }
         break;
-      case "batchUpdatePaymentStatus":
+      }
+      case "batchUpdatePaymentStatus": {
         result = batchUpdatePaymentStatus(params.data);
+        const paySummaries = (result && Array.isArray(result.logSummaries)) ? result.logSummaries : [];
+        if (paySummaries.length > 0) {
+          writeSystemLog(
+            "UPDATE_ORDER_BATCH",
+            paySummaries.length === 1 ? `${paySummaries[0].customerName || '訂單'} (${paySummaries[0].id})` : `批次結帳 ${paySummaries.length} 筆訂單`,
+            JSON.stringify({
+              operator: tokenPayload ? tokenPayload.name : '未知',
+              role: tokenPayload ? tokenPayload.role : '',
+              updates: paySummaries
+            })
+          );
+        }
         break;
+      }
       case "deleteOrder":
         result = deleteOrder(params.data);
         writeSystemLog("DELETE_ORDER", `Order ID: ${params.data.id || "未知"}`, JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          role: tokenPayload ? tokenPayload.role : '',
           deletedId: params.data.id,
           deletedName: params.data.customerName || "未知店家",
           deletedDate: params.data.deliveryDate || ""
@@ -301,7 +357,11 @@ function doPost(e) {
         break;
       case "updateCustomer":
         result = updateCustomer(params.data);
-        writeSystemLog("UPDATE_CUSTOMER", params.data.name || "未知", JSON.stringify({ data: params.data }));
+        writeSystemLog("UPDATE_CUSTOMER", params.data.name || "未知", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          role: tokenPayload ? tokenPayload.role : '',
+          data: params.data
+        }));
         break;
             case "deleteCustomer": {
         let custSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("CUSTOMERS") || SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Customers");
@@ -1862,12 +1922,20 @@ function updateOrderStatus(data, currentUser = null) {
     }
     
     let rowsToUpdate = [];
+    let prevStatus = '';
+    let customerName = '';
+    let deliveryDate = '';
 
     for (let i = 1; i < values.length; i++) {
       if (String(values[i][1]).trim() === targetId) {
         const currentVersion = values[i][versionColIdx];
         if (data.version !== undefined && !data.force) {
            checkOrderVersionStrict(currentVersion, data.version);
+        }
+        if (rowsToUpdate.length === 0) {
+          prevStatus = String(values[i][statusColIdx] || '').trim();
+          customerName = String(values[i][2] || '').trim();
+          deliveryDate = normalizeDateStr(values[i][3]);
         }
         newVersion = Number(currentVersion || 0) + 1;
         values[i][statusColIdx] = data.status; 
@@ -1884,7 +1952,14 @@ function updateOrderStatus(data, currentUser = null) {
       throw new Error("Order not found: " + targetId);
     }
     
-    return { lastUpdated: newLastUpdatedTs, version: newVersion };
+    return {
+      lastUpdated: newLastUpdatedTs,
+      version: newVersion,
+      customerName: customerName,
+      deliveryDate: deliveryDate,
+      prevStatus: prevStatus,
+      newStatus: data.status
+    };
   } catch (err) {
     if (err.message && err.message.includes("Timeout")) {
       throw new Error("更新過於頻繁，請稍後重試");
@@ -1969,6 +2044,7 @@ function batchUpdateOrders(data) {
     updates.forEach(u => updateMap.set(String(u.id).trim(), u));
 
     let rowsToUpdate = [];
+    const summaryMap = new Map();
 
     for (let i = 1; i < values.length; i++) {
       const rowId = String(values[i][1]).trim();
@@ -1978,6 +2054,16 @@ function batchUpdateOrders(data) {
         
         if (!updateData.force && updateData.version !== undefined) {
            checkOrderVersionStrict(currentVersion, updateData.version);
+        }
+
+        if (!summaryMap.has(rowId)) {
+          summaryMap.set(rowId, {
+            id: rowId,
+            customerName: String(values[i][2] || '').trim(),
+            deliveryDate: normalizeDateStr(values[i][3]),
+            originalStatus: updateData.originalStatus || String(values[i][statusColIdx] || '').trim(),
+            status: updateData.status
+          });
         }
         
         const newVersion = Number(currentVersion || 0) + 1;
@@ -1994,7 +2080,7 @@ function batchUpdateOrders(data) {
       invalidateLineCaches({ orders: true });
     }
     
-    return { updatedCount, newLastUpdatedTs };
+    return { updatedCount, newLastUpdatedTs, logSummaries: Array.from(summaryMap.values()) };
   } finally {
     lock.releaseLock();
   }
@@ -2010,9 +2096,19 @@ function batchUpdatePaymentStatus(data) {
   const newLastUpdatedTs = String(new Date().getTime());
   
   let modified = false;
+  const summaryMap = new Map();
   for (let i = 1; i < values.length; i++) {
     const id = String(values[i][1]).trim();
     if (orderIds.has(id)) {
+      if (!summaryMap.has(id)) {
+        summaryMap.set(id, {
+          id: id,
+          customerName: String(values[i][2] || '').trim(),
+          deliveryDate: normalizeDateStr(values[i][3]),
+          originalStatus: String(values[i][statusColIdx] || '').trim(),
+          status: data.newStatus
+        });
+      }
       values[i][statusColIdx] = data.newStatus;
       values[i][lastUpdatedColIdx] = newLastUpdatedTs;
       modified = true;
@@ -2023,7 +2119,7 @@ function batchUpdatePaymentStatus(data) {
     safeSetValues(sheet, 2, 1, values.slice(1));
     invalidateLineCaches({ orders: true });
   }
-  return true;
+  return { success: true, logSummaries: Array.from(summaryMap.values()) };
 }
 
 function deleteOrder(data) {
@@ -10208,14 +10304,20 @@ function handleEdgeWebhookDispatch(params) {
     if (!lineUser || !lineUser.isActive) {
       return { success: false, error: "帳號未綁定或已停用" };
     }
-    updateOrderStatus({ id: orderId, status: newStatus, force: true }, lineUser);
+    const statusRes = updateOrderStatus({ id: orderId, status: newStatus, force: true }, lineUser);
     updateGlobalTimestamp();
     SpreadsheetApp.flush();
     notifyFirebase({ action: 'updateOrderStatus' });
     writeSystemLog(
       data.isUndo ? "LINE_EDGE_UNDO_STATUS" : "LINE_EDGE_UPDATE_STATUS",
-      orderId,
-      JSON.stringify({ operator: lineUser.name, role: lineUser.role, newStatus: newStatus })
+      `${(statusRes && statusRes.customerName) || '訂單'} (${orderId})`,
+      JSON.stringify({
+        operator: lineUser.name,
+        role: lineUser.role,
+        deliveryDate: statusRes && statusRes.deliveryDate,
+        prevStatus: statusRes && statusRes.prevStatus,
+        newStatus: newStatus
+      })
     );
     return { success: true, orderId: orderId, status: newStatus };
   }

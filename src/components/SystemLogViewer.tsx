@@ -51,17 +51,94 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
     return Array.from(actions);
   }, [logs]);
 
+  const matchesFilterAction = (log: SystemLog) => {
+    if (filterAction === 'ALL') return true;
+    const type = log.actionType || '';
+    if (filterAction === 'LINE') {
+      return (
+        type.startsWith('LINE_') ||
+        log.details.includes('"source":"LIFF"') ||
+        log.details.includes('"source": "LIFF"')
+      );
+    }
+    if (filterAction === 'UPDATE') {
+      return (
+        type.startsWith('UPDATE') ||
+        type === 'LINE_UPDATE_STATUS' ||
+        type === 'LINE_EDGE_UPDATE_STATUS' ||
+        type === 'LINE_UNDO_STATUS' ||
+        type === 'LINE_EDGE_UNDO_STATUS' ||
+        type === 'LINE_ONE_CLICK_DELIVERED' ||
+        type === 'LINE_UPDATE_ORDER' ||
+        type === 'LINE_SET_HOLIDAY'
+      );
+    }
+    if (filterAction === 'DELETE') {
+      return type.startsWith('DELETE') || type === 'LINE_DELETE_ORDER';
+    }
+    return type.startsWith(filterAction);
+  };
+
   const filteredLogs = useMemo(() => {
     const now = Date.now();
     return logs.filter(log => {
-      if (filterAction !== 'ALL' && !log.actionType.startsWith(filterAction)) return false;
+      if (!matchesFilterAction(log)) return false;
       if (filterTime > 0 && (now - log.timestamp) > filterTime * 60 * 60 * 1000) return false;
       if (searchWord && !log.target.toLowerCase().includes(searchWord.toLowerCase()) && !log.details.toLowerCase().includes(searchWord.toLowerCase())) return false;
       return true;
     });
   }, [logs, filterAction, filterTime, searchWord]);
   
-  const getActionStyles = (actionType: string) => {
+  const getActionStyles = (actionType: string, detailsStr?: string) => {
+    const isLiffSource = Boolean(
+      detailsStr && (detailsStr.includes('"source":"LIFF"') || detailsStr.includes('"source": "LIFF"'))
+    );
+    if (
+      actionType === 'LINE_UPDATE_STATUS' ||
+      actionType === 'LINE_EDGE_UPDATE_STATUS' ||
+      actionType === 'LINE_UNDO_STATUS' ||
+      actionType === 'LINE_EDGE_UNDO_STATUS' ||
+      actionType === 'LINE_ONE_CLICK_DELIVERED'
+    ) {
+      return {
+        icon: <Edit2 className="w-5 h-5 text-teal-600" />,
+        bg: 'bg-teal-50',
+        text: 'text-teal-700',
+        border: 'border-teal-200',
+        ring: 'ring-teal-100',
+        label: actionType.includes('UNDO') ? 'LINE 復原' : 'LINE 改狀態'
+      };
+    }
+    if (actionType === 'LINE_UPDATE_ORDER') {
+      return {
+        icon: <Edit2 className="w-5 h-5 text-teal-600" />,
+        bg: 'bg-teal-50',
+        text: 'text-teal-700',
+        border: 'border-teal-200',
+        ring: 'ring-teal-100',
+        label: 'LINE 改單'
+      };
+    }
+    if (actionType === 'LINE_SET_HOLIDAY') {
+      return {
+        icon: <Edit2 className="w-5 h-5 text-amber-600" />,
+        bg: 'bg-amber-50',
+        text: 'text-amber-700',
+        border: 'border-amber-200',
+        ring: 'ring-amber-100',
+        label: 'LINE 公休'
+      };
+    }
+    if (actionType === 'LINE_DELETE_ORDER') {
+      return {
+        icon: <Trash2 className="w-5 h-5 text-rose-500" />,
+        bg: 'bg-rose-50',
+        text: 'text-rose-700',
+        border: 'border-rose-200',
+        ring: 'ring-rose-100',
+        label: 'LINE 刪單'
+      };
+    }
     if (actionType === 'UPDATE_ORDER_BATCH') {
       return {
         icon: <Edit2 className="w-5 h-5 text-indigo-500" />,
@@ -79,7 +156,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
         text: 'text-emerald-700',
         border: 'border-emerald-200',
         ring: 'ring-emerald-100',
-        label: '新增'
+        label: isLiffSource ? 'LIFF 新增' : '新增'
       };
     }
     if (actionType.startsWith('UPDATE')) {
@@ -89,7 +166,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
         text: 'text-amber-700',
         border: 'border-amber-200',
         ring: 'ring-amber-100',
-        label: '修改'
+        label: actionType === 'UPDATE_CUSTOMER' ? '店家資料' : '修改'
       };
     }
     if (actionType.startsWith('DELETE')) {
@@ -123,9 +200,11 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
   const renderHumanReadableDetails = (actionType: string, parsedJson: any) => {
     const renderStatusBadge = (status: string) => {
       const statusMap: Record<string, { label: string, classes: string }> = {
-        'PAID': { label: '已結帳', classes: 'bg-emerald-100 text-emerald-700 border border-emerald-200' },
-        'PENDING': { label: '待處理', classes: 'bg-rose-100 text-rose-700 border border-rose-200' }, 
+        'PAID': { label: '已收款', classes: 'bg-emerald-100 text-emerald-700 border border-emerald-200' },
+        'PAID_UNSHIPPED': { label: '已收未配', classes: 'bg-teal-100 text-teal-700 border border-teal-200' },
+        'PENDING': { label: '待出貨', classes: 'bg-rose-100 text-rose-700 border border-rose-200' }, 
         'SHIPPED': { label: '已配送', classes: 'bg-blue-100 text-blue-700 border border-blue-200' },
+        'CANCELLED': { label: '已取消', classes: 'bg-slate-200 text-slate-600 border border-slate-300' },
       };
       const config = statusMap[status] || { label: status, classes: 'bg-slate-100 text-slate-600 border border-slate-200' };
       
@@ -136,18 +215,20 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
       );
     };
 
+    const operatorName = parsedJson?.operator && parsedJson.operator !== '未知' ? parsedJson.operator : '';
+
     // === 1. 新增訂單 ===
     if (actionType === 'CREATE_ORDER') {
       const payload = parsedJson.payload || {};
       const customerName = payload.customerName || '未知店家';
-      // 日誌中存的 payload.deliveryDate 可能為 yyyy-MM-dd
       const deliveryDate = payload.deliveryDate || '未指定日期';
       const items = parsedJson.items || payload.items || [];
+      const source = parsedJson.source || payload.source || '';
       
       return (
         <div className="space-y-3 mt-2 bg-emerald-50/80 p-3.5 rounded-xl border border-emerald-100">
-          <p className="text-sm sm:text-base font-bold text-slate-800 flex items-center gap-1.5">
-            ✅ <span>向【<span className="text-emerald-700 text-lg">{customerName}</span>】建立了一筆 <span className="text-indigo-600 underline decoration-indigo-200 underline-offset-4">{deliveryDate}</span> 的訂單</span>
+          <p className="text-sm sm:text-base font-bold text-slate-800 flex flex-wrap items-center gap-1.5">
+            ✅ <span>{operatorName ? `【${operatorName}】` : ''}向【<span className="text-emerald-700 text-lg">{customerName}</span>】建立了一筆 <span className="text-indigo-600 underline decoration-indigo-200 underline-offset-4">{deliveryDate}</span> 的訂單{source === 'LIFF' ? '（LINE LIFF）' : ''}</span>
           </p>
           <div className="bg-white p-3 rounded-lg border border-emerald-100 shadow-sm">
             <p className="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1">
@@ -155,11 +236,8 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
             </p>
             <ul className="space-y-1.5 pl-1">
               {items.map((item: any, idx: number) => {
-                // 如果存下來的 productName 剛好就是 ID（代表建立時沒抓到名字），就當作無效
                 const validSavedName = item.productName && item.productName !== item.productId ? item.productName : null;
-                // 嘗試即時從現有商品清單找
                 const pNameFromStore = products.find(p => p.id === item.productId)?.name;
-                
                 const pName = pNameFromStore || validSavedName || item.productId || '未知商品';
 
                 return (
@@ -174,43 +252,58 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
       );
     }
 
-    // === 2. 訂單修改/狀態變更 (拔除 UUID、字體放大、導入狀態字典) ===
-    if (actionType === 'UPDATE_ORDER_BATCH' || actionType === 'UPDATE_ORDER' || actionType === 'UPDATE_ORDER_STATUS') {
-      // 嘗試從不同結構中抽出資料 (相容新舊日誌結構)
-      const isLegacyArray = Array.isArray(parsedJson.updates);
-      const updatesData = isLegacyArray ? parsedJson.updates : (parsedJson?.updates?.updates || parsedJson?.diff?.updates || []);
-      const customerName = isLegacyArray ? '多筆訂單 (批次)' : (parsedJson?.updates?.customerName || parsedJson?.diff?.customerName || '未知店家');
-      const deliveryDate = isLegacyArray ? '' : (parsedJson?.updates?.deliveryDate || '');
+    // === 1.5 LINE 按鈕 / Worker Edge 狀態變更 ===
+    if (
+      actionType === 'LINE_UPDATE_STATUS' ||
+      actionType === 'LINE_EDGE_UPDATE_STATUS' ||
+      actionType === 'LINE_UNDO_STATUS' ||
+      actionType === 'LINE_EDGE_UNDO_STATUS' ||
+      actionType === 'LINE_ONE_CLICK_DELIVERED'
+    ) {
+      const nextSt = parsedJson.newStatus || parsedJson.restoredStatus || '';
+      const prevSt = parsedJson.prevStatus || '';
+      const isEdge = actionType.includes('EDGE');
+      const isUndo = actionType.includes('UNDO');
+      const isOneClick = actionType === 'LINE_ONE_CLICK_DELIVERED';
+      const deliveryDate = parsedJson.deliveryDate || '';
 
       return (
-        <div className="space-y-3 mt-2 bg-amber-50/50 p-4 rounded-xl border border-amber-100">
-          <p className="text-sm sm:text-base font-bold text-slate-800 flex items-center gap-1.5">
-            🔄 <span>修改了【<span className="text-amber-700 text-lg">{customerName}</span>】{deliveryDate && `在 ${deliveryDate} `}的狀態</span>
+        <div className="space-y-3 mt-2 bg-teal-50/70 p-4 rounded-xl border border-teal-200">
+          <p className="text-sm sm:text-base font-bold text-slate-800">
+            📱 {operatorName ? `【${operatorName}】` : '同仁'}透過 LINE{isEdge ? '（Edge 秒回按鈕）' : ''}{isOneClick ? '一鍵回報送達' : isUndo ? '復原了訂單狀態' : '更新了訂單狀態'}
+            {deliveryDate ? ` · 日期 ${deliveryDate}` : ''}
           </p>
-          
-          {updatesData.length > 0 && (
-            <div className="space-y-2 mt-2">
-              {updatesData.map((update: any, idx: number) => (
-                 <div key={idx} className="bg-white px-4 py-3 rounded-lg border border-amber-100 shadow-sm flex items-center gap-3">
-                   {/* 原本的狀態 (帶有刪除線與透明度) */}
-                   {update.originalStatus && (
-                     <div className="opacity-60 relative group">
-                       {renderStatusBadge(update.originalStatus)}
-                       {/* 掛上一條刪除線 */}
-                       <div className="absolute inset-0 top-1/2 h-[2px] bg-slate-400 -translate-y-1/2 w-full"></div>
-                     </div>
-                   )}
-                   
-                   {/* 轉換箭頭 */}
-                   {update.originalStatus && (
-                     <ArrowRight className="w-5 h-5 text-amber-300" />
-                   )}
-                   
-                   {/* 變更後的狀態 (清晰搶眼) */}
-                   <div className="scale-105 origin-left">
-                     {renderStatusBadge(update.status || update.originalStatus)}
-                   </div>
-                 </div>
+          <div className="bg-white px-4 py-3 rounded-lg border border-teal-100 shadow-sm flex flex-wrap items-center gap-3">
+            {prevSt && (
+              <>
+                <div className="opacity-60 relative">
+                  {renderStatusBadge(prevSt)}
+                  <div className="absolute inset-0 top-1/2 h-[2px] bg-slate-400 -translate-y-1/2 w-full"></div>
+                </div>
+                <ArrowRight className="w-5 h-5 text-teal-400" />
+              </>
+            )}
+            <div>{renderStatusBadge(nextSt)}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // === 1.6 LINE Bot 改單 ===
+    if (actionType === 'LINE_UPDATE_ORDER') {
+      const od = parsedJson.orderData || {};
+      const items = Array.isArray(od.items) ? od.items : [];
+      return (
+        <div className="space-y-3 mt-2 bg-teal-50/70 p-4 rounded-xl border border-teal-200">
+          <p className="text-sm sm:text-base font-bold text-slate-800">
+            📱 {operatorName ? `【${operatorName}】` : '同仁'}透過 LINE 修改了【{od.customerName || '店家'}】{od.deliveryDate ? ` (${od.deliveryDate}) ` : ''}的訂單內容
+          </p>
+          {items.length > 0 && (
+            <div className="bg-white p-3 rounded-lg border border-teal-100 shadow-sm space-y-1">
+              {items.map((item: any, idx: number) => (
+                <div key={idx} className="text-sm font-bold text-slate-700">
+                  • {item.productName || item.productId} × <span className="text-indigo-600">{item.quantity} {item.unit || '斤'}</span>
+                </div>
               ))}
             </div>
           )}
@@ -218,36 +311,115 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
       );
     }
 
-    // === 3. 刪除類日誌 (涵蓋 Order, Customer, Product) ===
-    if (actionType.startsWith('DELETE_')) {
-      const targetType = actionType.replace('DELETE_', '');
-      
-      // 將艱澀的模組對應成白話文來源
+    // === 1.7 店家資料／公休異動（網頁 / LIFF / LINE Bot） ===
+    if (actionType === 'UPDATE_CUSTOMER' || actionType === 'LINE_SET_HOLIDAY') {
+      const cust = parsedJson.data || parsedJson || {};
+      const weekdayLabels = ['日', '一', '二', '三', '四', '五', '六'];
+      const offDays: number[] = Array.isArray(cust.offDays) ? cust.offDays : [];
+      const holidayDates: string[] = Array.isArray(cust.holidayDates) ? cust.holidayDates : [];
+      return (
+        <div className="space-y-2.5 mt-2 bg-amber-50/60 p-4 rounded-xl border border-amber-200">
+          <p className="text-sm sm:text-base font-bold text-slate-800">
+            🏖️ {operatorName ? `【${operatorName}】` : ''}{actionType === 'LINE_SET_HOLIDAY' ? '透過 LINE ' : ''}更新了【{cust.name || '店家'}】的公休／店家設定
+          </p>
+          <div className="bg-white p-3 rounded-lg border border-amber-100 text-xs sm:text-sm text-slate-700 space-y-1.5 font-medium">
+            <div>每週固定休：{offDays.length > 0 ? offDays.map(d => `週${weekdayLabels[d] ?? d}`).join('、') : '無'}</div>
+            <div>特定公休日：{holidayDates.length > 0 ? holidayDates.slice(-8).join('、') : '無'}</div>
+            {cust.isPaused !== undefined && (
+              <div>暫停供貨狀態：<span className="font-bold">{cust.isPaused ? '已暫停供貨' : '正常供貨'}</span></div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // === 2. 訂單修改/狀態變更 (拔除 UUID、字體放大、導入狀態字典) ===
+    if (actionType === 'UPDATE_ORDER_BATCH' || actionType === 'UPDATE_ORDER' || actionType === 'UPDATE_ORDER_STATUS') {
+      const isLegacyArray = Array.isArray(parsedJson.updates);
+      const updatesData = isLegacyArray ? parsedJson.updates : (parsedJson?.updates?.updates || parsedJson?.diff?.updates || []);
+      const customerName = isLegacyArray
+        ? (updatesData[0]?.customerName || '多筆訂單 (批次)')
+        : (parsedJson?.updates?.customerName || parsedJson?.diff?.customerName || '未知店家');
+      const deliveryDate = isLegacyArray ? (updatesData[0]?.deliveryDate || '') : (parsedJson?.updates?.deliveryDate || parsedJson?.diff?.deliveryDate || '');
+      const editedItems = Array.isArray(parsedJson?.diff?.items) ? parsedJson.diff.items : [];
+
+      return (
+        <div className="space-y-3 mt-2 bg-amber-50/50 p-4 rounded-xl border border-amber-100">
+          <p className="text-sm sm:text-base font-bold text-slate-800 flex flex-wrap items-center gap-1.5">
+            🔄 <span>{operatorName ? `【${operatorName}】` : ''}修改了【<span className="text-amber-700 text-lg">{customerName}</span>】{deliveryDate && `在 ${deliveryDate} `}的{updatesData.length > 0 ? '狀態' : '訂單內容'}</span>
+          </p>
+          
+          {updatesData.length > 0 && (
+            <div className="space-y-2 mt-2">
+              {updatesData.map((update: any, idx: number) => (
+                 <div key={idx} className="bg-white px-4 py-3 rounded-lg border border-amber-100 shadow-sm flex flex-wrap items-center justify-between gap-2">
+                   {updatesData.length > 1 && update.customerName && (
+                     <span className="text-xs font-bold text-slate-700 mr-2">{update.customerName}</span>
+                   )}
+                   <div className="flex items-center gap-3">
+                     {update.originalStatus && (
+                       <div className="opacity-60 relative group">
+                         {renderStatusBadge(update.originalStatus)}
+                         <div className="absolute inset-0 top-1/2 h-[2px] bg-slate-400 -translate-y-1/2 w-full"></div>
+                       </div>
+                     )}
+                     
+                     {update.originalStatus && (
+                       <ArrowRight className="w-5 h-5 text-amber-300" />
+                     )}
+                     
+                     <div className="scale-105 origin-left">
+                       {renderStatusBadge(update.status || update.originalStatus)}
+                     </div>
+                   </div>
+                 </div>
+              ))}
+            </div>
+          )}
+
+          {updatesData.length === 0 && editedItems.length > 0 && (
+            <div className="bg-white p-3 rounded-lg border border-amber-100 shadow-sm space-y-1">
+              {editedItems.map((item: any, idx: number) => {
+                const pName = item.productName || products.find(p => p.id === item.productId)?.name || item.productId;
+                return (
+                  <div key={idx} className="text-sm font-bold text-slate-700">
+                    • {pName} × <span className="text-indigo-600">{item.quantity} {item.unit || '斤'}</span>
+                  </div>
+                );
+              })}
+              {parsedJson?.diff?.note && (
+                <div className="text-xs text-amber-700 pt-1">備註：{parsedJson.diff.note}</div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // === 3. 刪除類日誌 (涵蓋 Order, Customer, Product, LINE_DELETE_ORDER) ===
+    if (actionType.startsWith('DELETE_') || actionType === 'LINE_DELETE_ORDER') {
+      const targetType = actionType === 'LINE_DELETE_ORDER' ? 'ORDER' : actionType.replace('DELETE_', '');
       const sourceName = targetType === 'ORDER' ? '每日訂單' : targetType === 'CUSTOMER' ? '店家名單' : targetType === 'PRODUCT' ? '商品庫存' : '系統資料';
-      
-      // 優先取用後端傳來的新版明確名稱，若無則降級顯示 ID
       const deletedName = parsedJson.deletedName || parsedJson.deletedId || '未知資料';
-      // 如果是訂單，嘗試把日期也串上去
-      const deleteDate = parsedJson.deletedDate ? ` (日期: ${parsedJson.deletedDate})` : '';
+      const deleteDate = parsedJson.deletedDate || parsedJson.deliveryDate ? ` (日期: ${parsedJson.deletedDate || parsedJson.deliveryDate})` : '';
 
       return (
         <div className="mt-2 bg-rose-50/80 p-4 rounded-xl border border-rose-200 flex items-start gap-3 shadow-sm">
-          {/* 左側放大的警示圖示 */}
           <div className="bg-white p-2 rounded-lg shadow-sm border border-rose-100 flex-shrink-0">
             <span className="text-xl sm:text-2xl">🗑️</span>
           </div>
           
           <div className="flex-1 pt-0.5">
             <p className="text-sm sm:text-base font-bold text-rose-900 leading-relaxed">
-              您從【{sourceName}】中<span className="text-rose-600 underline underline-offset-4 decoration-rose-300 mx-1">永久移除</span>了以下資料：
+              {operatorName ? `【${operatorName}】` : '您'}{actionType === 'LINE_DELETE_ORDER' ? '透過 LINE ' : ''}從【{sourceName}】中<span className="text-rose-600 underline underline-offset-4 decoration-rose-300 mx-1">永久移除</span>了以下資料：
             </p>
-            {/* 巨大化的刪除目標，視覺焦點在此 */}
-            <p className="text-base sm:text-lg font-bold text-rose-700 mt-1.5 bg-rose-100/50 inline-block px-3 py-1 rounded-lg border border-rose-100">
-              「{deletedName}{deleteDate}」
-            </p>
-            {/* 工程師或查修專用的幽靈 ID */}
+            {actionType !== 'LINE_DELETE_ORDER' && (
+              <p className="text-base sm:text-lg font-bold text-rose-700 mt-1.5 bg-rose-100/50 inline-block px-3 py-1 rounded-lg border border-rose-100">
+                「{deletedName}{deleteDate}」
+              </p>
+            )}
             <p className="text-[11px] sm:text-xs text-rose-400 mt-2 font-mono">
-              系統代碼：{parsedJson.deletedId || '無'}
+              {parsedJson.deletedId ? `系統代碼：${parsedJson.deletedId}` : deleteDate}
             </p>
           </div>
         </div>
@@ -474,6 +646,12 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
                    刪除
                 </button>
                 <button
+                  onClick={() => setFilterAction('LINE')}
+                  className={`py-1.5 px-3 whitespace-nowrap rounded-lg text-[11px] font-bold transition-all border ${filterAction === 'LINE' ? 'bg-teal-50 text-teal-700 border-teal-200' : 'bg-white text-slate-500 border-slate-200 hover:border-teal-200'}`}
+                >
+                   LINE
+                </button>
+                <button
                   onClick={() => setFilterAction('SYSTEM')}
                   className={`py-1.5 px-3 whitespace-nowrap rounded-lg text-[11px] font-bold transition-all border ${filterAction === 'SYSTEM' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-200'}`}
                 >
@@ -499,7 +677,7 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
           <div className="relative pl-6 space-y-6 before:absolute before:inset-0 before:ml-[1.4rem] before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent mt-8">
             <AnimatePresence>
             {filteredLogs.map(log => {
-              const styles = getActionStyles(log.actionType);
+              const styles = getActionStyles(log.actionType, log.details);
               const isExpanded = expandedLogId === log.id;
               const parsedJson = parseDetails(log.details);
               
@@ -520,10 +698,15 @@ export function SystemLogViewer({ apiEndpoint }: Props) {
 
                 <div className="flex-1 ml-4 bg-white rounded-2xl p-4 shadow-sm border border-slate-100 hover:border-indigo-100 transition-all text-left w-full">
                   <div className="flex justify-between items-start mb-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <div className={`px-2.5 py-1 rounded-lg text-[10px] font-black tracking-widest ${styles.bg} ${styles.text}`}>
                         {styles.label || log.actionType}
                       </div>
+                      {parsedJson?.operator && parsedJson.operator !== '未知' && (
+                        <span className="text-[11px] font-bold text-slate-500">
+                          操作：{parsedJson.operator}
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-0.5">
                        <span className="text-slate-400 text-xs font-bold leading-none">
