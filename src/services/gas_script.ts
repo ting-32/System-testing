@@ -366,16 +366,26 @@ function doPost(e) {
         }
         break;
       }
-      case "deleteOrder":
+      case "deleteOrder": {
         result = deleteOrder(params.data);
-        writeSystemLog("DELETE_ORDER", `Order ID: ${params.data.id || "未知"}`, JSON.stringify({
+        const delCustomer = (result && result.customerName) || params.data.customerName || "";
+        const delOrderId = params.data.id || params.data.orderId || "未知";
+        const delTargetLabel = delCustomer && delCustomer !== "未知店家"
+          ? `${delCustomer} (Order ID: ${delOrderId})`
+          : `Order ID: ${delOrderId}`;
+        writeSystemLog("DELETE_ORDER", delTargetLabel, JSON.stringify({
           operator: tokenPayload ? tokenPayload.name : '未知',
           role: tokenPayload ? tokenPayload.role : '',
-          deletedId: params.data.id,
-          deletedName: params.data.customerName || "未知店家",
-          deletedDate: params.data.deliveryDate || ""
+          source: params.data.source || '',
+          deletedId: delOrderId,
+          deletedName: delCustomer || "未知店家",
+          deletedDate: (result && result.deliveryDate) || params.data.deliveryDate || "",
+          deletedItems: (result && Array.isArray(result.items) && result.items.length > 0)
+            ? result.items
+            : (Array.isArray(params.data.items) ? params.data.items : [])
         }));
         break;
+      }
       case "batchDeleteOrders":
         result = handleBatchDeleteOrders(params.data || params, tokenPayload);
         break;
@@ -391,7 +401,7 @@ function doPost(e) {
           data: params.data
         }));
         break;
-            case "deleteCustomer": {
+      case "deleteCustomer": {
         let custSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("CUSTOMERS") || SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Customers");
         if (!custSheet) {
           return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到工作表" })).setMimeType(ContentService.MimeType.JSON);
@@ -409,6 +419,7 @@ function doPost(e) {
         if (deleted) {
           try { CacheService.getScriptCache().remove("APP_CACHE_CPT"); } catch (err) {}
           writeSystemLog("DELETE_CUSTOMER", "Customer ID: " + (targetId || "未知"), JSON.stringify({
+            operator: tokenPayload ? tokenPayload.name : '未知',
             deletedId: targetId,
             deletedName: params.data.name || "未知店家"
           }));
@@ -419,32 +430,46 @@ function doPost(e) {
       }
       case "updateProduct":
         result = updateProduct(params.data);
-        writeSystemLog("UPDATE_PRODUCT", params.data.name || "未知", JSON.stringify({ data: params.data }));
+        writeSystemLog("UPDATE_PRODUCT", params.data.name || "未知", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          data: params.data
+        }));
         break;
       case "deleteProduct":
         result = deleteProduct(params.data);
         writeSystemLog("DELETE_PRODUCT", `Product ID: ${params.data.id || "未知"}`, JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
           deletedId: params.data.id,
           deletedName: params.data.name || "未知商品"
         }));
         break;
       case "checkUpdates":
-        result = checkUpdates(params.data);
+        result = checkUpdates(params.data, tokenPayload);
         break;
       case "getOrder":
         result = getOrder(params.data);
         break;
       case "saveTrips":
         result = saveTrips(params.data);
-        writeSystemLog("UPDATE_TRIPS", "車趟清單", JSON.stringify({ count: (params.data.trips || []).length }));
+        writeSystemLog("UPDATE_TRIPS", "車趟清單", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          count: (params.data.trips || []).length,
+          trips: params.data.trips || []
+        }));
         break;
       case "saveSettings":
         result = saveSettings(params.data);
-        writeSystemLog("UPDATE_SETTINGS", "APP 設定/提醒規則", JSON.stringify({ data: params.data }));
+        writeSystemLog("UPDATE_SETTINGS", "APP 設定/提醒規則", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          data: params.data
+        }));
         break;
       case "testLineMessage":
         result = testLineMessage(params.data);
-        writeSystemLog("SYSTEM_TEST_MSG", "LINE Notify", JSON.stringify({ msg: "Triggered test message" }));
+        writeSystemLog("SYSTEM_TEST_MSG", "LINE Notify", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          msg: "Triggered test message"
+        }));
         break;
       case "setupLineRichMenu":
         result = handleSetupLineRichMenu(params.data || params, tokenPayload);
@@ -452,7 +477,11 @@ function doPost(e) {
         break;
       case "testRule":
         result = checkReminders(params.data.ruleId);
-        writeSystemLog("SYSTEM_TEST_RULE", `Rule ID: ${params.data.ruleId}`, JSON.stringify({ action: "testRule" }));
+        writeSystemLog("SYSTEM_TEST_RULE", `Rule ID: ${params.data.ruleId}`, JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          ruleId: params.data.ruleId,
+          action: "testRule"
+        }));
         break;
       case "dryRunRule":
         result = checkReminders(params.data.ruleId, true);
@@ -462,25 +491,37 @@ function doPost(e) {
         break;
       case "sendBriefingNow":
         result = runDailyBriefingCheck(false, true, params.data?.briefing || null);
-        writeSystemLog("SEND_DAILY_BRIEFING", "手動發送每日出車簡報", JSON.stringify({ action: "sendBriefingNow" }));
+        writeSystemLog("SEND_DAILY_BRIEFING", "手動發送每日出車簡報", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '未知',
+          action: "sendBriefingNow"
+        }));
         break;
       case "getNotificationLogs":
         result = getNotificationLogs();
         break;
       case "getSystemLogs":
-        result = getSystemLogs(params.data?.limit || 200);
+        result = getSystemLogs(params.data || {});
         break;
       case "triggerAutoOrders":
         result = generateTomorrowDefaultOrders(params.data?.dates);
-        writeSystemLog("TRIGGER_AUTO_ORDERS", "觸發自動建單", JSON.stringify(result));
+        writeSystemLog("TRIGGER_AUTO_ORDERS", "觸發自動建單", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '系統排程',
+          result: result
+        }));
         break;
       case "syncLineOrders":
         result = syncLineOrders();
-        writeSystemLog("SYNC_LINE_ORDERS", "同步 LINE 訂單", JSON.stringify(result));
+        writeSystemLog("SYNC_LINE_ORDERS", "同步 LINE 訂單", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '系統',
+          result: result
+        }));
         break;
       case "backfillMissingOrderPrices":
         result = backfillMissingOrderPrices();
-        writeSystemLog("BACKFILL_ORDER_PRICES", "補齊訂單單價小計", JSON.stringify(result));
+        writeSystemLog("BACKFILL_ORDER_PRICES", "補齊訂單單價小計", JSON.stringify({
+          operator: tokenPayload ? tokenPayload.name : '管理員',
+          result: result
+        }));
         break;
       default:
         throw new Error("Unknown action: " + action);
@@ -553,10 +594,12 @@ function updateGlobalTimestamp() {
   }
 }
 
-function checkUpdates(data) {
+function checkUpdates(data, currentUser = null) {
   // 新增審計日誌攔截 (只有前端帶 auditObj 時才寫入)
   if (data && data.auditObj) {
     writeSystemLog("SYSTEM_DATA_ACCESS", "資料手動同步與檢視", JSON.stringify({
+      operator: currentUser ? currentUser.name : '',
+      role: currentUser ? currentUser.role : '',
       deviceId: data.auditObj.deviceId || "未知",
       method: data.auditObj.isManual ? "手動重整" : "初次載入",
       userAgent: data.auditObj.userAgent
@@ -2230,15 +2273,18 @@ function deleteOrder(data) {
     const lastUpdatedColIdx = headerMap["LastUpdated"];
     const versionColIdx = headerMap["Version"];
     const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
-    const totalCols = sheet.getMaxColumns();
+    const productColIdx = headerMap["ProductName"] !== undefined ? headerMap["ProductName"] : (headerMap["品項"] !== undefined ? headerMap["品項"] : 5);
+    const qtyColIdx = headerMap["Quantity"] !== undefined ? headerMap["Quantity"] : (headerMap["數量"] !== undefined ? headerMap["數量"] : 6);
+    const unitColIdx = headerMap["Unit"] !== undefined ? headerMap["Unit"] : (headerMap["單位"] !== undefined ? headerMap["單位"] : 10);
     const values = sheet.getDataRange().getValues();
-    const targetId = String(data.id).trim();
+    const targetId = String(data.id || data.orderId || '').trim();
 
     let modified = false;
     let newVersion = 0;
-    
-    if (!cachedTimeZone) cachedTimeZone = SS.getSpreadsheetTimeZone() || "Asia/Taipei";
-    const tsString = Utilities.formatDate(new Date(), cachedTimeZone, "yyyy/MM/dd HH:mm:ss");
+    let deletedCustomerName = '';
+    let deletedDeliveryDate = '';
+    const deletedItems = [];
+    const rowsToUpdate = [];
 
     // Conflict check first
     for (let i = 1; i < values.length; i++) {
@@ -2249,13 +2295,26 @@ function deleteOrder(data) {
       }
     }
 
-    // Update rows
+    // Update rows & capture deleted order details
     for (let i = 1; i < values.length; i++) {
       // 匹配 ID 欄位 (通常在 Col 2，也就是 values[i][1])
       if (String(values[i][1]).trim() === targetId) {
         if (!modified) {
           newVersion = Number(values[i][versionColIdx] || 0) + 1;
+          deletedCustomerName = String(values[i][2] || '').trim();
+          deletedDeliveryDate = normalizeDateStr(values[i][3]);
           modified = true;
+        }
+
+        const itemName = String(values[i][productColIdx] || '').trim();
+        const itemQty = values[i][qtyColIdx];
+        const itemUnit = String(values[i][unitColIdx] || '斤').trim() || '斤';
+        if (itemName) {
+          deletedItems.push({
+            productName: itemName,
+            quantity: itemQty !== '' && itemQty !== undefined ? Number(itemQty) || itemQty : 0,
+            unit: itemUnit
+          });
         }
         
         // Update Status, LastUpdated, Version in memory
@@ -2268,14 +2327,21 @@ function deleteOrder(data) {
         
         values[i][lastUpdatedColIdx] = String(new Date().getTime());
         values[i][versionColIdx] = newVersion;
+        rowsToUpdate.push(i + 1);
       }
     }
 
-    if (modified && values.length > 1) {
-      safeSetValues(sheet, 2, 1, values.slice(1));
+    if (rowsToUpdate.length > 0) {
+      flushUpdatedRows_(sheet, values, rowsToUpdate);
       invalidateLineCaches({ orders: true });
     }
-    return true;
+    return {
+      success: true,
+      id: targetId,
+      customerName: deletedCustomerName || data.customerName || '',
+      deliveryDate: deletedDeliveryDate || data.deliveryDate || '',
+      items: deletedItems.length > 0 ? deletedItems : (Array.isArray(data.items) ? data.items : [])
+    };
   } finally {
     lock.releaseLock();
   }
@@ -7765,7 +7831,8 @@ function prepareLineWriteAction(intent, lineUser, ss, todayStr, timeZone, preloa
       action: 'DELETE_ORDER',
       orderId: targetOrder.orderId,
       customerName: targetOrder.customerName,
-      deliveryDate: targetOrder.deliveryDate
+      deliveryDate: targetOrder.deliveryDate,
+      items: targetOrder.items
     };
     const itemsStr = targetOrder.items.map(it => `• ${it.productName} × ${it.quantity} ${it.unit}`).join('\n');
     previewText =
@@ -7931,7 +7998,7 @@ function executeLinePendingAction(pending, lineUser, replyContext) {
     if (!hasPermission(role, 'canDeleteOrders')) {
       return "🔒 權限不足：僅限最高管理員可刪除訂單。";
     }
-    deleteOrder({ id: pending.orderId, force: true });
+    const delResult = deleteOrder({ id: pending.orderId, force: true });
     updateGlobalTimestamp();
     SpreadsheetApp.flush();
     const msg = `✅ 訂單已刪除！\n━━━━━━━━━━━━━━\n🏪 客戶：${pending.customerName}\n📅 日期：${pending.deliveryDate}\n🆔 單號：${pending.orderId}\n👤 操作同仁：${lineUser.name}`;
@@ -7939,7 +8006,14 @@ function executeLinePendingAction(pending, lineUser, replyContext) {
       msg,
       "LINE_DELETE_ORDER",
       `${pending.customerName} (${pending.orderId})`,
-      { operator: lineUser.name, role: role, deliveryDate: pending.deliveryDate }
+      {
+        operator: lineUser.name,
+        role: role,
+        deletedId: pending.orderId,
+        deletedName: (delResult && delResult.customerName) || pending.customerName,
+        deletedDate: (delResult && delResult.deliveryDate) || pending.deliveryDate,
+        deletedItems: (delResult && Array.isArray(delResult.items) && delResult.items.length > 0) ? delResult.items : (pending.items || [])
+      }
     );
   }
 
@@ -8899,22 +8973,93 @@ function writeSystemLog(actionType, target, detailsStr) {
   }
 }
 
-function getSystemLogs(limit) {
-  limit = limit || 100;
+function formatSystemLogTimestamp(rawVal) {
+  if (rawVal instanceof Date && !isNaN(rawVal.getTime())) {
+    return {
+      timestampStr: Utilities.formatDate(rawVal, "Asia/Taipei", "yyyy-MM-dd HH:mm:ss"),
+      timestamp: rawVal.getTime()
+    };
+  }
+  const str = String(rawVal || "").trim();
+  if (!str) return { timestampStr: "", timestamp: 0 };
+
+  const bareMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+  if (bareMatch) {
+    const pad = (n) => String(n || "0").padStart(2, "0");
+    const isoTaipei = `${bareMatch[1]}-${pad(bareMatch[2])}-${pad(bareMatch[3])}T${pad(bareMatch[4])}:${pad(bareMatch[5])}:${pad(bareMatch[6])}+08:00`;
+    const parsedBare = new Date(isoTaipei);
+    if (!isNaN(parsedBare.getTime())) {
+      return {
+        timestampStr: Utilities.formatDate(parsedBare, "Asia/Taipei", "yyyy-MM-dd HH:mm:ss"),
+        timestamp: parsedBare.getTime()
+      };
+    }
+  }
+
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return {
+      timestampStr: Utilities.formatDate(parsed, "Asia/Taipei", "yyyy-MM-dd HH:mm:ss"),
+      timestamp: parsed.getTime()
+    };
+  }
+  return { timestampStr: str, timestamp: 0 };
+}
+
+function getSystemLogs(limitOrOptions) {
+  const isOpts = limitOrOptions && typeof limitOrOptions === 'object';
+  const opts = isOpts ? limitOrOptions : { limit: limitOrOptions };
+  const offset = Math.max(0, Number(opts.offset) || 0);
+  const batchSize = Math.min(3000, Math.max(1, Number(opts.batchSize || opts.limit) || 200));
+  const days = Math.max(0, Number(opts.days) || 0);
+  const includeMeta = Boolean(opts.includeMeta);
+
   const sheet = getSystemLogSheet();
   const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return [];
-  
-  const startRow = Math.max(2, lastRow - limit + 1);
-  const numRows = lastRow - startRow + 1;
+  const totalRows = Math.max(0, lastRow - 1);
+  if (totalRows === 0) {
+    return includeMeta ? { logs: [], totalRows: 0, hasMore: false, paged: true } : [];
+  }
+
+  const endRow = lastRow - offset;
+  if (endRow < 2) {
+    return includeMeta ? { logs: [], totalRows: totalRows, hasMore: false, paged: true } : [];
+  }
+
+  const startRow = Math.max(2, endRow - batchSize + 1);
+  const numRows = endRow - startRow + 1;
   const rawValues = sheet.getRange(startRow, 1, numRows, 4).getValues();
-  
-  return rawValues.reverse().map(row => ({
-    timestampStr: String(row[0]),
-    actionType: String(row[1]),
-    target: String(row[2]),
-    details: String(row[3])
-  }));
+  const cutoffTs = days > 0 ? (Date.now() - days * 24 * 60 * 60 * 1000) : 0;
+
+  const logs = [];
+  let reachedCutoff = false;
+  const reversed = rawValues.reverse();
+  for (let i = 0; i < reversed.length; i++) {
+    const row = reversed[i];
+    const tsInfo = formatSystemLogTimestamp(row[0]);
+    if (cutoffTs > 0 && tsInfo.timestamp > 0 && tsInfo.timestamp < cutoffTs) {
+      reachedCutoff = true;
+      break;
+    }
+    logs.push({
+      timestampStr: tsInfo.timestampStr,
+      timestamp: tsInfo.timestamp,
+      actionType: String(row[1]),
+      target: String(row[2]),
+      details: String(row[3])
+    });
+  }
+
+  const hasMore = !reachedCutoff && startRow > 2;
+  if (includeMeta) {
+    return {
+      logs: logs,
+      totalRows: totalRows,
+      hasMore: hasMore,
+      paged: true
+    };
+  }
+  return logs;
 }
 
 function cleanupOldLogs() {

@@ -13,31 +13,100 @@ export class DataMapper {
     return [];
   }
 
+  private static parseTaipeiTimestamp(rawTimestamp: any, rawTimestampStr: any): { ts: number; normalizedStr: string } {
+    const formatTaipei = (ms: number): string => {
+      try {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Taipei',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hourCycle: 'h23',
+        }).formatToParts(new Date(ms));
+        const get = (type: string) => parts.find(p => p.type === type)?.value || '00';
+        return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+      } catch {
+        return '';
+      }
+    };
+
+    if (typeof rawTimestamp === 'number' && Number.isFinite(rawTimestamp) && rawTimestamp > 0) {
+      return {
+        ts: rawTimestamp,
+        normalizedStr: formatTaipei(rawTimestamp) || String(rawTimestampStr || ''),
+      };
+    }
+
+    const str = String(rawTimestampStr || '').trim();
+    if (!str) {
+      return { ts: 0, normalizedStr: '' };
+    }
+
+    // Bare "YYYY-MM-DD HH:mm:ss" or "YYYY/MM/DD HH:mm:ss" without timezone -> interpret as Asia/Taipei (+08:00)
+    const bareMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+    if (bareMatch) {
+      const pad = (v?: string) => String(v || '0').padStart(2, '0');
+      const iso = `${bareMatch[1]}-${pad(bareMatch[2])}-${pad(bareMatch[3])}T${pad(bareMatch[4])}:${pad(bareMatch[5])}:${pad(bareMatch[6])}+08:00`;
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) {
+        const ms = d.getTime();
+        return { ts: ms, normalizedStr: formatTaipei(ms) || str };
+      }
+    }
+
+    // Standard JS Date string (e.g. Google Sheets Date.toString() "Mon Nov 16 2026 14:23:05 GMT+0800 (...)") or ISO string
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      const ms = parsed.getTime();
+      return { ts: ms, normalizedStr: formatTaipei(ms) || str };
+    }
+
+    return { ts: 0, normalizedStr: str };
+  }
+
+  private static hashString(input: string): string {
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
   static mapSystemLogs(rawLogs: any): SystemLog[] {
     const list = this.extractArray(rawLogs);
+    const seenCounts = new Map<string, number>();
+
     return list.map((log: any, idx: number) => {
       if (!log || typeof log !== 'object') {
         return {
           id: `invalid_${idx}`,
           timestampStr: '',
-          timestamp: Date.now(),
+          timestamp: 0,
           actionType: 'UNKNOWN',
           target: '',
           details: String(log || '')
         };
       }
-      let ts = Date.now();
-      if (log.timestampStr) {
-        const d = new Date(String(log.timestampStr).replace(/-/g, '/'));
-        if (!isNaN(d.getTime())) ts = d.getTime();
-      }
+      const { ts, normalizedStr } = this.parseTaipeiTimestamp(log.timestamp, log.timestampStr);
+      const actionType = String(log.actionType || 'UNKNOWN');
+      const target = String(log.target || '');
+      const details = typeof log.details === 'object' ? JSON.stringify(log.details) : String(log.details || '');
+
+      const sigBase = `${ts || normalizedStr || 'na'}_${actionType}_${this.hashString(`${target}|${details}`)}`;
+      const count = (seenCounts.get(sigBase) || 0) + 1;
+      seenCounts.set(sigBase, count);
+
       return {
-        id: `${ts}_${idx}`,
-        timestampStr: log.timestampStr || '',
+        id: count === 1 ? sigBase : `${sigBase}_${count}`,
+        timestampStr: normalizedStr,
         timestamp: ts,
-        actionType: log.actionType || 'UNKNOWN',
-        target: log.target || '',
-        details: typeof log.details === 'object' ? JSON.stringify(log.details) : (log.details || '')
+        actionType,
+        target,
+        details
       };
     });
   }

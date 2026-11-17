@@ -719,10 +719,25 @@ export const useOrderActions = ({
     setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, _syncStatus: 'pending', syncStatus: 'pending', pendingAction: 'delete', _localUpdatedTs: now } : o));
 
     if (apiEndpoint && addSyncTask) {
+      const resolvedItems = (orderBackup.items || []).map(it => {
+        const prod = products.find(p => p.id === it.productId || p.name === it.productName);
+        return {
+          productId: it.productId,
+          productName: it.productName || prod?.name || it.productId,
+          quantity: it.quantity,
+          unit: it.unit || prod?.unit || '斤'
+        };
+      });
       addSyncTask({
         taskId: `DELETE_${orderId}_${now}`,
         type: 'delete_order',
-        payload: { id: orderId, version: orderBackup.version },
+        payload: {
+          id: orderId,
+          version: orderBackup.version,
+          customerName: orderBackup.customerName,
+          deliveryDate: orderBackup.deliveryDate,
+          items: resolvedItems
+        },
         retryCount: 0,
         timestamp: Date.now()
       });

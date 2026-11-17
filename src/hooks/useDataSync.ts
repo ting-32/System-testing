@@ -366,8 +366,11 @@ export const useDataSync = (addToast: (msg: string, type: ToastType) => void, is
         
         const logStore = useLogStore.getState();
         if (result.latestSystemLogTs && result.latestSystemLogTs > logStore.lastSyncSystemTs) {
-          container.logRepo.getSystemLogs(50).then(logs => {
-            logStore.setSystemLogs(logs, result.latestSystemLogTs!);
+          container.logRepo.getSystemLogsPage({ batchSize: 50, offset: 0 }).then(page => {
+            logStore.mergeNewSystemLogs(page.logs, result.latestSystemLogTs!, {
+              totalRows: page.totalRows,
+              hasMore: page.logs.length > 0 ? undefined : page.hasMore,
+            });
             const isModalOpen = document.getElementById('notification-center-modal') !== null;
             if (!isModalOpen) logStore.setUnreadLogs(true);
           }).catch(err => console.error("Auto fetch system logs error:", err));
