@@ -165,6 +165,8 @@ export interface ReminderCondition {
   customers: string[]; // Customer IDs, empty means all
   status: ReminderConditionStatus;
   products: string[]; // Product names or IDs, empty means all
+  productMatchMode?: 'ALL_MISSING' | 'ANY_MISSING'; // For UNORDERED with multiple products
+  onlyRegularBuyers?: boolean; // Limit to customers whose defaultItems contain selected products
 }
 
 export interface ReminderRule {

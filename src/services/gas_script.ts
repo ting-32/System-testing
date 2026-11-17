@@ -3706,7 +3706,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
   const staffMap = getStaffInfoMap();
   const scriptCache = CacheService.getScriptCache();
   
-  // 打擊範圍縮圈 (Data Bounding)：只抓出貨日與今天相差 3 天內的訂單
+  // 打擊範圍縮圈 (Data Bounding)：涵蓋 TODAY / TOMORROW / WEEKDAYS (+1~+7天) 加上跨時區緩衝，保留 8 天內訂單
   if (data.orders && Array.isArray(data.orders)) {
     data.orders = data.orders.filter(order => {
       let dStr = order.deliveryDate;
@@ -3714,7 +3714,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       let d = (dStr instanceof Date) ? dStr : new Date(String(dStr).split(' ')[0].replace(/\//g, '-'));
       if (isNaN(d.getTime())) return true;
       const diffDays = Math.abs((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      return diffDays <= 3;
+      return diffDays <= 8;
     });
   }
 
@@ -3723,8 +3723,40 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     if (dStr instanceof Date) {
       return Utilities.formatDate(dStr, timeZone, "yyyy-MM-dd");
     }
-    return String(dStr).split(' ')[0].replace(/\//g, '-');
+    const cleaned = String(dStr).trim().split(/[ T]/)[0].replace(/\//g, '-');
+    const parts = cleaned.split('-');
+    if (parts.length === 3) {
+      return `${parts[0]}-${String(parts[1]).padStart(2, '0')}-${String(parts[2]).padStart(2, '0')}`;
+    }
+    return cleaned;
   };
+
+  const parseGasJsonArraySafe = (raw) => {
+    if (Array.isArray(raw)) return raw;
+    if (!raw) return [];
+    const str = String(raw).trim();
+    if (!str) return [];
+    if (str.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(str);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {}
+    }
+    return str.split(',').map(s => s.trim()).filter(Boolean);
+  };
+
+  const productIdToName = {};
+  (data.products || []).forEach(p => {
+    const pId = String(p.id || '').trim();
+    const pName = String(p.name || '').trim();
+    if (pId && pName) productIdToName[pId] = pName;
+  });
+
+  customers.forEach(c => {
+    c._offDaysNum = parseGasJsonArraySafe(c.offDays).map(x => Number(x)).filter(n => !isNaN(n));
+    c._holidayDatesNorm = parseGasJsonArraySafe(c.holidayDates).map(d => normalizeGasDate(d)).filter(Boolean);
+    c._defaultItemsArr = parseGasJsonArraySafe(c.defaultItems);
+  });
 
   let ruleDeliveries = [];
   
@@ -3818,19 +3850,26 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     });
     const targetDatesText = targetShortStrings.join('、');
     
-    // 取得目標日期內所有「非取消」訂單，並依客戶名分組
+    // 取得目標日期內所有「非取消」訂單，並依客戶名及日期+客戶分組
     const targetOrdersAll = (data.orders || []).filter(o => targetDateStrings.includes(normalizeGasDate(o.deliveryDate)));
     const targetActiveOrders = targetOrdersAll.filter(o => !isCancelledOrderStatus(o.status));
     
     const ordersByCustomer = {};
+    const ordersByDateAndCustomer = {};
     for (let i = 0; i < targetActiveOrders.length; i++) {
       const order = targetActiveOrders[i];
       const cName = String(order.customerName || '').trim();
+      const dKey = normalizeGasDate(order.deliveryDate);
       if (!ordersByCustomer[cName]) ordersByCustomer[cName] = [];
       ordersByCustomer[cName].push(order);
+
+      if (!ordersByDateAndCustomer[dKey]) ordersByDateAndCustomer[dKey] = {};
+      if (!ordersByDateAndCustomer[dKey][cName]) ordersByDateAndCustomer[dKey][cName] = [];
+      ordersByDateAndCustomer[dKey][cName].push(order);
     }
 
     const ruleHasPositiveCondition = (rule.conditions || []).some(c => isPositiveOrderCondition(c.status));
+    const ruleHasUnorderedCondition = (rule.conditions || []).some(c => c.status === 'UNORDERED');
     
     // 若為正向出貨檢查，只要客戶當天有有效單（即使當天是公休日）也不可漏掉！
     // 若為未訂購/待處理警戒，才過濾掉封存、暫停或休假客戶
@@ -3841,20 +3880,32 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
         return true;
       }
       if (c.isArchived || c.isPaused) return false;
-      const hasWorkingDay = targetDatesInfo.some(d => {
+      const workingDates = targetDatesInfo.filter(d => {
         const dStr = Utilities.formatDate(d, timeZone, "yyyy-MM-dd");
         const dayNum = parseInt(Utilities.formatDate(d, timeZone, "u"), 10) % 7;
-        const isOff = (c.offDays && c.offDays.includes(dayNum)) || (c.holidayDates && c.holidayDates.includes(dStr));
+        const offDays = Array.isArray(c._offDaysNum) ? c._offDaysNum : [];
+        const holidayDates = Array.isArray(c._holidayDatesNorm) ? c._holidayDatesNorm : [];
+        const isOff = offDays.includes(dayNum) || holidayDates.includes(dStr);
         return !isOff;
       });
-      return hasWorkingDay;
+      c._workingDateStrs = workingDates.map(d => Utilities.formatDate(d, timeZone, "yyyy-MM-dd"));
+      return workingDates.length > 0;
     });
 
     // 若訂單裡的客戶不在 customers 主檔裡（例如臨時散客）且規則未指定特定店家且含正向條件，也一併納入
     if (ruleHasPositiveCondition) {
       Object.keys(ordersByCustomer).forEach(cName => {
         if (!customerByNameMap[cName]) {
-          activeCustomers.push({ id: `ADHOC_${cName}`, name: cName, offDays: [], holidayDates: [] });
+          activeCustomers.push({
+            id: `ADHOC_${cName}`,
+            name: cName,
+            offDays: [],
+            holidayDates: [],
+            _offDaysNum: [],
+            _holidayDatesNorm: [],
+            _defaultItemsArr: [],
+            _workingDateStrs: targetDateStrings
+          });
         }
       });
     }
@@ -3868,28 +3919,90 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
 
     const matchedOrdersCollected = [];
     const matchedOrderIdSet = new Set();
+    const missingItemsByCustomerId = {};
 
     const triggeredCustomers = activeCustomers.filter(customer => {
       let isRuleMatched = null;
       const candidateOrdersForCustomer = [];
+      const custNameKey = String(customer.name || '').trim();
+      const custWorkingDates = Array.isArray(customer._workingDateStrs) && customer._workingDateStrs.length > 0
+        ? customer._workingDateStrs
+        : targetDatesInfo
+            .filter(d => {
+              const dStr = Utilities.formatDate(d, timeZone, "yyyy-MM-dd");
+              const dayNum = parseInt(Utilities.formatDate(d, timeZone, "u"), 10) % 7;
+              const offDays = Array.isArray(customer._offDaysNum) ? customer._offDaysNum : [];
+              const holidayDates = Array.isArray(customer._holidayDatesNorm) ? customer._holidayDatesNorm : [];
+              return !offDays.includes(dayNum) && !holidayDates.includes(dStr);
+            })
+            .map(d => Utilities.formatDate(d, timeZone, "yyyy-MM-dd"));
 
       (rule.conditions || []).forEach(cond => {
+        const hasProductFilter = Array.isArray(cond.products) && cond.products.length > 0;
+        const normalizedTargetProducts = hasProductFilter
+          ? cond.products.map(p => String(p || '').trim()).filter(Boolean)
+          : (data.products || []).map(p => String(p.name || '').trim()).filter(Boolean);
+        const targetProductNamesLower = new Set(normalizedTargetProducts.map(n => n.toLowerCase()));
+
         let condAppliesToCustomer = true;
         if (cond.customers && cond.customers.length > 0 && !cond.customers.includes(customer.id)) {
           condAppliesToCustomer = false;
         }
 
+        // 若勾選「僅檢查常訂上述品項的店家」，依客戶主檔 defaultItems 比對是否常買
+        if (condAppliesToCustomer && cond.onlyRegularBuyers && hasProductFilter) {
+          const defItems = Array.isArray(customer._defaultItemsArr) ? customer._defaultItemsArr : [];
+          const buysAnyTarget = defItems.some(di => {
+            const pid = String(di.productId || '').trim();
+            const resolvedName = String(di.productName || (pid && productIdToName[pid]) || '').trim().toLowerCase();
+            return (resolvedName && targetProductNamesLower.has(resolvedName)) || (pid && targetProductNamesLower.has(pid.toLowerCase()));
+          });
+          if (!buysAnyTarget) {
+            condAppliesToCustomer = false;
+          }
+        }
+
         let condMatched = false;
         if (condAppliesToCustomer) {
-          const hasProductFilter = cond.products && cond.products.length > 0;
-          const targetProducts = hasProductFilter ? cond.products : (data.products || []).map(p => p.name);
-          const customerOrders = ordersByCustomer[String(customer.name || '').trim()] || [];
+          const customerOrders = ordersByCustomer[custNameKey] || [];
+          const orderMatchesProducts = (o, nameLowerSet) => {
+            const oProdName = String(o.productName || (o.product && o.product.name) || '').trim().toLowerCase();
+            return oProdName && nameLowerSet.has(oProdName);
+          };
           const relevantOrders = hasProductFilter
-            ? customerOrders.filter(o => targetProducts.includes(o.productName || o.product?.name))
+            ? customerOrders.filter(o => orderMatchesProducts(o, targetProductNamesLower))
             : customerOrders;
 
           if (cond.status === 'UNORDERED') {
-            condMatched = relevantOrders.length === 0;
+            if (custWorkingDates.length === 0) {
+              condMatched = false;
+            } else if (cond.productMatchMode === 'ANY_MISSING' && hasProductFilter) {
+              const missingSet = new Set();
+              normalizedTargetProducts.forEach(pName => {
+                const pLower = pName.toLowerCase();
+                const missedOnWorkingDay = custWorkingDates.some(dKey => {
+                  const dayOrders = (ordersByDateAndCustomer[dKey] && ordersByDateAndCustomer[dKey][custNameKey]) || [];
+                  return !dayOrders.some(o => String(o.productName || (o.product && o.product.name) || '').trim().toLowerCase() === pLower);
+                });
+                if (missedOnWorkingDay) missingSet.add(pName);
+              });
+              condMatched = missingSet.size > 0;
+              if (condMatched) {
+                missingItemsByCustomerId[String(customer.id)] = Array.from(missingSet);
+              }
+            } else {
+              const missedAllOnWorkingDay = custWorkingDates.some(dKey => {
+                const dayOrders = (ordersByDateAndCustomer[dKey] && ordersByDateAndCustomer[dKey][custNameKey]) || [];
+                const dayMatched = hasProductFilter
+                  ? dayOrders.filter(o => orderMatchesProducts(o, targetProductNamesLower))
+                  : dayOrders;
+                return dayMatched.length === 0;
+              });
+              condMatched = missedAllOnWorkingDay;
+              if (condMatched && hasProductFilter) {
+                missingItemsByCustomerId[String(customer.id)] = normalizedTargetProducts;
+              }
+            }
           } else if (cond.status === 'PENDING') {
             const matched = relevantOrders.filter(o => o.status === 'PENDING' || o.status === '待處理');
             condMatched = matched.length > 0;
@@ -3953,6 +4066,10 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
       'HAS_PRODUCT': '包含指定品項'
     };
 
+    const allTargetProductsLabel = Array.from(new Set(
+      (rule.conditions || []).reduce((acc, cond) => acc.concat(cond.products || []), [])
+    )).filter(Boolean).join('、') || '指定品項';
+
     const buildSummaryText = (custList, subHeader) => {
       const prioritySet = new Set((rule.priorityCustomerIds || []).map(String));
       const sortedCusts = [...custList].sort((a, b) => {
@@ -3960,22 +4077,39 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
         const bPri = prioritySet.has(String(b.id)) ? 1 : 0;
         return bPri - aPri;
       });
-      const names = sortedCusts.map(c => prioritySet.has(String(c.id)) ? `🚨${c.name}` : c.name).join('、');
-      const conditionTexts = (rule.conditions || []).map(cond => {
-        const targetProducts = (cond.products && cond.products.length) ? cond.products.join('、') : '任何品項';
-        const statusStr = statusLabelMap[cond.status] || cond.status;
-        return `${statusStr} ${targetDatesText} ${targetProducts}`;
-      });
-      let message = `【${rule.name}】:\n`;
+      const isPureUnordered = ruleHasUnorderedCondition && !ruleHasPositiveCondition;
+
+      let message = `【${rule.name}】\n`;
       if (subHeader) message += `${subHeader}\n`;
-      message += `${formattedTimeStr}\n`;
-      message += `${names} ${conditionTexts.join(' / ')}`;
+      message += `📅 檢查日期：${targetDatesText}\n`;
+      message += `🕒 通知時間：${formattedTimeStr}\n`;
+
+      if (isPureUnordered) {
+        message += `⚠️ 以下共 ${sortedCusts.length} 家尚未訂購【${allTargetProductsLabel}】：\n`;
+        sortedCusts.forEach(c => {
+          const priPrefix = prioritySet.has(String(c.id)) ? '🚨 ' : '';
+          const missingArr = missingItemsByCustomerId[String(c.id)];
+          const missingHint = (missingArr && missingArr.length > 0) ? `（缺：${missingArr.join('、')}）` : '';
+          message += `• ${priPrefix}${c.name}${missingHint}\n`;
+        });
+        message = message.trim();
+      } else {
+        const names = sortedCusts.map(c => prioritySet.has(String(c.id)) ? `🚨${c.name}` : c.name).join('、');
+        const conditionTexts = (rule.conditions || []).map(cond => {
+          const targetProducts = (cond.products && cond.products.length) ? cond.products.join('、') : '任何品項';
+          const statusStr = statusLabelMap[cond.status] || cond.status;
+          return `${statusStr} ${targetDatesText} ${targetProducts}`;
+        });
+        message += `${names} ${conditionTexts.join(' / ')}`;
+      }
+
       if (rule.customMessage) {
         let msg = rule.customMessage
           .replace(/{日期}/g, targetDatesText)
           .replace(/{{日期}}/g, targetDatesText)
           .replace(/{總店數}/g, String(custList.length))
-          .replace(/{總單數}/g, String(matchedOrdersCollected.length));
+          .replace(/{總單數}/g, String(matchedOrdersCollected.length))
+          .replace(/{品項}/g, allTargetProductsLabel);
         message += `\n\n${msg}`;
       }
       return message;
@@ -4037,6 +4171,20 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
           });
         });
       }
+
+      // 若混合條件同時包含「未訂購 (無訂單)」客戶，不能因無訂單被吃掉，補推管理員
+      const orderedNamesSet = new Set(matchedOrdersCollected.map(o => String(o.customerName || '').trim()));
+      const noOrderMatchedCusts = triggeredCustomers.filter(c => !orderedNamesSet.has(String(c.name || '').trim()));
+      if (noOrderMatchedCusts.length > 0 && rule.fallbackToAdminIfUnassigned !== false && adminUserIds.length > 0) {
+        const rawText = buildSummaryText(noOrderMatchedCusts, '⚠️ 以下店家未訂購或無對應訂單（無法依司機拆發，改轉管理員）');
+        splitLineMessageChunks(rawText).forEach(chunk => {
+          outboundMessages.push({
+            targetLineIds: adminUserIds,
+            recipientName: "預設管理員 (未訂購補送)",
+            text: chunk
+          });
+        });
+      }
     } else if (recipientMode === 'SPECIFIC_STAFF') {
       const staffIds = rule.targetStaffIds || [];
       const resolvedLineIds = [];
@@ -4063,7 +4211,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
         });
       }
     } else {
-      // DEFAULT_ADMIN
+      // DEFAULT_ADMIN（含無訂單時 ASSIGNED_DRIVER 的安全退路）
       if (adminUserIds.length > 0) {
         const rawText = (outputFormat === 'DELIVERY_MANIFEST' && matchedOrdersCollected.length > 0)
           ? buildDeliveryManifestText(rule, matchedOrdersCollected, customerByNameMap, targetDatesText, formattedTimeStr, '')
@@ -10035,6 +10183,23 @@ function setupDailyTriggers() {
     .create();
 
   console.log("✅ 觸發器已更新：每天凌晨 03:00 - 04:00 執行");
+}
+
+function setupNotificationTrigger() {
+  const functionName = 'checkReminders';
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === functionName) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  ScriptApp.newTrigger(functionName)
+    .timeBased()
+    .everyHours(1)
+    .create();
+
+  console.log("✅ 提醒排程觸發器已建立：每小時自動執行一次 checkReminders（檢查提醒規則與出車簡報）");
 }
 
 // ==========================================

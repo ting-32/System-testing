@@ -1024,6 +1024,28 @@ export const NotificationCenterModal: React.FC<Props> = ({
     }
   };
 
+  const findRegularBuyerIdsForProducts = (selectedProductNames: string[]): string[] => {
+    const activeCusts = customers.filter(c => !c.isArchived && !c.isPaused);
+    if (!selectedProductNames || selectedProductNames.length === 0) {
+      return activeCusts.filter(c => (c.defaultItems || []).length > 0).map(c => c.id);
+    }
+    const normalizedTargets = selectedProductNames.map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
+    const matchedProdIds = new Set(
+      products
+        .filter(p => normalizedTargets.includes(String(p.name || '').trim().toLowerCase()))
+        .map(p => p.id)
+    );
+    return activeCusts
+      .filter(c =>
+        (c.defaultItems || []).some(item => {
+          const pid = String(item.productId || '').trim();
+          const pName = products.find(p => p.id === pid)?.name || pid;
+          return matchedProdIds.has(pid) || normalizedTargets.includes(String(pName).trim().toLowerCase());
+        })
+      )
+      .map(c => c.id);
+  };
+
   const handleCreateRule = () => {
     setEditingRule({
       id: Date.now().toString(),
@@ -1077,6 +1099,11 @@ export const NotificationCenterModal: React.FC<Props> = ({
       targetDayStr = `${tomorrow.getMonth() + 1}-${tomorrow.getDate()}(${days[tomorrow.getDay()]})`;
     }
 
+    const allSelectedProds = Array.from(
+      new Set((rule.conditions || []).flatMap(c => c.products || []).filter(Boolean))
+    );
+    const prodHintStr = allSelectedProds.length > 0 ? allSelectedProds.join('、') : '指定品項';
+
     if (rule.outputFormat === 'DELIVERY_MANIFEST') {
       const firstPriorityName = (rule.priorityCustomerIds && rule.priorityCustomerIds.length > 0)
         ? (customers.find(c => c.id === rule.priorityCustomerIds![0])?.name || '重點易漏店家')
@@ -1109,10 +1136,64 @@ export const NotificationCenterModal: React.FC<Props> = ({
           .replace(/{日期}/g, targetDayStr)
           .replace(/{{日期}}/g, targetDayStr)
           .replace(/{總店數}/g, firstPriorityName ? '2' : '1')
-          .replace(/{總單數}/g, '3');
+          .replace(/{總單數}/g, '3')
+          .replace(/{品項}/g, prodHintStr);
         manifest += `\n\n${previewMsg}`;
       }
       return manifest;
+    }
+
+    const isPureUnordered =
+      (rule.conditions || []).length > 0 &&
+      (rule.conditions || []).every(c => c.status === 'UNORDERED');
+
+    if (isPureUnordered) {
+      const firstCond = rule.conditions[0];
+      const condProds = firstCond.products || [];
+      let sampleStoreIds: string[] = [];
+      if (firstCond.customers && firstCond.customers.length > 0) {
+        sampleStoreIds = firstCond.customers.slice(0, 3);
+      } else if (firstCond.onlyRegularBuyers) {
+        sampleStoreIds = findRegularBuyerIdsForProducts(condProds).slice(0, 3);
+      }
+      const sampleNames =
+        sampleStoreIds.length > 0
+          ? sampleStoreIds.map(id => customers.find(c => c.id === id)?.name || id)
+          : customers
+              .filter(c => !c.isArchived && !c.isPaused)
+              .slice(0, 2)
+              .map(c => c.name);
+      const displayNames = sampleNames.length > 0 ? sampleNames : ['示範早餐店', '巷口麵攤'];
+      const modeLabel =
+        condProds.length > 1
+          ? firstCond.productMatchMode === 'ALL_MISSING'
+            ? '（全部皆未訂）'
+            : '（缺任一品項）'
+          : '';
+      const missingSuffix = condProds.length > 0 ? `（缺：${condProds.slice(0, 2).join('、')}${condProds.length > 2 ? '…' : ''}）` : '';
+
+      let msg = `⚠️【${rule.name || '未訂購提醒'}】\n`;
+      msg += `📅 檢查配送日：${targetDayStr}\n`;
+      msg += `📌 偵測到 ${displayNames.length} 家尚未訂購${condProds.length > 0 ? `「${condProds.join('、')}」` : ''}${modeLabel}：\n`;
+      displayNames.forEach(name => {
+        msg += `• ${name}${missingSuffix}\n`;
+      });
+      if (firstCond.onlyRegularBuyers) {
+        msg += `（已自動排除公休日及未常訂此品項店家）`;
+      } else {
+        msg += `（已自動排除當日公休／暫停供貨店家）`;
+      }
+
+      if (rule.customMessage) {
+        const previewMsg = rule.customMessage
+          .replace(/{日期}/g, targetDayStr)
+          .replace(/{{日期}}/g, targetDayStr)
+          .replace(/{總店數}/g, String(displayNames.length))
+          .replace(/{總單數}/g, '0')
+          .replace(/{品項}/g, prodHintStr);
+        msg += `\n\n${previewMsg}`;
+      }
+      return msg.trim();
     }
 
     let desc = `【${rule.name || '未命名規則'}】:\n`;
@@ -1131,7 +1212,8 @@ export const NotificationCenterModal: React.FC<Props> = ({
         .replace(/{日期}/g, targetDayStr)
         .replace(/{{日期}}/g, targetDayStr)
         .replace(/{總店數}/g, '3')
-        .replace(/{總單數}/g, '5');
+        .replace(/{總單數}/g, '5')
+        .replace(/{品項}/g, prodHintStr);
       desc += `\n${previewMsg}`;
     }
     
@@ -1373,6 +1455,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
                       customers={customers} 
                       products={products}
                       staffList={staffList}
+                      findRegularBuyerIdsForProducts={findRegularBuyerIdsForProducts}
                       onSave={() => {
                         const updated = rules.filter(r => r.id !== editingRule.id);
                         saveRules([...updated, editingRule]);
@@ -1388,7 +1471,13 @@ export const NotificationCenterModal: React.FC<Props> = ({
                       {rules.map(rule => {
                         const dateMode: ReminderDateMode = rule.targetDateMode || (rule.targetOrderDays && rule.targetOrderDays.length > 0 ? 'WEEKDAYS' : 'TOMORROW');
                         const dateBadge = dateMode === 'TODAY' ? '今日配送' : dateMode === 'TOMORROW' ? '明日訂單' : '指定星期';
-                        const formatBadge = rule.outputFormat === 'DELIVERY_MANIFEST' ? '配送明細表' : '精簡名單';
+                        const isPureUnordered = (rule.conditions || []).length > 0 && (rule.conditions || []).every(c => c.status === 'UNORDERED');
+                        const hasOnlyRegularBuyers = (rule.conditions || []).some(c => c.onlyRegularBuyers);
+                        const formatBadge = isPureUnordered
+                          ? '漏單／未訂提醒'
+                          : rule.outputFormat === 'DELIVERY_MANIFEST'
+                          ? '配送明細表'
+                          : '精簡名單';
                         const recipientBadge =
                           rule.recipientMode === 'ASSIGNED_DRIVER'
                             ? '依指派司機拆發'
@@ -1416,9 +1505,14 @@ export const NotificationCenterModal: React.FC<Props> = ({
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${dateMode === 'TODAY' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
                                   {dateBadge}
                                 </span>
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${isPureUnordered ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
                                   {formatBadge}
                                 </span>
+                                {hasOnlyRegularBuyers && (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200">
+                                    限常購品項店家
+                                  </span>
+                                )}
                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
                                   {recipientBadge}
                                 </span>
@@ -2445,10 +2539,11 @@ export const NotificationCenterModal: React.FC<Props> = ({
 };
 
 // Sub-component for editing a rule
-const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSave, onCancel, previewText }: any) => {
+const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], findRegularBuyerIdsForProducts, onSave, onCancel, previewText }: any) => {
   const [activePicker, setActivePicker] = useState<{index: number, type: 'customers' | 'products' | 'priority'} | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -2542,9 +2637,100 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
   const outputFormat: ReminderOutputFormat = rule.outputFormat || 'SUMMARY_NAMES';
   const recipientMode: ReminderRecipientMode = rule.recipientMode || 'DEFAULT_ADMIN';
   const boundDriversCount = (staffList as StaffOption[]).filter(s => Boolean(s.line_user_id)).length;
+  const hasUnorderedCondition = (rule.conditions || []).some((c: any) => c.status === 'UNORDERED');
+  const isPureUnordered = (rule.conditions || []).length > 0 && (rule.conditions || []).every((c: any) => c.status === 'UNORDERED');
+
+  const applyPresetMode = (mode: 'MANIFEST' | 'UNORDERED_ALERT') => {
+    setValidationError(null);
+    if (mode === 'UNORDERED_ALERT') {
+      const currentName = String(rule.name || '').trim();
+      const nextName = !currentName || currentName === '今日出車配送明細' ? '未訂購品項／漏單提醒' : currentName;
+      setRule({
+        ...rule,
+        name: nextName,
+        targetDateMode: 'TOMORROW',
+        timeToNotify: rule.timeToNotify === '06:00' || !rule.timeToNotify ? '20:00' : rule.timeToNotify,
+        conditions: [{
+          customers: rule.conditions?.[0]?.customers || [],
+          status: 'UNORDERED' as ReminderConditionStatus,
+          products: rule.conditions?.[0]?.products || [],
+          productMatchMode: rule.conditions?.[0]?.productMatchMode || 'ANY_MISSING',
+          onlyRegularBuyers: rule.conditions?.[0]?.onlyRegularBuyers ?? true
+        }],
+        outputFormat: 'SUMMARY_NAMES',
+        recipientMode: 'DEFAULT_ADMIN'
+      });
+    } else {
+      const currentName = String(rule.name || '').trim();
+      const nextName = !currentName || currentName === '未訂購品項／漏單提醒' ? '今日出車配送明細' : currentName;
+      setRule({
+        ...rule,
+        name: nextName,
+        targetDateMode: 'TODAY',
+        timeToNotify: rule.timeToNotify === '20:00' || !rule.timeToNotify ? '06:00' : rule.timeToNotify,
+        conditions: [{
+          customers: rule.conditions?.[0]?.customers || [],
+          status: 'ACTIVE_ORDERS' as ReminderConditionStatus,
+          products: rule.conditions?.[0]?.products || []
+        }],
+        outputFormat: 'DELIVERY_MANIFEST',
+        recipientMode: 'ASSIGNED_DRIVER'
+      });
+    }
+  };
+
+  const handleAttemptSave = () => {
+    if (!String(rule.name || '').trim()) {
+      setValidationError('請輸入規則名稱');
+      return;
+    }
+    if (!rule.schedule || rule.schedule.length === 0) {
+      setValidationError('請至少選擇一個執行週期（星期幾要執行檢查）');
+      return;
+    }
+    if (!rule.timeToNotify) {
+      setValidationError('請設定提醒時間');
+      return;
+    }
+    if (dateMode === 'WEEKDAYS' && (!rule.targetOrderDays || rule.targetOrderDays.length === 0)) {
+      setValidationError('已選擇「指定未來星期」，請至少勾選一天目標配送星期');
+      return;
+    }
+    if (recipientMode === 'SPECIFIC_STAFF' && (!rule.targetStaffIds || rule.targetStaffIds.length === 0)) {
+      setValidationError('已選擇「指定特定員工接收」，請至少勾選一位已綁定 LINE 的同仁');
+      return;
+    }
+    setValidationError(null);
+    onSave();
+  };
 
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+      {/* 快速選擇規則類型 */}
+      <div className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-sm space-y-2">
+        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest">
+          快速選擇規則類型（自動帶入建議設定）
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => applyPresetMode('MANIFEST')}
+            className={`p-3 rounded-xl border text-left transition-all ${!isPureUnordered ? 'bg-amber-50 border-amber-400 ring-1 ring-amber-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
+          >
+            <div className="text-sm font-bold text-slate-800">🚚 出車配送明細表</div>
+            <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">彙整有單店家與備貨量，依司機拆發</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPresetMode('UNORDERED_ALERT')}
+            className={`p-3 rounded-xl border text-left transition-all ${isPureUnordered ? 'bg-rose-50 border-rose-400 ring-1 ring-rose-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
+          >
+            <div className="text-sm font-bold text-slate-800">⚠️ 未訂購品項／漏單提醒</div>
+            <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">偵測常購店家缺單未訂，通知管理員</div>
+          </button>
+        </div>
+      </div>
+
       {/* 區塊 1: 基本資訊與排程時間 */}
       <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-4">
         <div className="flex items-center justify-between gap-3">
@@ -2703,7 +2889,51 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
                     }} className="text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-full text-sm font-bold flex items-center shadow-sm transition-colors border border-emerald-200/50">
                     ＋ 挑選店家
                   </button>
+                  {cond.status === 'UNORDERED' && (cond.products || []).length > 0 && findRegularBuyerIdsForProducts && (() => {
+                    const regularIds: string[] = findRegularBuyerIdsForProducts(cond.products || []);
+                    if (regularIds.length === 0) return null;
+                    return (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const merged = Array.from(new Set([...(cond.customers || []), ...regularIds]));
+                          const newConds = [...rule.conditions];
+                          newConds[cIdx] = { ...newConds[cIdx], customers: merged };
+                          setRule({ ...rule, conditions: newConds });
+                        }}
+                        className="text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm transition-colors border border-indigo-200"
+                      >
+                        ✨ 帶入常訂此品項店家 ({regularIds.length} 家)
+                      </button>
+                    );
+                  })()}
                 </div>
+                {cond.status === 'UNORDERED' && (
+                  <div className="space-y-1.5 mt-1">
+                    <label className="flex items-start gap-2 text-xs font-semibold text-slate-700 bg-white/80 px-3 py-2 rounded-xl border border-slate-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(cond.onlyRegularBuyers)}
+                        onChange={(e) => {
+                          const newConds = [...rule.conditions];
+                          newConds[cIdx] = { ...newConds[cIdx], onlyRegularBuyers: e.target.checked };
+                          setRule({ ...rule, conditions: newConds });
+                        }}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 mt-0.5"
+                      />
+                      <span className="leading-snug">
+                        僅檢查「預設常規品項」有設定上述商品的店家（自動排除平時不訂該品項的客戶）
+                      </span>
+                    </label>
+                    {(!cond.customers || cond.customers.length === 0) && !cond.onlyRegularBuyers && (
+                      <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                        <span>未挑選店家且未勾選「僅檢查常訂品項店家」時，系統會掃描全廠所有未公休客戶。</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {activePicker?.index === cIdx && activePicker.type === 'customers' && (
                   <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-sm mt-1 flex flex-col gap-3">
                     <input 
@@ -2739,9 +2969,25 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
                   className="bg-white border border-slate-200 rounded-xl text-sm p-2.5 font-medium shadow-sm w-full outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
                   value={cond.status}
                   onChange={(e) => {
+                    const nextStatus = e.target.value as ReminderConditionStatus;
                     const newConds = [...rule.conditions];
-                    newConds[cIdx].status = e.target.value;
-                    setRule({...rule, conditions: newConds});
+                    const updatedCond = { ...newConds[cIdx], status: nextStatus };
+                    if (nextStatus === 'UNORDERED') {
+                      if (!updatedCond.productMatchMode) updatedCond.productMatchMode = 'ANY_MISSING';
+                      if (updatedCond.onlyRegularBuyers === undefined) updatedCond.onlyRegularBuyers = true;
+                    }
+                    newConds[cIdx] = updatedCond;
+                    const allUnordered = newConds.every((c: any) => c.status === 'UNORDERED');
+                    setRule({
+                      ...rule,
+                      conditions: newConds,
+                      ...(allUnordered
+                        ? {
+                            outputFormat: rule.outputFormat === 'DELIVERY_MANIFEST' ? 'SUMMARY_NAMES' : rule.outputFormat,
+                            recipientMode: rule.recipientMode === 'ASSIGNED_DRIVER' ? 'DEFAULT_ADMIN' : rule.recipientMode
+                          }
+                        : {})
+                    });
                   }}
                 >
                   <optgroup label="🚚 正向出貨 / 備貨與派工檢查">
@@ -2751,7 +2997,7 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
                     <option value="HAS_PRODUCT">訂單內含下列指定品項（易漏加購品）</option>
                   </optgroup>
                   <optgroup label="⚠️ 異常 / 漏單警戒">
-                    <option value="UNORDERED">未訂購（非公休日完全沒有有效訂單）</option>
+                    <option value="UNORDERED">未訂購（非公休日沒有訂購指定品項／無有效訂單）</option>
                     <option value="PENDING">狀態為待處理（訂單尚未處理）</option>
                   </optgroup>
                 </select>
@@ -2785,6 +3031,35 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
                     ＋ 挑選品項
                   </button>
                 </div>
+                {cond.status === 'UNORDERED' && (cond.products || []).length > 1 && (
+                  <div className="bg-white/80 rounded-xl p-2 border border-slate-200 space-y-1.5">
+                    <div className="text-[11px] font-bold text-slate-500">多品項未訂判定方式：</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newConds = [...rule.conditions];
+                          newConds[cIdx] = { ...newConds[cIdx], productMatchMode: 'ANY_MISSING' };
+                          setRule({ ...rule, conditions: newConds });
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold border transition-all ${(cond.productMatchMode || 'ANY_MISSING') === 'ANY_MISSING' ? 'bg-rose-50 border-rose-400 text-rose-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                      >
+                        缺任一品項就提醒
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newConds = [...rule.conditions];
+                          newConds[cIdx] = { ...newConds[cIdx], productMatchMode: 'ALL_MISSING' };
+                          setRule({ ...rule, conditions: newConds });
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold border transition-all ${cond.productMatchMode === 'ALL_MISSING' ? 'bg-rose-50 border-rose-400 text-rose-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                      >
+                        全都沒訂才提醒
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {activePicker?.index === cIdx && activePicker.type === 'products' && (
                   <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-sm mt-1 flex flex-col gap-3">
                     <input 
@@ -2961,6 +3236,24 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
           ④ LINE 推播對象分流
         </label>
 
+        {hasUnorderedCondition && recipientMode === 'ASSIGNED_DRIVER' && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 text-xs text-amber-900 space-y-2">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="leading-snug">
+                <strong>注意：</strong>「未訂購」客戶當天沒有訂單可對應指派司機，選擇依司機拆發將無法拆單給司機，建議改為預設管理員接收。
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRule({ ...rule, recipientMode: 'DEFAULT_ADMIN' })}
+              className="w-full py-1.5 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold text-xs transition-colors"
+            >
+              一鍵改為「預設管理員」接收
+            </button>
+          </div>
+        )}
+
         <div className="space-y-2">
           <button
             type="button"
@@ -3055,8 +3348,8 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
           <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest">
             自訂附註結尾 (選填)
           </label>
-          <div className="flex gap-1">
-            {['{日期}', '{總店數}', '{總單數}'].map(v => (
+          <div className="flex gap-1 flex-wrap">
+            {['{日期}', '{總店數}', '{總單數}', '{品項}'].map(v => (
               <button
                 key={v}
                 type="button"
@@ -3102,11 +3395,18 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], onSav
         </p>
       </div>
 
+      {validationError && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold px-3.5 py-2.5 rounded-xl flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{validationError}</span>
+        </div>
+      )}
+
       <div className="flex gap-3 pt-4 border-t border-slate-100 mt-6 pb-6">
         <button type="button" onClick={onCancel} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">
           取消
         </button>
-        <button type="button" onClick={onSave} className="flex-1 py-3 bg-amber-500 text-white rounded-xl font-bold shadow-md shadow-amber-500/20 hover:bg-amber-600 transition-colors flex justify-center items-center gap-2">
+        <button type="button" onClick={handleAttemptSave} className="flex-1 py-3 bg-amber-500 text-white rounded-xl font-bold shadow-md shadow-amber-500/20 hover:bg-amber-600 transition-colors flex justify-center items-center gap-2">
           <Save className="w-4 h-4" />
           儲存規則
         </button>
