@@ -304,6 +304,7 @@ export const useOrderActions = ({
                   ...item,
                   productName: item.productName || products.find((p: any) => p.id === item.productId)?.name || item.productId
               })),
+              version: orderToUpdate?.version || 1,
               originalVersion: orderToUpdate?.version || 1,
               force: true
             };
@@ -778,20 +779,26 @@ export const useOrderActions = ({
 
   const handleRetrySync = useCallback(async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
-    if (!order || !order.pendingAction) return;
+    if (!order) return;
+    const action = order.pendingAction || (order.syncStatus === 'error' || order._syncStatus === 'error' ? 'statusUpdate' : undefined);
+    if (!action) return;
+
+    // 先清理 Queue Store 中可能殘留的同一筆舊任務，避免跟手動重試打架
+    if (removeTaskByPayloadId) {
+      await removeTaskByPayloadId(orderId);
+    }
 
     // Reset status to pending
     const now = Date.now();
     setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'pending', errorMessage: undefined, _syncStatus: 'pending', _localUpdatedTs: now } : o));
 
-    const action = order.pendingAction;
     try {
       if (action === 'statusUpdate') {
          await saveOrderToCloud(
-          order,
+          { ...order, force: true } as Order,
           'updateOrderStatus',
           order.version,
-          () => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o)),
+          (updatedOrder?: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, version: updatedOrder?.version || o.version, syncStatus: 'synced', pendingAction: undefined, errorMessage: undefined, _syncStatus: 'synced' } : o)),
           (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o))
         );
       } else if (action === 'delete') {
@@ -801,7 +808,7 @@ export const useOrderActions = ({
           order,
           'createOrder',
           undefined,
-          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...updatedOrder, syncStatus: 'synced', pendingAction: undefined, _syncStatus: 'synced' } : o)),
+          (updatedOrder: Order) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...updatedOrder, syncStatus: 'synced', pendingAction: undefined, errorMessage: undefined, _syncStatus: 'synced' } : o)),
           (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o))
         );
       } else if (action === 'update') {
@@ -809,14 +816,14 @@ export const useOrderActions = ({
           order,
           'updateOrderContent',
           order.version,
-          (updatedOrder: Order) => {}, // Queue handles the state now
+          () => {}, // Queue handles synced transition once API finishes
           (errMsg: string) => setOrders((prev: Order[]) => prev.map(o => o.id === orderId ? { ...o, syncStatus: 'error', errorMessage: errMsg, _syncStatus: 'error' } : o))
         );
       }
     } catch (e) {
       console.error(e);
     }
-  }, [orders, setOrders, saveOrderToCloud, executeDeleteOrder]);
+  }, [orders, setOrders, saveOrderToCloud, executeDeleteOrder, removeTaskByPayloadId]);
 
   const handleDiscardLocalError = useCallback(async (orderId: string) => {
     setOrders((prev: Order[]) => prev.map(o => {

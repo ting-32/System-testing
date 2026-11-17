@@ -228,13 +228,23 @@ const App: React.FC = () => {
           
       return filtered.map(o => {
         if (task.type === 'UPDATE_STATUS' || task.type === 'BATCH_UPDATE') {
-          const ids = task.payload.updates.map((u: any) => u.id);
+          const ids = (task.payload?.updates || []).map((u: any) => u.id);
           if (ids.includes(o.id)) {
-             return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || (o.version + 1), _syncStatus: 'synced' };
+             const perOrderVersion = responseData?.versions?.[o.id] ?? responseData?.version ?? ((o.version || 0) + 1);
+             const newTs = Number(responseData?.newLastUpdatedTs || responseData?.lastUpdated || 0);
+             return {
+               ...o,
+               syncStatus: 'synced',
+               pendingAction: undefined,
+               errorMessage: undefined,
+               version: perOrderVersion,
+               ...(newTs > 0 ? { lastUpdated: newTs, _localUpdatedTs: newTs } : {}),
+               _syncStatus: 'synced'
+             };
           }
         } else if (task.type === 'UPDATE_CONTENT') {
           if (o.id === task.payload.id) {
-             return { ...o, syncStatus: 'synced', pendingAction: undefined, version: responseData.version || o.version, _syncStatus: 'synced' };
+             return { ...o, syncStatus: 'synced', pendingAction: undefined, errorMessage: undefined, version: responseData.version || o.version, _syncStatus: 'synced' };
           }
         }
         return o;
@@ -1100,6 +1110,8 @@ const App: React.FC = () => {
             setQuickConfig((prev) => ({ ...prev, isQuickMode: false }));
           }}
           onSwipeStatusChange={handleSwipeStatusChange}
+          onRetrySync={handleRetrySync}
+          onDiscardLocal={handleDiscardLocalError}
           saveOrderToCloud={saveOrderToCloud}
           onDeleteOrder={handleDeleteOrder}
           onSaveCustomerCloud={onSaveCustomerCloud}

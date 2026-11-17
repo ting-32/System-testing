@@ -192,6 +192,34 @@ export function useSyncQueue(
     }
   }, [flushStatusBuffer]);
 
+const MAX_QUEUE_RETRIES = 4;
+
+function formatQueueErrorMessage(raw: string): string {
+  const msg = String(raw || '').trim();
+  if (!msg) return '同步失敗，請點擊重試';
+  if (msg.includes('UNAUTHORIZED_OR_EXPIRED')) return '登入憑證已過期，請重新登入後再試';
+  if (msg.includes('FORBIDDEN_ACTION')) return msg.replace(/^FORBIDDEN_ACTION:\s*/, '');
+  if (msg.includes('ReferenceError') || msg.includes('SyntaxError') || msg.includes('Unknown action')) {
+    return `後端腳本錯誤（請確認已更新部署 GAS）：${msg}`;
+  }
+  if (msg.includes('HTML_RESPONSE')) return '伺服器回傳網頁而非資料，請確認 Apps Script 已重新部署為正式版 (/exec)';
+  if (msg.includes('TIMEOUT') || msg.includes('AbortError')) return '連線逾時（伺服器忙碌或網路較慢），請點擊重試';
+  if (msg.includes('Failed to fetch')) return '網路連線中斷或 CORS 阻擋，請確認網路後點擊重試';
+  if (msg.includes('更新過於頻繁') || msg.includes('Lock') || msg.includes('Timeout')) return '同時操作人數較多導致鎖定逾時，請點擊重試';
+  return msg.length > 80 ? msg.slice(0, 80) + '…' : msg;
+}
+
+function isNonRetryableQueueError(msg: string): boolean {
+  return (
+    msg.includes('UNAUTHORIZED_OR_EXPIRED') ||
+    msg.includes('FORBIDDEN_ACTION') ||
+    msg.includes('ReferenceError') ||
+    msg.includes('SyntaxError') ||
+    msg.includes('Unknown action') ||
+    msg.includes('HTML_RESPONSE')
+  );
+}
+
   // 3. 佇列發送 (Process Queue) - 實施方案一（自動批次合併）+ 方案三（動態零延遲連續出列）
   useEffect(() => {
     if (!isHydrated || syncQueue.length === 0 || isSyncingQueue) return;
@@ -205,9 +233,9 @@ export function useSyncQueue(
       let batchTasks: SyncTask[] = [];
 
       if (isBatchable) {
-        // 撈出前段所有同為 UPDATE_STATUS / BATCH_UPDATE 的任務（最多 40 筆為一個 Chunk）
+        // 撈出前段所有同為 UPDATE_STATUS / BATCH_UPDATE 的任務（最多 25 筆為一個 Chunk，降低單包逾時風險）
         for (const t of syncQueue) {
-          if ((t.type === 'UPDATE_STATUS' || t.type === 'BATCH_UPDATE') && batchTasks.length < 40) {
+          if ((t.type === 'UPDATE_STATUS' || t.type === 'BATCH_UPDATE') && batchTasks.length < 25) {
             batchTasks.push(t);
           } else {
             break;
@@ -218,10 +246,11 @@ export function useSyncQueue(
       }
 
       const processedTaskIds = batchTasks.map(t => t.taskId);
+      let actionName = '';
 
       try {
         if (!apiEndpoint) throw new Error('No API endpoint');
-        const token = localStorage.getItem('APP_SESSION_TOKEN');
+        const tokenBefore = localStorage.getItem('APP_SESSION_TOKEN') || '';
         let bodyPayload: any;
 
         if (isBatchable) {
@@ -230,21 +259,23 @@ export function useSyncQueue(
           batchTasks.forEach(t => {
             (t.payload?.updates || []).forEach((u: any) => {
               if (u && u.id) {
-                updateMap.set(u.id, u);
+                updateMap.set(u.id, { ...u, force: u.force !== false });
               }
             });
           });
           const mergedUpdates = Array.from(updateMap.values());
-
+          actionName = 'batchUpdateOrders';
           bodyPayload = {
-            action: 'batchUpdateOrders',
-            token: token || "",
+            action: actionName,
+            token: tokenBefore,
             data: { updates: mergedUpdates }
           };
         } else if (firstTask.type === 'UPDATE_CONTENT') {
-          bodyPayload = { action: 'updateOrderContent', token: token || "", data: firstTask.payload };
+          actionName = 'updateOrderContent';
+          bodyPayload = { action: actionName, token: tokenBefore, data: firstTask.payload };
         } else if (firstTask.type === 'delete_order') {
-          bodyPayload = { action: 'deleteOrder', token: token || "", data: firstTask.payload };
+          actionName = 'deleteOrder';
+          bodyPayload = { action: actionName, token: tokenBefore, data: firstTask.payload };
         }
 
         const res = await fetchWithRetry(
@@ -255,121 +286,190 @@ export function useSyncQueue(
             body: JSON.stringify(bodyPayload)
           },
           undefined,
-          2, // retries
-          2000, // delay
+          1, // 單次內層重試 1 次，避免單輪卡太久
+          1500,
           true, // silentFail
-          30000 // timeout
+          35000 // timeout
         );
 
-        if (res.ok) {
-           const json = await res.json();
-           if (json.success) {
-               // 成功：平行批次清除 localForage 與 React State
-               await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
-               setSyncQueue(prev => prev.filter(t => !processedTaskIds.includes(t.taskId)));
-               
-               if (onSyncSuccess) {
-                   batchTasks.forEach(t => onSyncSuccess(t, json.data || {}));
-               }
-           } else {
-               if (json.errorCode === 'VERSION_CONFLICT' || json.errorCode === 'ERR_VERSION_CONFLICT') {
-                   console.log('[SyncQueue] Auto recovering from VERSION_CONFLICT...');
-                   try {
-                       let targets: string[] = [];
-                       if (firstTask.type === 'UPDATE_CONTENT' || firstTask.type === 'delete_order') {
-                           targets.push(firstTask.payload.id);
-                       } else if (isBatchable) {
-                           batchTasks.forEach(t => {
-                             (t.payload?.updates || []).forEach((u: any) => {
-                               if (u?.id && !targets.includes(u.id)) targets.push(u.id);
-                             });
-                           });
-                       }
-                       if (targets.length === 1 && targets[0]) {
-                            const getOrderRes = await fetchWithRetry(apiEndpoint, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                                body: JSON.stringify({ action: 'getOrder', token: token || "", data: { id: targets[0] } })
-                            }, undefined, 1, 1000, true);
-                            if (getOrderRes.ok) {
-                                const orderData = await getOrderRes.json();
-                                if (orderData.success && orderData.data) {
-                                    const latestVersion = orderData.data.version || orderData.data.Version || 0;
-                                    const newPayload = { ...firstTask.payload };
-                                    if (firstTask.type === 'UPDATE_CONTENT') {
-                                        newPayload.version = latestVersion;
-                                    } else if (isBatchable) {
-                                        if (newPayload.updates && newPayload.updates[0]) {
-                                            newPayload.updates[0].version = latestVersion;
-                                        }
-                                    } else if (firstTask.type === 'delete_order') {
-                                        newPayload.originalLastUpdated = orderData.data.lastUpdated; 
-                                    }
-                                    const recoveredTask = {
-                                        ...firstTask,
-                                        payload: newPayload,
-                                        retryCount: 0
-                                    };
-                                    setSyncQueue(prev => prev.map(t => t.taskId === firstTask.taskId ? recoveredTask : t));
-                                    await queueStore.setItem(firstTask.taskId, recoveredTask);
-                                    addToast?.('已在背景自動修復資料衝突，即將重試更新', 'info');
-                                    setIsSyncingQueue(false);
-                                    return; 
-                                }
-                            }
-                       }
-                   } catch (e) {
-                       console.error('[SyncQueue] Failed to auto-recover', e);
-                   }
-                   // 發生不可逆的格式或版本錯誤，也是丟棄任務
-                   await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
-                   setSyncQueue(prev => prev.filter(t => !processedTaskIds.includes(t.taskId)));
-                   
-                   addToast?.('⚠️ 發生無法自動修復的版本衝突，請重新整理頁面後再試一次！', 'error');
-                   if (onSyncGiveUp) {
-                       batchTasks.forEach(t => onSyncGiveUp(t));
-                   }
-               } else {
-                   throw new Error(json.error || 'Server error');
-               }
-           }
-        } else {
-           throw new Error('HTTP error');
+        if (!res.ok) {
+          throw new Error(`HTTP_${res.status}`);
         }
+
+        const rawText = await res.text();
+        let json: any;
+        try {
+          json = JSON.parse(rawText);
+        } catch {
+          if (rawText.trim().startsWith('<')) {
+            throw new Error('HTML_RESPONSE');
+          }
+          throw new Error(`INVALID_JSON: ${rawText.slice(0, 60)}`);
+        }
+
+        if (json.success) {
+          // 成功：平行批次清除 localForage 與 React State
+          await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
+          setSyncQueue(prev => prev.filter(t => !processedTaskIds.includes(t.taskId)));
+
+          const respData = json.data || {};
+          const failedItems: Array<{ id: string; reason?: string; message?: string }> = Array.isArray(respData.failedItems)
+            ? respData.failedItems
+            : [];
+
+          if (isBatchable && failedItems.length > 0 && onSyncError) {
+            const failedMap = new Map(failedItems.map(fi => [String(fi.id), fi]));
+            // 拆出成功的更新與失敗的項目，只讓失敗卡片顯示錯誤、不連累其他成功訂單
+            if (onSyncSuccess) {
+              batchTasks.forEach(t => {
+                const okUpdates = (t.payload?.updates || []).filter((u: any) => u?.id && !failedMap.has(String(u.id)));
+                if (okUpdates.length > 0) {
+                  onSyncSuccess({ ...t, payload: { ...t.payload, updates: okUpdates } }, respData);
+                }
+              });
+            }
+            failedItems.forEach(fi => {
+              const reasonText = fi.message || formatQueueErrorMessage(fi.reason || '同步失敗');
+              const singleFailTask: SyncTask = {
+                taskId: firstTask.taskId,
+                type: 'UPDATE_STATUS',
+                payload: { updates: [{ id: fi.id }] },
+                retryCount: firstTask.retryCount,
+                timestamp: firstTask.timestamp
+              };
+              onSyncError(singleFailTask, reasonText);
+            });
+            addToast?.(`部分訂單更新失敗（${failedItems.length} 筆），其餘已同步完成`, 'warning');
+          } else if (onSyncSuccess) {
+            batchTasks.forEach(t => onSyncSuccess(t, respData));
+          }
+          return;
+        }
+
+        // 處理後端明確回傳的失敗原因
+        if (json.error === 'UNAUTHORIZED_OR_EXPIRED') {
+          window.dispatchEvent(new CustomEvent('app-unauthorized', {
+            detail: {
+              action: actionName || 'syncQueue',
+              message: '連線憑證無效或已過期，請重新登入後再試。'
+            }
+          }));
+          // 若是 LIFF 模式，等待 1.5 秒看 useLiffSession 是否已自動靜默換回新 Token
+          await new Promise(r => setTimeout(r, 1500));
+          const tokenAfter = localStorage.getItem('APP_SESSION_TOKEN') || '';
+          if (tokenAfter && tokenAfter !== tokenBefore) {
+            return; // 拿回新 Token 了，讓下一輪立即用新 Token 重送
+          }
+          throw new Error('UNAUTHORIZED_OR_EXPIRED');
+        }
+
+        if (json.errorCode === 'VERSION_CONFLICT' || json.errorCode === 'ERR_VERSION_CONFLICT') {
+          console.log('[SyncQueue] Auto recovering from VERSION_CONFLICT...');
+          try {
+            if (isBatchable) {
+              // 狀態更新屬於最新人工點擊勝出：自動全部加上 force: true 重試一次，不因版本衝突連坐棄單
+              const retriedFlag = batchTasks.some(t => t.payload?._forcedRetry);
+              if (!retriedFlag) {
+                const forcedTasks = batchTasks.map(t => ({
+                  ...t,
+                  payload: {
+                    ...t.payload,
+                    _forcedRetry: true,
+                    updates: (t.payload?.updates || []).map((u: any) => ({ ...u, force: true }))
+                  }
+                }));
+                const forcedMap = new Map(forcedTasks.map(t => [t.taskId, t]));
+                await Promise.all(forcedTasks.map(t => queueStore.setItem(t.taskId, t).catch(console.error)));
+                setSyncQueue(prev => prev.map(t => forcedMap.get(t.taskId) || t));
+                addToast?.('偵測到版本變動，正在自動強制同步最新狀態…', 'info');
+                return;
+              }
+            } else if ((firstTask.type === 'UPDATE_CONTENT' || firstTask.type === 'delete_order') && firstTask.payload?.id) {
+              const getOrderRes = await fetchWithRetry(apiEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: 'getOrder', token: tokenBefore, data: { id: firstTask.payload.id } })
+              }, undefined, 1, 1000, true);
+              if (getOrderRes.ok) {
+                const orderData = await getOrderRes.json();
+                if (orderData.success && orderData.data) {
+                  const latestVersion = orderData.data.version || orderData.data.Version || 0;
+                  const newPayload = { ...firstTask.payload };
+                  if (firstTask.type === 'UPDATE_CONTENT') {
+                    newPayload.version = latestVersion;
+                  } else if (firstTask.type === 'delete_order') {
+                    newPayload.originalLastUpdated = orderData.data.lastUpdated;
+                    newPayload.version = latestVersion;
+                  }
+                  const recoveredTask = {
+                    ...firstTask,
+                    payload: newPayload,
+                    retryCount: 0
+                  };
+                  await queueStore.setItem(firstTask.taskId, recoveredTask);
+                  setSyncQueue(prev => prev.map(t => t.taskId === firstTask.taskId ? recoveredTask : t));
+                  addToast?.('已在背景自動修復資料衝突，即將重試更新', 'info');
+                  return;
+                }
+              }
+            }
+          } catch (recoverErr) {
+            console.error('[SyncQueue] Failed to auto-recover:', recoverErr);
+          }
+
+          await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
+          setSyncQueue(prev => prev.filter(t => !processedTaskIds.includes(t.taskId)));
+          addToast?.('⚠️ 發生無法自動修復的版本衝突，已為您還原為雲端最新狀態', 'error');
+          if (onSyncGiveUp) {
+            batchTasks.forEach(t => onSyncGiveUp(t));
+          }
+          return;
+        }
+
+        throw new Error(json.error || 'Server error');
       } catch (err: any) {
-        let isTaskGivenUp = false;
-        
-        setSyncQueue(prev => prev.map(t => {
-           if (processedTaskIds.includes(t.taskId)) {
-               const currentRetries = typeof t.retryCount === 'number' && !isNaN(t.retryCount) ? t.retryCount : 0;
-               const newRetries = currentRetries + 1;
-               if (newRetries > 10) {
-                 // 10 retries (~3-5 mins) then give up. 
-                 isTaskGivenUp = true;
-                 addToast?.(`訂單更新背景同步失敗過多次，請整理畫面重試`, 'error');
-                 if (onSyncError) {
-                     onSyncError(t, '同步失敗過多次');
-                 }
-                 return null as any; 
-               }
-               
-               // 更新 DB 內任務的重試次數狀態
-               queueStore.setItem(t.taskId, { ...t, retryCount: newRetries });
-               
-               return { ...t, retryCount: newRetries };
-           }
-           return t;
-        }).filter(Boolean));
+        const rawErrMsg = err?.message || String(err || 'Unknown error');
+        const readableErrMsg = formatQueueErrorMessage(rawErrMsg);
+        const failFast = isNonRetryableQueueError(rawErrMsg);
 
-        if (isTaskGivenUp) {
-           await Promise.all(processedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)));
-           if (onSyncGiveUp) {
-               batchTasks.forEach(t => onSyncGiveUp(t));
-           }
+        const givenUpTasks: SyncTask[] = [];
+        const updatedRetryMap = new Map<string, SyncTask>();
+
+        batchTasks.forEach(t => {
+          const currentRetries = typeof t.retryCount === 'number' && !isNaN(t.retryCount) ? t.retryCount : 0;
+          const newRetries = currentRetries + 1;
+          if (failFast || newRetries > MAX_QUEUE_RETRIES) {
+            givenUpTasks.push(t);
+          } else {
+            updatedRetryMap.set(t.taskId, { ...t, retryCount: newRetries });
+          }
+        });
+
+        const givenUpIds = new Set(givenUpTasks.map(t => t.taskId));
+
+        // 先確定性地同步清理/更新 IndexedDB，避免 React 18 deferred updater 造成死鎖或殘留
+        await Promise.all([
+          ...givenUpTasks.map(t => queueStore.removeItem(t.taskId).catch(console.error)),
+          ...Array.from(updatedRetryMap.values()).map(t => queueStore.setItem(t.taskId, t).catch(console.error)),
+        ]);
+
+        setSyncQueue(prev =>
+          prev
+            .filter(t => !givenUpIds.has(t.taskId))
+            .map(t => updatedRetryMap.get(t.taskId) || t)
+        );
+
+        if (givenUpTasks.length > 0) {
+          addToast?.(`訂單同步失敗：${readableErrMsg}`, 'error');
+          if (onSyncError) {
+            givenUpTasks.forEach(t => onSyncError(t, readableErrMsg));
+          }
         }
 
-        // 失敗時使用退避延遲 (Error Backoff Delay)，避免網路故障時狂發請求
-        await new Promise(r => setTimeout(r, 4000));
+        if (!failFast) {
+          // 失敗時使用退避延遲 (Error Backoff Delay)，避免網路故障時狂發請求
+          await new Promise(r => setTimeout(r, 3500));
+        }
       } finally {
         setIsSyncingQueue(false);
       }
@@ -396,7 +496,7 @@ export function useSyncQueue(
 
     return () => clearTimeout(timerId);
 
-  }, [syncQueue, isSyncingQueue, isHydrated, apiEndpoint, addToast]);
+  }, [syncQueue, isSyncingQueue, isHydrated, apiEndpoint, addToast, onSyncSuccess, onSyncError, onSyncGiveUp]);
 
   // 5. 攔截關閉事件 (BeforeUnload)
   useEffect(() => {
@@ -415,14 +515,41 @@ export function useSyncQueue(
   }, [syncQueue.length, isSyncingQueue, flushStatusBuffer]);
 
   const removeTaskByPayloadId = useCallback(async (payloadId: string) => {
-    // 找出符合的 task
-    const tasksToRemove = syncQueue.filter(t => t.payload?.id === payloadId || (t.payload?.updates && t.payload.updates.some((u: any) => u.id === payloadId)));
-    
-    if (tasksToRemove.length > 0) {
-      for (const t of tasksToRemove) {
-        await queueStore.removeItem(t.taskId);
+    // 若防抖緩衝區內還有這筆訂單，也一併移除
+    if (statusBufferRef.current.has(payloadId)) {
+      statusBufferRef.current.delete(payloadId);
+    }
+
+    const modifiedTasks: SyncTask[] = [];
+    const removedTaskIds: string[] = [];
+
+    for (const t of syncQueue) {
+      if (t.payload?.id === payloadId) {
+        removedTaskIds.push(t.taskId);
+      } else if (Array.isArray(t.payload?.updates) && t.payload.updates.some((u: any) => u?.id === payloadId)) {
+        const remainingUpdates = t.payload.updates.filter((u: any) => u?.id !== payloadId);
+        if (remainingUpdates.length === 0) {
+          removedTaskIds.push(t.taskId);
+        } else {
+          modifiedTasks.push({
+            ...t,
+            payload: { ...t.payload, updates: remainingUpdates }
+          });
+        }
       }
-      setSyncQueue(prev => prev.filter(t => !tasksToRemove.includes(t)));
+    }
+
+    if (removedTaskIds.length > 0 || modifiedTasks.length > 0) {
+      await Promise.all([
+        ...removedTaskIds.map(id => queueStore.removeItem(id).catch(console.error)),
+        ...modifiedTasks.map(t => queueStore.setItem(t.taskId, t).catch(console.error))
+      ]);
+      const modifiedMap = new Map(modifiedTasks.map(t => [t.taskId, t]));
+      setSyncQueue(prev =>
+        prev
+          .filter(t => !removedTaskIds.includes(t.taskId))
+          .map(t => modifiedMap.get(t.taskId) || t)
+      );
     }
   }, [syncQueue]);
 

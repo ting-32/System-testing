@@ -49,6 +49,34 @@ function safeFormatDate(sheetValue, format = "yyyy-MM-dd HH:mm:ss") {
   return String(sheetValue).trim();
 }
 
+function normalizeDateStr(rawVal) {
+  if (!rawVal) return '';
+  const formatted = safeFormatDate(rawVal, "yyyy-MM-dd");
+  return formatted.replace(/\//g, '-').slice(0, 10);
+}
+
+// 僅寫回實際異動到的連續列區塊，避免每次改狀態就重寫整張 ORDERS 表造成 15~30 秒鎖死與超時
+function flushUpdatedRows_(sheet, values, rowNumbers) {
+  if (!rowNumbers || rowNumbers.length === 0) return;
+  const sorted = Array.from(new Set(rowNumbers)).sort((a, b) => a - b);
+  let blockStart = sorted[0];
+  let prevRow = sorted[0];
+  const writeBlock = (startRow, endRow) => {
+    const slice = values.slice(startRow - 1, endRow);
+    safeSetValues(sheet, startRow, 1, slice);
+  };
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === prevRow + 1) {
+      prevRow = sorted[i];
+    } else {
+      writeBlock(blockStart, prevRow);
+      blockStart = sorted[i];
+      prevRow = sorted[i];
+    }
+  }
+  writeBlock(blockStart, prevRow);
+}
+
 function safeFormatTime(timeValue) {
   if (!timeValue) return '';
   if (timeValue instanceof Date) {
@@ -305,7 +333,7 @@ function doPost(e) {
         result = handleSendStaffDispatchNotification(params.data || params, tokenPayload);
         break;
       case "batchUpdateOrders": {
-        result = batchUpdateOrders(params.data);
+        result = batchUpdateOrders(params.data, tokenPayload);
         const summaries = (result && Array.isArray(result.logSummaries)) ? result.logSummaries : [];
         if (summaries.length > 0) {
           const isSingle = summaries.length === 1;
@@ -1946,7 +1974,7 @@ function updateOrderStatus(data, currentUser = null) {
     }
     
     if (rowsToUpdate.length > 0) {
-      safeSetValues(sheet, 2, 1, values.slice(1));
+      flushUpdatedRows_(sheet, values, rowsToUpdate);
       invalidateLineCaches({ orders: true });
     } else {
       throw new Error("Order not found: " + targetId);
@@ -2025,7 +2053,120 @@ function assignOrder(data, currentUser = null) {
   }
 }
 
-function batchUpdateOrders(data) {
+function batchUpdateOrders(data, currentUser = null) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const sheet = getSheets().ORDERS;
+    const headerMap = ensureHeadersBatch(sheet, ["LastUpdated", "Version"]);
+    const lastUpdatedColIdx = headerMap["LastUpdated"];
+    const versionColIdx = headerMap["Version"];
+    const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
+    const assignColIdx = headerMap["assigned_to"] !== undefined ? headerMap["assigned_to"] : headerMap["指派人員ID"];
+    const assignNameColIdx = headerMap["assigned_name"] !== undefined ? headerMap["assigned_name"] : headerMap["指派人員姓名"];
+    const values = sheet.getDataRange().getValues();
+    const updates = Array.isArray(data && data.updates) ? data.updates : [];
+    const newLastUpdatedTs = String(new Date().getTime());
+    let updatedCount = 0;
+
+    const canUpdateAny = !currentUser || hasPermission(String(currentUser.role || 'staff').trim().toLowerCase(), "canUpdateAnyOrderStatus");
+    const myId = currentUser ? String(currentUser.userId || currentUser.dId || '').trim() : '';
+    const myName = currentUser ? String(currentUser.name || '').trim() : '';
+
+    // Create a map for fast lookup (保留每個 ID 最後一次更新)
+    const updateMap = new Map();
+    updates.forEach(u => {
+      if (u && u.id) updateMap.set(String(u.id).trim(), u);
+    });
+
+    const rowsToUpdate = [];
+    const summaryMap = new Map();
+    const updatedIdSet = new Set();
+    const versions = {};
+    const conflictIds = [];
+    const forbiddenIds = [];
+    const matchedIds = new Set();
+
+    for (let i = 1; i < values.length; i++) {
+      const rowId = String(values[i][1]).trim();
+      if (!updateMap.has(rowId)) continue;
+      matchedIds.add(rowId);
+
+      if (!canUpdateAny) {
+        const aId = assignColIdx !== undefined ? String(values[i][assignColIdx] || '').trim() : '';
+        const aName = assignNameColIdx !== undefined ? String(values[i][assignNameColIdx] || '').trim() : '';
+        if (!((myId && aId === myId) || (myName && (aName === myName || aId === myName)))) {
+          if (!forbiddenIds.includes(rowId)) forbiddenIds.push(rowId);
+          continue;
+        }
+      }
+
+      const updateData = updateMap.get(rowId);
+      const currentVersion = values[i][versionColIdx];
+
+      if (!updateData.force && updateData.version !== undefined && currentVersion !== "" && Number(currentVersion) !== Number(updateData.version)) {
+        if (!conflictIds.includes(rowId)) conflictIds.push(rowId);
+        continue;
+      }
+
+      if (!summaryMap.has(rowId)) {
+        summaryMap.set(rowId, {
+          id: rowId,
+          customerName: String(values[i][2] || '').trim(),
+          deliveryDate: normalizeDateStr(values[i][3]),
+          originalStatus: updateData.originalStatus || String(values[i][statusColIdx] || '').trim(),
+          status: updateData.status
+        });
+      }
+
+      const newVersion = Number(currentVersion || 0) + 1;
+      values[i][statusColIdx] = updateData.status;
+      values[i][lastUpdatedColIdx] = newLastUpdatedTs;
+      values[i][versionColIdx] = newVersion;
+      rowsToUpdate.push(i + 1);
+      updatedIdSet.add(rowId);
+      versions[rowId] = newVersion;
+      updatedCount++;
+    }
+
+    const notFoundIds = [];
+    updateMap.forEach((_, reqId) => {
+      if (!matchedIds.has(reqId)) notFoundIds.push(reqId);
+    });
+
+    if (rowsToUpdate.length > 0) {
+      flushUpdatedRows_(sheet, values, rowsToUpdate);
+      invalidateLineCaches({ orders: true });
+    } else if (conflictIds.length > 0) {
+      throw new Error("ERR_VERSION_CONFLICT: Data has been modified by another user.");
+    } else if (forbiddenIds.length > 0) {
+      throw new Error("FORBIDDEN_ACTION: 權限不足，您無權修改非指派給您的訂單狀態");
+    }
+
+    const failedItems = [];
+    conflictIds.forEach(id => failedItems.push({ id, reason: 'VERSION_CONFLICT', message: '版本衝突，請重新同步' }));
+    forbiddenIds.forEach(id => failedItems.push({ id, reason: 'FORBIDDEN_ACTION', message: '權限不足，無法修改未指派訂單' }));
+    notFoundIds.forEach(id => failedItems.push({ id, reason: 'NOT_FOUND', message: '雲端找不到此筆訂單（可能已被刪除）' }));
+
+    return {
+      updatedCount,
+      updatedIds: Array.from(updatedIdSet),
+      versions,
+      newLastUpdatedTs,
+      failedItems,
+      logSummaries: Array.from(summaryMap.values())
+    };
+  } catch (err) {
+    if (err.message && err.message.includes("Timeout")) {
+      throw new Error("更新過於頻繁，請稍後重試");
+    }
+    throw err;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function batchUpdatePaymentStatus(data) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
@@ -2035,91 +2176,45 @@ function batchUpdateOrders(data) {
     const versionColIdx = headerMap["Version"];
     const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
     const values = sheet.getDataRange().getValues();
-    const updates = data.updates; // Array of { id: string, status: string, version: number }
+    const orderIds = new Set((data.orderIds || []).map(id => String(id).trim()));
     const newLastUpdatedTs = String(new Date().getTime());
-    let updatedCount = 0;
-    
-    // Create a map for fast lookup
-    const updateMap = new Map();
-    updates.forEach(u => updateMap.set(String(u.id).trim(), u));
 
-    let rowsToUpdate = [];
+    const rowsToUpdate = [];
     const summaryMap = new Map();
-
     for (let i = 1; i < values.length; i++) {
-      const rowId = String(values[i][1]).trim();
-      if (updateMap.has(rowId)) {
-        const updateData = updateMap.get(rowId);
-        const currentVersion = values[i][versionColIdx];
-        
-        if (!updateData.force && updateData.version !== undefined) {
-           checkOrderVersionStrict(currentVersion, updateData.version);
-        }
-
-        if (!summaryMap.has(rowId)) {
-          summaryMap.set(rowId, {
-            id: rowId,
+      const id = String(values[i][1]).trim();
+      if (orderIds.has(id)) {
+        if (!summaryMap.has(id)) {
+          summaryMap.set(id, {
+            id: id,
             customerName: String(values[i][2] || '').trim(),
             deliveryDate: normalizeDateStr(values[i][3]),
-            originalStatus: updateData.originalStatus || String(values[i][statusColIdx] || '').trim(),
-            status: updateData.status
+            originalStatus: String(values[i][statusColIdx] || '').trim(),
+            status: data.newStatus
           });
         }
-        
-        const newVersion = Number(currentVersion || 0) + 1;
-        values[i][statusColIdx] = updateData.status;
+        values[i][statusColIdx] = data.newStatus;
         values[i][lastUpdatedColIdx] = newLastUpdatedTs;
-        values[i][versionColIdx] = newVersion;
+        if (versionColIdx !== undefined) {
+          values[i][versionColIdx] = Number(values[i][versionColIdx] || 0) + 1;
+        }
         rowsToUpdate.push(i + 1);
-        updatedCount++;
       }
     }
-    
+
     if (rowsToUpdate.length > 0) {
-      safeSetValues(sheet, 2, 1, values.slice(1));
+      flushUpdatedRows_(sheet, values, rowsToUpdate);
       invalidateLineCaches({ orders: true });
     }
-    
-    return { updatedCount, newLastUpdatedTs, logSummaries: Array.from(summaryMap.values()) };
+    return { success: true, logSummaries: Array.from(summaryMap.values()) };
+  } catch (err) {
+    if (err.message && err.message.includes("Timeout")) {
+      throw new Error("更新過於頻繁，請稍後重試");
+    }
+    throw err;
   } finally {
     lock.releaseLock();
   }
-}
-
-function batchUpdatePaymentStatus(data) {
-  const sheet = getSheets().ORDERS;
-  const headerMap = ensureHeadersBatch(sheet, ["LastUpdated"]);
-  const lastUpdatedColIdx = headerMap["LastUpdated"];
-  const statusColIdx = headerMap["Status"] !== undefined ? headerMap["Status"] : (headerMap["狀態"] !== undefined ? headerMap["狀態"] : 8);
-  const values = sheet.getDataRange().getValues();
-  const orderIds = new Set(data.orderIds.map(id => String(id).trim()));
-  const newLastUpdatedTs = String(new Date().getTime());
-  
-  let modified = false;
-  const summaryMap = new Map();
-  for (let i = 1; i < values.length; i++) {
-    const id = String(values[i][1]).trim();
-    if (orderIds.has(id)) {
-      if (!summaryMap.has(id)) {
-        summaryMap.set(id, {
-          id: id,
-          customerName: String(values[i][2] || '').trim(),
-          deliveryDate: normalizeDateStr(values[i][3]),
-          originalStatus: String(values[i][statusColIdx] || '').trim(),
-          status: data.newStatus
-        });
-      }
-      values[i][statusColIdx] = data.newStatus;
-      values[i][lastUpdatedColIdx] = newLastUpdatedTs;
-      modified = true;
-    }
-  }
-
-  if (modified && values.length > 1) {
-    safeSetValues(sheet, 2, 1, values.slice(1));
-    invalidateLineCaches({ orders: true });
-  }
-  return { success: true, logSummaries: Array.from(summaryMap.values()) };
 }
 
 function deleteOrder(data) {

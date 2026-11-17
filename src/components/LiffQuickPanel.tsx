@@ -41,6 +41,8 @@ interface LiffQuickPanelProps {
   onCloseLiff: () => boolean;
   onSwitchToFullApp: () => void;
   onSwipeStatusChange: (orderId: string, newStatus: OrderStatus) => void;
+  onRetrySync?: (orderId: string) => void;
+  onDiscardLocal?: (orderId: string) => void;
   saveOrderToCloud: (
     order: Order,
     actionName: string,
@@ -106,6 +108,8 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
   onCloseLiff,
   onSwitchToFullApp,
   onSwipeStatusChange,
+  onRetrySync,
+  onDiscardLocal,
   saveOrderToCloud,
   onDeleteOrder,
   onSaveCustomerCloud,
@@ -1317,7 +1321,17 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
 
                       <div className="text-xs font-medium shrink-0 whitespace-nowrap">
                         {isSyncError ? (
-                          <span className="text-rose-600">同步失敗</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerHaptic();
+                              onRetrySync?.(order.id);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-50 text-rose-600 font-bold active:scale-95"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>同步失敗·重試</span>
+                          </button>
                         ) : isSyncPending ? (
                           <span className="text-[#9C7C58]">同步中…</span>
                         ) : (
@@ -1325,6 +1339,26 @@ export const LiffQuickPanel: React.FC<LiffQuickPanelProps> = ({
                         )}
                       </div>
                     </div>
+
+                    {isSyncError && (
+                      <div className="mt-2.5 px-3 py-2 rounded-xl bg-rose-50/90 border border-rose-200/80 flex items-center justify-between gap-2 text-xs text-rose-700">
+                        <span className="min-w-0 break-words leading-snug">
+                          {order.errorMessage || '背景同步失敗，請點擊重試'}
+                        </span>
+                        {onDiscardLocal && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerHaptic();
+                              onDiscardLocal(order.id);
+                            }}
+                            className="shrink-0 px-2 py-1 rounded-lg bg-white border border-rose-200 text-rose-600 font-semibold whitespace-nowrap active:scale-95"
+                          >
+                            捨棄
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     {/* 品項清單 */}
                     <div className="mt-3 pt-2.5 border-t border-slate-100 space-y-1 text-sm">
