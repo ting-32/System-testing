@@ -2595,13 +2595,23 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], findR
     const targetCond = { ...newConds[cIdx] }; 
 
     let arr = [...(targetCond[type] || [])];
-    if (arr.includes(val)) {
+    const isAdding = !arr.includes(val);
+    if (!isAdding) {
       arr = arr.filter(item => item !== val);
     } else {
       arr.push(val);
     }
     
     targetCond[type] = arr;
+
+    // 若在「未訂購」模式下手動加入了一位「沒有設定該常規品項」的店家，自動取消 onlyRegularBuyers，避免店家被靜默排除
+    if (isAdding && type === 'customers' && targetCond.status === 'UNORDERED' && targetCond.onlyRegularBuyers && findRegularBuyerIdsForProducts) {
+      const regularSet = new Set(findRegularBuyerIdsForProducts(targetCond.products || []));
+      if (!regularSet.has(val)) {
+        targetCond.onlyRegularBuyers = false;
+      }
+    }
+
     newConds[cIdx] = targetCond;
 
     setRule({...rule, conditions: newConds});
@@ -2645,17 +2655,22 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], findR
     if (mode === 'UNORDERED_ALERT') {
       const currentName = String(rule.name || '').trim();
       const nextName = !currentName || currentName === '今日出車配送明細' ? '未訂購品項／漏單提醒' : currentName;
+      const existingCustomers = rule.conditions?.[0]?.customers || [];
+      const existingProducts = rule.conditions?.[0]?.products || [];
+      const regularSet = new Set(findRegularBuyerIdsForProducts ? findRegularBuyerIdsForProducts(existingProducts) : []);
+      const hasNonRegularSelected = existingCustomers.some((cid: string) => !regularSet.has(cid));
+      const defaultOnlyRegular = existingCustomers.length === 0 ? true : !hasNonRegularSelected;
       setRule({
         ...rule,
         name: nextName,
         targetDateMode: 'TOMORROW',
         timeToNotify: rule.timeToNotify === '06:00' || !rule.timeToNotify ? '20:00' : rule.timeToNotify,
         conditions: [{
-          customers: rule.conditions?.[0]?.customers || [],
+          customers: existingCustomers,
           status: 'UNORDERED' as ReminderConditionStatus,
-          products: rule.conditions?.[0]?.products || [],
+          products: existingProducts,
           productMatchMode: rule.conditions?.[0]?.productMatchMode || 'ANY_MISSING',
-          onlyRegularBuyers: rule.conditions?.[0]?.onlyRegularBuyers ?? true
+          onlyRegularBuyers: existingCustomers.length === 0 ? (rule.conditions?.[0]?.onlyRegularBuyers ?? true) : defaultOnlyRegular
         }],
         outputFormat: 'SUMMARY_NAMES',
         recipientMode: 'DEFAULT_ADMIN'
@@ -2699,6 +2714,20 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], findR
     if (recipientMode === 'SPECIFIC_STAFF' && (!rule.targetStaffIds || rule.targetStaffIds.length === 0)) {
       setValidationError('已選擇「指定特定員工接收」，請至少勾選一位已綁定 LINE 的同仁');
       return;
+    }
+    for (const cond of (rule.conditions || [])) {
+      if (cond.status === 'UNORDERED' && cond.onlyRegularBuyers && (cond.customers || []).length > 0 && findRegularBuyerIdsForProducts) {
+        const regularSet = new Set(findRegularBuyerIdsForProducts(cond.products || []));
+        const eligibleCount = (cond.customers || []).filter((cid: string) => regularSet.has(cid)).length;
+        if (eligibleCount === 0) {
+          const pickedNames = (cond.customers || [])
+            .map((cid: string) => customers.find((c: any) => c.id === cid)?.name || cid)
+            .slice(0, 3)
+            .join('、');
+          setValidationError(`設定衝突：你指定的「${pickedNames}」在客戶資料「預設常規品項」中皆未包含所選品項，勾選「僅檢查常訂品項店家」會導致規則永遠不發送。請先取消勾選該過濾或改為不選對象。`);
+          return;
+        }
+      }
     }
     setValidationError(null);
     onSave();
@@ -2909,31 +2938,76 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], findR
                     );
                   })()}
                 </div>
-                {cond.status === 'UNORDERED' && (
-                  <div className="space-y-1.5 mt-1">
-                    <label className="flex items-start gap-2 text-xs font-semibold text-slate-700 bg-white/80 px-3 py-2 rounded-xl border border-slate-200 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(cond.onlyRegularBuyers)}
-                        onChange={(e) => {
-                          const newConds = [...rule.conditions];
-                          newConds[cIdx] = { ...newConds[cIdx], onlyRegularBuyers: e.target.checked };
-                          setRule({ ...rule, conditions: newConds });
-                        }}
-                        className="rounded text-indigo-600 focus:ring-indigo-500 mt-0.5"
-                      />
-                      <span className="leading-snug">
-                        僅檢查「預設常規品項」有設定上述商品的店家（自動排除平時不訂該品項的客戶）
-                      </span>
-                    </label>
-                    {(!cond.customers || cond.customers.length === 0) && !cond.onlyRegularBuyers && (
-                      <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
-                        <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                        <span>未挑選店家且未勾選「僅檢查常訂品項店家」時，系統會掃描全廠所有未公休客戶。</span>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {cond.status === 'UNORDERED' && (() => {
+                  const selectedIds: string[] = cond.customers || [];
+                  const regularSet = new Set(findRegularBuyerIdsForProducts ? findRegularBuyerIdsForProducts(cond.products || []) : []);
+                  const excludedSelectedCusts = (cond.onlyRegularBuyers && selectedIds.length > 0 && findRegularBuyerIdsForProducts)
+                    ? selectedIds
+                        .filter(cid => !regularSet.has(cid))
+                        .map(cid => customers.find((c: any) => c.id === cid))
+                        .filter(Boolean)
+                    : [];
+                  const inactiveSelectedCusts = selectedIds
+                    .map(cid => customers.find((c: any) => c.id === cid))
+                    .filter((c: any) => c && (c.isPaused || c.isArchived));
+
+                  return (
+                    <div className="space-y-1.5 mt-1">
+                      <label className="flex items-start gap-2 text-xs font-semibold text-slate-700 bg-white/80 px-3 py-2 rounded-xl border border-slate-200 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(cond.onlyRegularBuyers)}
+                          onChange={(e) => {
+                            const newConds = [...rule.conditions];
+                            newConds[cIdx] = { ...newConds[cIdx], onlyRegularBuyers: e.target.checked };
+                            setRule({ ...rule, conditions: newConds });
+                          }}
+                          className="rounded text-indigo-600 focus:ring-indigo-500 mt-0.5"
+                        />
+                        <span className="leading-snug">
+                          僅檢查「預設常規品項」有設定上述商品的店家（自動排除平時不訂該品項的客戶）
+                        </span>
+                      </label>
+
+                      {excludedSelectedCusts.length > 0 && (
+                        <div className="text-xs text-rose-800 bg-rose-50 border border-rose-300 rounded-xl px-3 py-2.5 space-y-2">
+                          <div className="flex items-start gap-1.5">
+                            <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                            <span className="leading-snug">
+                              <strong>設定衝突：</strong>你指定的「{excludedSelectedCusts.map((c: any) => c.name).join('、')}」客戶資料中<strong>並未將{(cond.products || []).length > 0 ? `「${cond.products.join('、')}」` : '品項'}設為預設常規品項</strong>，若維持勾選，系統會將該店家排除（不會發出提醒）！
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newConds = [...rule.conditions];
+                              newConds[cIdx] = { ...newConds[cIdx], onlyRegularBuyers: false };
+                              setRule({ ...rule, conditions: newConds });
+                              setValidationError(null);
+                            }}
+                            className="w-full py-1.5 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs transition-colors"
+                          >
+                            一鍵關閉「僅檢查常訂品項店家」過濾
+                          </button>
+                        </div>
+                      )}
+
+                      {inactiveSelectedCusts.length > 0 && (
+                        <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <span>注意：所選店家「{inactiveSelectedCusts.map((c: any) => c.name).join('、')}」目前設為暫停供貨或已封存，排程檢查時會自動略過。</span>
+                        </div>
+                      )}
+
+                      {selectedIds.length === 0 && !cond.onlyRegularBuyers && (
+                        <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <span>未挑選店家且未勾選「僅檢查常訂品項店家」時，系統會掃描全廠所有未公休客戶。</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {activePicker?.index === cIdx && activePicker.type === 'customers' && (
                   <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-sm mt-1 flex flex-col gap-3">
                     <input 
@@ -2974,7 +3048,17 @@ const RuleBuilder = ({ rule, setRule, customers, products, staffList = [], findR
                     const updatedCond = { ...newConds[cIdx], status: nextStatus };
                     if (nextStatus === 'UNORDERED') {
                       if (!updatedCond.productMatchMode) updatedCond.productMatchMode = 'ANY_MISSING';
-                      if (updatedCond.onlyRegularBuyers === undefined) updatedCond.onlyRegularBuyers = true;
+                      if (updatedCond.onlyRegularBuyers === undefined) {
+                        const existingCusts = updatedCond.customers || [];
+                        if (existingCusts.length === 0) {
+                          updatedCond.onlyRegularBuyers = true;
+                        } else if (findRegularBuyerIdsForProducts) {
+                          const regularSet = new Set(findRegularBuyerIdsForProducts(updatedCond.products || []));
+                          updatedCond.onlyRegularBuyers = existingCusts.every((cid: string) => regularSet.has(cid));
+                        } else {
+                          updatedCond.onlyRegularBuyers = false;
+                        }
+                      }
                     }
                     newConds[cIdx] = updatedCond;
                     const allUnordered = newConds.every((c: any) => c.status === 'UNORDERED');

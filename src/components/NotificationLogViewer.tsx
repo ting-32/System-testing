@@ -119,6 +119,13 @@ export function NotificationLogViewer({ apiEndpoint }: Props) {
         {details.customersMatched !== undefined && (
           <p className="mb-1 text-slate-600">條件判定：共 <span className="font-medium">{details.customersMatched}</span> 家符合條件。</p>
         )}
+        {Array.isArray(details.diagnosticBreakdown) && details.diagnosticBreakdown.length > 0 && (
+          <ul className="mt-2 mb-1 space-y-1 text-xs text-slate-600 bg-amber-50/70 border border-amber-100 rounded-lg p-2.5 list-disc list-inside">
+            {details.diagnosticBreakdown.map((item: string, idx: number) => (
+              <li key={idx}>{item}</li>
+            ))}
+          </ul>
+        )}
         {(details.targetDatesText || details.currentHour !== undefined) && (
            <p className="mb-1 text-[13px] text-slate-500 mt-2 p-2 bg-slate-50 rounded-lg">
              系統診斷變數：

@@ -79,7 +79,7 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
     }
     
     if (stepIndex === 3) { // 條件配對與收件路由
-      if (status === 'SKIPPED' && (reason.includes('未達成') || reason.includes('未設定') || reason.includes('未綁定'))) return 'error';
+      if (status === 'SKIPPED' && (reason.includes('未達成') || reason.includes('未設定') || reason.includes('未綁定') || reason.includes('排除') || reason.includes('公休') || reason.includes('暫停'))) return 'error';
       if (status === 'SUCCESS' || trace.customersMatched !== undefined) return 'success';
       return 'pending';
     }
@@ -194,6 +194,13 @@ export function DiagnosticFunnelModal({ isOpen, onClose, isLoading, result, onRe
                       ? '條件已符合！按下下方按鈕可立即執行真實 LINE 推播。' 
                       : (skipReason || '根據目前設定與今日訂單狀態，系統判斷此刻無需發送提醒。')}
                   </p>
+                  {status !== 'SUCCESS' && Array.isArray(trace?.diagnosticBreakdown) && trace.diagnosticBreakdown.length > 0 && (
+                    <ul className="mt-2 space-y-1 text-xs text-slate-600 list-disc list-inside bg-white/70 rounded-lg p-2 border border-slate-200">
+                      {trace.diagnosticBreakdown.map((item: string, idx: number) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
 
                 {/* 預覽實際將發出的 LINE 內容 */}

@@ -3873,13 +3873,22 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     
     // 若為正向出貨檢查，只要客戶當天有有效單（即使當天是公休日）也不可漏掉！
     // 若為未訂購/待處理警戒，才過濾掉封存、暫停或休假客戶
+    const customerByIdMap = {};
+    customers.forEach(c => {
+      if (c.id !== undefined && c.id !== null) customerByIdMap[String(c.id).trim()] = c;
+    });
+
+    const diagStats = {
+      archivedCount: 0,
+      pausedCount: 0,
+      offDayCount: 0,
+      regularRejectedIds: new Set(),
+      evaluatedExplicitIds: new Set()
+    };
+
     const activeCustomers = customers.filter(c => {
       const cName = String(c.name || '').trim();
       const hasOrderToday = (ordersByCustomer[cName] || []).length > 0;
-      if (ruleHasPositiveCondition && hasOrderToday && !c.isArchived) {
-        return true;
-      }
-      if (c.isArchived || c.isPaused) return false;
       const workingDates = targetDatesInfo.filter(d => {
         const dStr = Utilities.formatDate(d, timeZone, "yyyy-MM-dd");
         const dayNum = parseInt(Utilities.formatDate(d, timeZone, "u"), 10) % 7;
@@ -3889,7 +3898,23 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
         return !isOff;
       });
       c._workingDateStrs = workingDates.map(d => Utilities.formatDate(d, timeZone, "yyyy-MM-dd"));
-      return workingDates.length > 0;
+
+      if (ruleHasPositiveCondition && hasOrderToday && !c.isArchived) {
+        return true;
+      }
+      if (c.isArchived) {
+        diagStats.archivedCount++;
+        return false;
+      }
+      if (c.isPaused) {
+        diagStats.pausedCount++;
+        return false;
+      }
+      if (workingDates.length === 0) {
+        diagStats.offDayCount++;
+        return false;
+      }
+      return true;
     });
 
     // 若訂單裡的客戶不在 customers 主檔裡（例如臨時散客）且規則未指定特定店家且含正向條件，也一併納入
@@ -3912,8 +3937,35 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
 
     trace.customersEvaluated = activeCustomers.length;
 
+    const explicitTargetIdSet = new Set();
+    (rule.conditions || []).forEach(cond => {
+      if (Array.isArray(cond.customers)) {
+        cond.customers.forEach(cid => {
+          const cleanId = String(cid || '').trim();
+          if (cleanId) explicitTargetIdSet.add(cleanId);
+        });
+      }
+    });
+
     if (activeCustomers.length === 0) {
-      logAndReturn("SKIPPED", { reason: "今日無符合檢查對象（目標客戶皆休假或無訂單）", targetDatesText });
+      const explicitNotes = Array.from(explicitTargetIdSet).slice(0, 5).map(cid => {
+        const cust = customerByIdMap[cid];
+        if (!cust) return `找不到客戶 ID(${cid})`;
+        if (cust.isArchived) return `「${cust.name}」已封存`;
+        if (cust.isPaused) return `「${cust.name}」暫停供貨`;
+        return `「${cust.name}」於 ${targetDatesText} 為公休／特休`;
+      });
+      const detailReason = explicitNotes.length > 0
+        ? `今日無符合檢查對象：${explicitNotes.join('；')}`
+        : `今日無符合檢查對象（休假 ${diagStats.offDayCount} 家、暫停 ${diagStats.pausedCount} 家、封存 ${diagStats.archivedCount} 家）`;
+      logAndReturn("SKIPPED", {
+        reason: detailReason,
+        targetDatesText,
+        currentHour: h,
+        customersEvaluated: 0,
+        customersMatched: 0,
+        diagnosticBreakdown: explicitNotes
+      });
       continue;
     }
 
@@ -3924,6 +3976,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     const triggeredCustomers = activeCustomers.filter(customer => {
       let isRuleMatched = null;
       const candidateOrdersForCustomer = [];
+      const custIdStr = String(customer.id || '').trim();
       const custNameKey = String(customer.name || '').trim();
       const custWorkingDates = Array.isArray(customer._workingDateStrs) && customer._workingDateStrs.length > 0
         ? customer._workingDateStrs
@@ -3945,8 +3998,13 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
         const targetProductNamesLower = new Set(normalizedTargetProducts.map(n => n.toLowerCase()));
 
         let condAppliesToCustomer = true;
-        if (cond.customers && cond.customers.length > 0 && !cond.customers.includes(customer.id)) {
-          condAppliesToCustomer = false;
+        if (cond.customers && cond.customers.length > 0) {
+          const allowedIdSet = new Set(cond.customers.map(id => String(id || '').trim()));
+          if (!allowedIdSet.has(custIdStr)) {
+            condAppliesToCustomer = false;
+          } else {
+            diagStats.evaluatedExplicitIds.add(custIdStr);
+          }
         }
 
         // 若勾選「僅檢查常訂上述品項的店家」，依客戶主檔 defaultItems 比對是否常買
@@ -3959,6 +4017,7 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
           });
           if (!buysAnyTarget) {
             condAppliesToCustomer = false;
+            diagStats.regularRejectedIds.add(custIdStr);
           }
         }
 
@@ -4048,7 +4107,61 @@ function checkReminders(forceRuleIdOrEvent = null, isDryRun = false) {
     trace.ordersMatched = matchedOrdersCollected.length;
 
     if (triggeredCustomers.length === 0) {
-      logAndReturn("SKIPPED", { reason: "條件未達成，無需發送提醒", targetDatesText });
+      const targetProdsLabel = Array.from(new Set(
+        (rule.conditions || []).reduce((acc, c) => acc.concat(c.products || []), [])
+      )).filter(Boolean).join('、') || '指定品項';
+      const diagnosticBreakdown = [];
+
+      if (explicitTargetIdSet.size > 0) {
+        Array.from(explicitTargetIdSet).slice(0, 5).forEach(cid => {
+          const cust = customerByIdMap[cid];
+          if (!cust) {
+            diagnosticBreakdown.push(`找不到客戶 ID(${cid})（可能曾刪除重建，請重新挑選店家）`);
+            return;
+          }
+          const cName = String(cust.name || '').trim();
+          if (cust.isArchived) {
+            diagnosticBreakdown.push(`「${cName}」已封存`);
+          } else if (cust.isPaused) {
+            diagnosticBreakdown.push(`「${cName}」目前設定為暫停供貨`);
+          } else if (!Array.isArray(cust._workingDateStrs) || cust._workingDateStrs.length === 0) {
+            diagnosticBreakdown.push(`「${cName}」於 ${targetDatesText} 為公休／特定休假日`);
+          } else if (diagStats.regularRejectedIds.has(cid)) {
+            diagnosticBreakdown.push(`「${cName}」預設常規品項未包含「${targetProdsLabel}」，已被「僅檢查常訂品項店家」排除`);
+          } else if (ruleHasUnorderedCondition) {
+            const custOrders = ordersByCustomer[cName] || [];
+            const prodsOrdered = Array.from(new Set(custOrders.map(o => String(o.productName || '').trim()).filter(Boolean)));
+            if (prodsOrdered.length > 0) {
+              diagnosticBreakdown.push(`「${cName}」於 ${targetDatesText} 已有有效訂單（${prodsOrdered.join('、')}）`);
+            } else {
+              diagnosticBreakdown.push(`「${cName}」未滿足規則條件組合`);
+            }
+          } else {
+            diagnosticBreakdown.push(`「${cName}」目前無符合條件之訂單`);
+          }
+        });
+      } else {
+        if (diagStats.regularRejectedIds.size > 0) {
+          diagnosticBreakdown.push(`有 ${diagStats.regularRejectedIds.size} 家營業中店家因預設常規品項不含「${targetProdsLabel}」被排除`);
+        }
+        if (diagStats.offDayCount + diagStats.pausedCount > 0) {
+          diagnosticBreakdown.push(`另有 ${diagStats.offDayCount} 家當日公休、${diagStats.pausedCount} 家暫停供貨`);
+        }
+        diagnosticBreakdown.push(`其餘 ${Math.max(0, activeCustomers.length - diagStats.regularRejectedIds.size)} 家可檢店家中皆未觸發條件`);
+      }
+
+      const detailReason = diagnosticBreakdown.length > 0
+        ? `條件未達成：${diagnosticBreakdown.join('；')}`
+        : "條件未達成，無需發送提醒";
+
+      logAndReturn("SKIPPED", {
+        reason: detailReason,
+        targetDatesText,
+        currentHour: h,
+        customersEvaluated: activeCustomers.length,
+        customersMatched: 0,
+        diagnosticBreakdown
+      });
       continue;
     }
 
